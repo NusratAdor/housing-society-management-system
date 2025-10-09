@@ -1,76 +1,94 @@
 import Member from "../models/Member.js";
-import transporter from "../configs/nodemailer.js";
 
-export const createMember = async (req, res) => {
+export const createMemberProfile = async (req, res) => {
   try {
-    const { user } = req.auth;
-    const { clerkUserId, ...profileData } = req.body;
-    const data = { ...profileData, clerkUserId: user.id };
+    const { name, email, phone, address, designation, membershipNo, plotNo } = req.body;
+    const clerkUserId = req.clerkUserId;
 
-    // Check if profile already exists
-    const existing = await Member.findOne({ clerkUserId: user.id });
+    // Validate inputs
+    if (!clerkUserId) {
+      return res.status(400).json({ success: false, message: "Clerk user ID is missing" });
+    }
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+    // Normalize phone number
+    const normalizedPhone = phone.replace(/[\s-+]/g, "").replace(/^\+880/, "");
+    if (!/^(013|014|015|016|017|018|019)\d{8}$/.test(normalizedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be a valid 11-digit Bangladeshi mobile number (e.g., 01712345678)",
+      });
+    }
+    if (!/^[A-Za-z0-9-]+$/.test(membershipNo)) {
+      return res.status(400).json({
+        success: false,
+        message: "Membership number must contain only letters, numbers, or hyphens",
+      });
+    }
+
+    // Check for unique membership number
+    const existingMembership = await Member.findOne({ membershipNo });
+    if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "Membership number already in use",
+      });
+    }
+
+    // Check for existing profile
+    const existing = await Member.findOne({ clerkUserId });
     if (existing) {
-      return res.json({ success: false, message: "Profile already exists" });
+      const updatedMember = await Member.findOneAndUpdate(
+        { clerkUserId },
+        { name, email, phone: normalizedPhone, address, designation, membershipNo, plotNo },
+        { new: true }
+      );
+      return res.status(200).json({
+        success: true,
+        message: "Profile updated successfully",
+        member: updatedMember,
+      });
     }
 
-    // Check membership limit (500 members)
-    const totalMembers = await Member.countDocuments();
-    if (totalMembers >= 500) {
-      return res.json({ success: false, message: "Membership limit reached (500 members)" });
-    }
+    // Create new member
+    const newMember = await Member.create({
+      clerkUserId,
+      name,
+      email,
+      phone: normalizedPhone,
+      address,
+      designation,
+      membershipNo,
+      plotNo,
+    });
 
-    const member = await Member.create(data);
-
-    // Send confirmation email
-    const mailOptions = {
-      from: process.env.SENDER_EMAIL,
-      to: member.email,
-      subject: "Housing Society Membership Confirmation",
-      html: `
-        <h2>Welcome to the Housing Society!</h2>
-        <p>Dear ${member.name},</p>
-        <p>Your membership profile has been created successfully. Here are your details:</p>
-        <ul>
-          <li><strong>Membership Number:</strong> ${member.membershipNumber}</li>
-          <li><strong>Name:</strong> ${member.name}</li>
-          <li><strong>Email:</strong> ${member.email}</li>
-          <li><strong>Payment Status:</strong> ${member.paymentStatus}</li>
-        </ul>
-        <p>Please complete your monthly payments to stay active. Contact us for any queries.</p>
-      `,
-    };
-    await transporter.sendMail(mailOptions);
-
-    res.json({ success: true, message: "Profile created successfully", member });
+    return res.status(201).json({
+      success: true,
+      message: "Profile created successfully",
+      member: newMember,
+    });
   } catch (error) {
-    console.log(error.message);
-    res.json({ success: false, message: error.message });
+    console.error(`Error creating/updating profile: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
 export const getMemberProfile = async (req, res) => {
   try {
-    const member = req.member; // Set by protect middleware
-    res.json({ success: true, member });
-  } catch (error) {
-    console.log(error.message);
-    res.json({ success: false, message: "Failed to fetch profile" });
-  }
-};
-
-export const updateMemberProfile = async (req, res) => {
-  try {
-    const member = await Member.findOneAndUpdate(
-      { clerkUserId: req.auth.userId },
-      req.body,
-      { new: true }
-    );
-    if (!member) {
-      return res.json({ success: false, message: "Profile not found" });
+    const clerkUserId = req.clerkUserId;
+    if (!clerkUserId) {
+      return res.status(400).json({ success: false, message: "Clerk user ID is missing" });
     }
-    res.json({ success: true, message: "Profile updated successfully", member });
+
+    const member = await Member.findOne({ clerkUserId });
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Profile not found" });
+    }
+
+    return res.json({ success: true, member });
   } catch (error) {
-    console.log(error.message);
-    res.json({ success: false, message: "Failed to update profile" });
+    console.error(`Error fetching profile: ${error.message}`);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

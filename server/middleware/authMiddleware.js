@@ -1,38 +1,16 @@
-import { requireAuth } from "@clerk/express";
 import Member from "../models/Member.js";
 
 export const protect = async (req, res, next) => {
-  const auth = req.auth;
-  const userId = auth?.userId;
-  if (!userId) {
-    return res.json({ success: false, message: "Not authenticated" });
-  }
-  const member = await Member.findOne({ clerkUserId: userId });
-  if (!member) {
-    return res.json({ success: false, message: "Member profile not found" });
-  }
-  req.member = member;
-  next();
-};
+  try {
+    // Clerk middleware sets req.auth with userId
+    const userId = req.auth?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized: No user ID found" });
+    }
 
-export const protectAdmin = async (req, res, next) => {
-  const auth = req.auth;
-  const userId = auth?.userId;
-  if (!userId) {
-    return res.json({ success: false, message: "Not authenticated" });
+    req.clerkUserId = userId;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, message: "Not authorized: Authentication error" });
   }
-  const user = auth?.user;
-  if (!user || user.unsafeMetadata?.role !== "admin") {
-    return res.json({ success: false, message: "Admin access required" });
-  }
-  const member = await Member.findOne({ clerkUserId: userId });
-  if (!member) {
-    return res.json({ success: false, message: "Member profile not found" });
-  }
-  req.member = member;
-  next();
 };
-
-export const clerkMiddleware = requireAuth({
-  publicRoutes: ["/api/notices"],
-});

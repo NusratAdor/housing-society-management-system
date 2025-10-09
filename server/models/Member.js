@@ -4,17 +4,15 @@ const memberSchema = new mongoose.Schema(
   {
     clerkUserId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
-    address: { type: String },
-    designation: { type: String },
     email: { type: String, required: true },
-    phone: { type: String },
-    membershipNumber: { type: String, required: true, unique: true },
-    plotNumber: { type: String },
-    paymentStatus: { type: String, enum: ["Due", "Paid"], default: "Due" },
+    phone: { type: String, required: true },
+    address: { type: String, required: true },
+    designation: { type: String, required: true },
+    membershipNo: { type: String, required: true },
+    plotNo: { type: String, required: true },
+    paymentStatus: { type: String, default: "Pending" },
   },
   { timestamps: true }
 );
 
-const Member = mongoose.model("Member", memberSchema);
-
-export default Member;
+export default mongoose.model("Member", memberSchema);
