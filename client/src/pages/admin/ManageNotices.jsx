@@ -41,7 +41,9 @@ const ManageNotices = () => {
       setLoading(true);
       const token = await getToken();
       const response = await axios.get(
-        `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices`,
+        `${
+          import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
+        }/api/notices`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.data.success) {
@@ -90,7 +92,9 @@ const ManageNotices = () => {
       if (formData._id) {
         // Update
         const response = await axios.put(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices/${formData._id}`,
+          `${
+            import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
+          }/api/notices/${formData._id}`,
           formDataToSend,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -103,7 +107,9 @@ const ManageNotices = () => {
       } else {
         // Create
         const response = await axios.post(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices`,
+          `${
+            import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
+          }/api/notices`,
           formDataToSend,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -115,7 +121,14 @@ const ManageNotices = () => {
         }
       }
 
-      setFormData({ _id: null, title: "", date: "", summary: "", content: "", image: null });
+      setFormData({
+        _id: null,
+        title: "",
+        date: "",
+        summary: "",
+        content: "",
+        image: null,
+      });
       setImagePreview("");
     } catch (error) {
       toast.error("Error saving notice. Please try again.");
@@ -147,7 +160,9 @@ const ManageNotices = () => {
       const token = await getToken();
       if (!token) throw new Error("Authentication token not found");
       const response = await axios.delete(
-        `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices/${deleteNoticeId}`,
+        `${
+          import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
+        }/api/notices/${deleteNoticeId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.data.success) {
@@ -167,7 +182,10 @@ const ManageNotices = () => {
 
   return (
     <div className="w-full bg-white">
-      <Title title="Manage Notices" subTitle="Create, edit, or remove community notices." />
+      <Title
+        title="Manage Notices"
+        subTitle="Create, edit, or remove community notices."
+      />
 
       {loading && (
         <div className="flex justify-center items-center h-[50vh]">
@@ -189,7 +207,9 @@ const ManageNotices = () => {
             </h3>
             <form onSubmit={handleSubmit}>
               <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Title</label>
+                <label className="block text-sm text-gray-600 mb-1 font-outfit">
+                  Title
+                </label>
                 <input
                   type="text"
                   name="title"
@@ -200,7 +220,9 @@ const ManageNotices = () => {
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Date</label>
+                <label className="block text-sm text-gray-600 mb-1 font-outfit">
+                  Date
+                </label>
                 <input
                   type="date"
                   name="date"
@@ -211,7 +233,9 @@ const ManageNotices = () => {
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Summary</label>
+                <label className="block text-sm text-gray-600 mb-1 font-outfit">
+                  Summary
+                </label>
                 <input
                   type="text"
                   name="summary"
@@ -222,7 +246,9 @@ const ManageNotices = () => {
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Content</label>
+                <label className="block text-sm text-gray-600 mb-1 font-outfit">
+                  Content
+                </label>
                 <textarea
                   name="content"
                   value={formData.content}
@@ -233,7 +259,9 @@ const ManageNotices = () => {
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Image</label>
+                <label className="block text-sm text-gray-600 mb-1 font-outfit">
+                  Image
+                </label>
                 <input
                   type="file"
                   accept="image/*"
@@ -241,7 +269,11 @@ const ManageNotices = () => {
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
                 {imagePreview && (
-                  <img src={imagePreview} alt="Preview" className="mt-2 h-24 w-full object-cover rounded-md" />
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="mt-2 h-24 w-full object-cover rounded-md"
+                  />
                 )}
               </div>
               <div className="flex flex-col sm:flex-row gap-3">
@@ -257,7 +289,14 @@ const ManageNotices = () => {
                     type="button"
                     variant="outline"
                     onClick={() => {
-                      setFormData({ _id: null, title: "", date: "", summary: "", content: "", image: null });
+                      setFormData({
+                        _id: null,
+                        title: "",
+                        date: "",
+                        summary: "",
+                        content: "",
+                        image: null,
+                      });
                       setImagePreview("");
                     }}
                     className="text-gray-600 border-gray-300 w-full sm:w-auto"
@@ -276,65 +315,71 @@ const ManageNotices = () => {
             transition={{ duration: 0.5 }}
             className="lg:col-span-2 bg-white border border-gray-300 rounded-md p-6 shadow-sm"
           >
-            <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">Notice List</h3>
+            <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
+              Notice List
+            </h3>
             <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
               {notices.length === 0 ? (
-                <p className="text-gray-500 text-center py-8 font-outfit">No notices available.</p>
+                <p className="text-gray-500 text-center py-8 font-outfit">
+                  No notices available.
+                </p>
               ) : (
-                {notices.map((notice) => (
-  <motion.div
-    key={notice._id}
-    layout
-    initial={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, scale: 0.95 }}
-    transition={{ duration: 0.3 }}
-    className="p-4 border border-gray-200 rounded-lg hover:border-[var(--color-primary)] transition-all bg-gray-50/50"
-  >
-    {notice.image && (
-      <div className="mb-3 -mx-4 -mt-4 rounded-t-lg overflow-hidden">
-        <img
-          src={notice.image}
-          alt={notice.title}
-          className="w-full h-48 object-cover"
-        />
-      </div>
-    )}
+                notices.map((notice) => (
+                  <motion.div
+                    key={notice._id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4 border border-gray-200 rounded-lg hover:border-[var(--color-primary)] transition-all"
+                  >
+                    {notice.image && (
+                      <div className="mb-3 -mx-4 -mt-4 rounded-t-lg overflow-hidden">
+                        <img
+                          src={notice.image}
+                          alt={notice.title}
+                          className="w-full h-48 object-cover"
+                        />
+                      </div>
+                    )}
 
-    <div className={notice.image ? "px-1" : ""}>
-      <h4 className="font-playfair text-base font-semibold text-gray-800 line-clamp-2">
-        {notice.title}
-      </h4>
-      <p className="text-xs text-gray-500 mt-1">
-        {notice.date} | Posted: {new Date(notice.createdAt).toLocaleDateString()}
-      </p>
-      <p className="text-sm text-gray-700 mt-2 line-clamp-2">{notice.summary}</p>
-      <p className="text-sm text-gray-600 mt-1 line-clamp-3">{notice.content}</p>
+                    <div className={notice.image ? "px-1" : ""}>
+                      <h4 className="font-playfair text-base font-semibold text-gray-800 line-clamp-2">
+                        {notice.title}
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {notice.date} | Posted:{" "}
+                        {new Date(notice.createdAt).toLocaleDateString()}
+                      </p>
+                      <p className="text-sm text-gray-700 mt-2 line-clamp-2">
+                        {notice.summary}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-1 line-clamp-3">
+                        {notice.content}
+                      </p>
 
-      <div className="flex flex-col sm:flex-row gap-2 mt-3">
-        {/* EDIT BUTTON – MATCHES DESKTOP */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleEdit(notice)}
-          className="text-[var(--color-primary)] border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 flex-1 sm:flex-initial"
-        >
-          <Edit className="h-3.5 w-3.5 mr-1" /> Edit
-        </Button>
-
-        {/* DELETE BUTTON – RED (CONSISTENT) */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleDelete(notice._id, notice.title)}
-          className="text-red-600 border-red-600 hover:bg-red-50 flex-1 sm:flex-initial"
-        >
-          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
-        </Button>
-      </div>
-    </div>
-  </motion.div>
-))}
+                      {/* BUTTONS – IDENTICAL TO DESKTOP */}
+                      <div className="flex flex-col sm:flex-row gap-2 mt-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleEdit(notice)}
+                          className="text-[var(--color-primary)] border border-gray-300 hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 flex-1 sm:flex-initial"
+                        >
+                          <Edit className="h-3.5 w-3.5 mr-1" /> Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDelete(notice._id, notice.title)}
+                          className="text-red-600 border border-gray-300 hover:border-red-600 hover:bg-red-50 flex-1 sm:flex-initial"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </motion.div>
                 ))
               )}
             </div>
@@ -348,7 +393,9 @@ const ManageNotices = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Notice</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "<strong>{deleteNoticeTitle}</strong>"? This action cannot be undone.
+              Are you sure you want to delete "
+              <strong>{deleteNoticeTitle}</strong>"? This action cannot be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
