@@ -88,7 +88,7 @@ const ManageNotices = () => {
       }
 
       if (formData._id) {
-        // Update notice
+        // Update
         const response = await axios.put(
           `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices/${formData._id}`,
           formDataToSend,
@@ -101,7 +101,7 @@ const ManageNotices = () => {
           toast.error(response.data.message || "Failed to update notice");
         }
       } else {
-        // Create notice
+        // Create
         const response = await axios.post(
           `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices`,
           formDataToSend,
@@ -146,25 +146,17 @@ const ManageNotices = () => {
     try {
       const token = await getToken();
       if (!token) throw new Error("Authentication token not found");
-
       const response = await axios.delete(
         `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices/${deleteNoticeId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
       if (response.data.success) {
-        // Update local state immediately
-        setNotices((prevNotices) => {
-          const updatedNotices = prevNotices.filter((notice) => notice._id !== deleteNoticeId);
-          console.log("Updated notices:", updatedNotices); // Debug log
-          return updatedNotices;
-        });
+        setNotices((prev) => prev.filter((n) => n._id !== deleteNoticeId));
         toast.success(response.data.message || "Notice deleted successfully");
       } else {
         toast.error(response.data.message || "Failed to delete notice");
       }
     } catch (error) {
-      console.error("Delete error:", error.message); // Debug log
       toast.error("Error deleting notice. Please try again.");
     } finally {
       setShowDeleteDialog(false);
@@ -175,17 +167,17 @@ const ManageNotices = () => {
 
   return (
     <div className="w-full bg-white">
-      <Title
-        title="Manage Notices"
-        subTitle="Create, edit, or remove community notices."
-      />
+      <Title title="Manage Notices" subTitle="Create, edit, or remove community notices." />
+
       {loading && (
         <div className="flex justify-center items-center h-[50vh]">
-          <div className="animate-spin h-8 w-8 text-gray-600" />
+          <div className="animate-spin h-8 w-8 border-4 border-emerald-600 border-t-transparent rounded-full" />
         </div>
       )}
+
       {!loading && (
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Form */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -249,14 +241,14 @@ const ManageNotices = () => {
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
                 {imagePreview && (
-                  <img src={imagePreview} alt="Preview" className="mt-2 h-24 rounded-md" />
+                  <img src={imagePreview} alt="Preview" className="mt-2 h-24 w-full object-cover rounded-md" />
                 )}
               </div>
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="bg-[var(--color-primary)] text-white rounded-md py-2 px-4 hover:bg-blue-700"
+                  className="bg-emerald-600 text-white rounded-md py-2 px-4 hover:bg-emerald-700 w-full sm:w-auto"
                 >
                   {loading ? "Saving..." : formData._id ? "Update" : "Add"}
                 </Button>
@@ -268,7 +260,7 @@ const ManageNotices = () => {
                       setFormData({ _id: null, title: "", date: "", summary: "", content: "", image: null });
                       setImagePreview("");
                     }}
-                    className="text-gray-600 border-gray-300"
+                    className="text-gray-600 border-gray-300 w-full sm:w-auto"
                   >
                     Cancel
                   </Button>
@@ -276,6 +268,8 @@ const ManageNotices = () => {
               </div>
             </form>
           </motion.div>
+
+          {/* Notice List – MOBILE RESPONSIVE */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -283,69 +277,83 @@ const ManageNotices = () => {
             className="lg:col-span-2 bg-white border border-gray-300 rounded-md p-6 shadow-sm"
           >
             <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">Notice List</h3>
-            <div className="space-y-4">
-              {notices.map((notice) => (
-                <motion.div
-                  key={notice._id}
-                  initial={{ opacity: 1 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)] transition-all"
-                >
-                  <div className="flex gap-4">
+            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+              {notices.length === 0 ? (
+                <p className="text-gray-500 text-center py-8 font-outfit">No notices available.</p>
+              ) : (
+                notices.map((notice) => (
+                  <motion.div
+                    key={notice._id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.3 }}
+                    className="p-4 border border-gray-200 rounded-lg hover:border-emerald-500 transition-all bg-gray-50/50"
+                  >
+                    {/* Mobile: Image on top */}
                     {notice.image && (
-                      <img src={notice.image} alt={notice.title} className="h-24 w-24 object-cover rounded-md" />
+                      <div className="mb-3 -mx-4 -mt-4 rounded-t-lg overflow-hidden">
+                        <img
+                          src={notice.image}
+                          alt={notice.title}
+                          className="w-full h-48 object-cover"
+                        />
+                      </div>
                     )}
-                    <div className="flex-1">
-                      <h4 className="font-playfair text-base font-semibold text-gray-800">{notice.title}</h4>
-                      <p className="text-gray-600 font-outfit">{notice.date} | Created: {new Date(notice.createdAt).toLocaleDateString()}</p>
-                      <p className="text-gray-600 font-outfit">{notice.summary}</p>
-                      <p className="text-gray-600 font-outfit mt-1">{notice.content}</p>
-                      <div className="flex gap-2 mt-2">
+
+                    <div className={notice.image ? "px-1" : ""}>
+                      <h4 className="font-playfair text-base font-semibold text-gray-800 line-clamp-2">
+                        {notice.title}
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {notice.date} | Posted: {new Date(notice.createdAt).toLocaleDateString()}
+                      </p>
+                      <p className="text-sm text-gray-700 mt-2 line-clamp-2">{notice.summary}</p>
+                      <p className="text-sm text-gray-600 mt-1 line-clamp-3">{notice.content}</p>
+
+                      {/* Action Buttons – Stack on Mobile */}
+                      <div className="flex flex-col sm:flex-row gap-2 mt-3">
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleEdit(notice)}
-                          className="text-[var(--color-primary)]"
+                          className="text-emerald-600 border-emerald-600 hover:bg-emerald-50 flex-1 sm:flex-initial"
                         >
-                          <Edit className="h-4 w-4 mr-1" /> Edit
+                          <Edit className="h-3.5 w-3.5 mr-1" /> Edit
                         </Button>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleDelete(notice._id, notice.title)}
-                          className="text-red-500"
+                          className="text-red-600 border-red-600 hover:bg-red-50 flex-1 sm:flex-initial"
                         >
-                          <Trash2 className="h-4 w-4 mr-1" /> Delete
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
                         </Button>
                       </div>
                     </div>
-                  </div>
-                </motion.div>
-              ))}
-              {notices.length === 0 && (
-                <p className="text-gray-500 font-outfit">No notices available.</p>
+                  </motion.div>
+                ))
               )}
             </div>
           </motion.div>
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Notice</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the notice "{deleteNoticeTitle}"? This action cannot be undone.
+              Are you sure you want to delete "<strong>{deleteNoticeTitle}</strong>"? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-red-500 hover:bg-red-600 text-white"
+              className="bg-red-600 hover:bg-red-700 text-white"
             >
               Delete
             </AlertDialogAction>
