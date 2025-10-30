@@ -1,15 +1,15 @@
+// models/Notification.js
 import mongoose from "mongoose";
 
 const notificationSchema = new mongoose.Schema(
   {
-    memberId: { type: String, ref: "Member", required: true },
-    message: { type: String, required: true },
-    date: { type: Date, default: Date.now },
-    read: { type: Boolean, default: false },
+    type: { type: String, required: true, enum: ["Member", "Notice", "FAQ", "Gallery", "Question", "MemberUpdate"] },
+    content: { type: String, required: true },
+    clerkUserId: { type: String },           // <-- for member-specific notifications
+    adminOnly: { type: Boolean, default: true },
+    createdAt: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
 
-const Notification = mongoose.model("Notification", notificationSchema);
-
-export default Notification;
+export default mongoose.model("Notification", notificationSchema);

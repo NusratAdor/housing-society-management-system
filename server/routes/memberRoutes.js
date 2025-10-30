@@ -1,10 +1,17 @@
+// routes/memberRoutes.js
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { createMemberProfile, getMemberProfile } from "../controllers/memberController.js";
+import {
+  createMemberProfile,
+  getMemberProfile,
+  requestAdmin, // New import
+} from "../controllers/memberController.js";
 
-const memberRouter = express.Router();
+const router = express.Router();
 
-memberRouter.post("/", protect, createMemberProfile);
-memberRouter.get("/me", protect, getMemberProfile);
+// Member routes
+router.post("/", protect, createMemberProfile);
+router.get("/me", protect, getMemberProfile);
+router.post("/request-admin", protect, requestAdmin); // New route
 
-export default memberRouter;
+export default router;

@@ -1,10 +1,21 @@
+// routes/notificationRoutes.js
 import express from "express";
-import { protect, protectAdmin } from "../middleware/authMiddleware.js";
-import { getNotifications, createNotification } from "../controllers/notificationController.js";
+import { protect } from "../middleware/authMiddleware.js";
+import { isAdmin } from "../middleware/adminMiddleware.js";
+import {
+  getAdminNotifications,
+  deleteAllNotifications,
+  getMemberNotifications,
+} from "../controllers/notificationController.js";
 
-const notificationRouter = express.Router();
+const router = express.Router();
 
-notificationRouter.get("/me", protect, getNotifications);
-notificationRouter.post("/", protectAdmin, createNotification);
+// === ADMIN ROUTES (admin-only) ===
+router.use(protect, isAdmin);
+router.get("/", getAdminNotifications);
+router.delete("/", deleteAllNotifications);
 
-export default notificationRouter;
+// === MEMBER ROUTE (any authenticated user) ===
+router.get("/me", protect, getMemberNotifications);
+
+export default router;

@@ -1,10 +1,12 @@
-import React, { useState } from "react";
+// src/pages/CreateProfile.jsx
+import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { useUser } from "@clerk/clerk-react";
 import { useAppContext } from "../context/AppContext";
+import { Navigate } from "react-router-dom";
 
 const CreateProfile = () => {
-  const { getToken, navigate, axios, setMemberProfile } = useAppContext();
+  const { getToken, navigate, axios, setMemberProfile, memberProfile, loadingProfile } = useAppContext();
   const { user } = useUser();
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
@@ -13,57 +15,120 @@ const CreateProfile = () => {
   const [designation, setDesignation] = useState("");
   const [membershipNo, setMembershipNo] = useState("");
   const [plotNo, setPlotNo] = useState("");
-  const [phoneError, setPhoneError] = useState(""); // Track real-time phone error
+  const [phoneError, setPhoneError] = useState("");
+  const [membershipError, setMembershipError] = useState("");
+
+  // BLOCK RE-ENTRY: If profile exists → redirect
+  useEffect(() => {
+    if (!loadingProfile && memberProfile) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [memberProfile, loadingProfile, navigate]);
+
+  // Show loading while checking
+  if (loadingProfile) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-gray-600 font-outfit">Loading profile...</div>
+      </div>
+    );
+  }
+
+  // If already has profile → redirect
+  if (memberProfile) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // ... rest of your existing code (normalizePhone, validate, etc.)
+  const normalizePhone = (input) => {
+    let phone = input.trim();
+    if (phone.startsWith("+880")) phone = phone.replace("+880", "0");
+    else if (phone.startsWith("880")) phone = phone.replace("880", "0");
+    phone = phone.replace(/[^0-9]/g, "");
+    return phone;
+  };
 
   const validatePhone = (input) => {
-    const normalizedPhone = input.replace(/[\s-+]/g, "").replace(/^\+880/, "");
-    const phoneRegex = /^(013|014|015|016|017|018|019)\d{0,8}$/;
-    if (!input) {
-      setPhoneError(""); // Clear error if empty
-      return true;
-    }
-    if (!phoneRegex.test(normalizedPhone)) {
-      setPhoneError("Please enter a valid mobile number");
+    if (/[^0-9+]/.test(input)) {
+      setPhoneError("Invalid phone number");
       return false;
     }
-    setPhoneError(""); // Clear error if valid
+    const phone = normalizePhone(input);
+    if (!phone || phone === "0" || phone === "01") {
+      setPhoneError("");
+      return true;
+    }
+    if (!phone.startsWith("01")) {
+      setPhoneError("Must start with 01");
+      return false;
+    }
+    if (phone.length < 11) {
+      setPhoneError("");
+      return true;
+    }
+    if (!/^(013|014|015|016|017|018|019)\d{8}$/.test(phone)) {
+      setPhoneError("Invalid phone number");
+      return false;
+    }
+    setPhoneError("");
     return true;
   };
 
-  const validateForm = () => {
-    const normalizedPhone = phone.replace(/[\s-+]/g, "").replace(/^\+880/, "");
-    const phoneRegex = /^(013|014|015|016|017|018|019)\d{8}$/;
-    if (!phoneRegex.test(normalizedPhone)) {
-      toast.error("Phone number must be a valid 11-digit Bangladeshi mobile number");
+  const validateMembership = (value) => {
+    if (!/^[A-Za-z0-9-]*$/.test(value)) {
+      setMembershipError("Invalid membership");
       return false;
     }
-    if (!/^[A-Za-z0-9-]+$/.test(membershipNo)) {
-      toast.error("Membership number must contain only letters, numbers, or hyphens");
-      return false;
-    }
+    setMembershipError("");
     return true;
   };
 
   const handlePhoneChange = (e) => {
     const value = e.target.value;
     setPhone(value);
-    validatePhone(value); // Validate in real-time
+    validatePhone(value);
+  };
+
+  const handleMembershipChange = (e) => {
+    const value = e.target.value;
+    setMembershipNo(value);
+    validateMembership(value);
+  };
+
+  const validateForm = () => {
+    const normalized = normalizePhone(phone);
+    if (!/^(013|014|015|016|017|018|019)\d{8}$/.test(normalized)) {
+      toast.error("Please enter a valid 11-digit Bangladeshi number");
+      return false;
+    }
+    if (!/^[A-Za-z0-9-]+$/.test(membershipNo)) {
+      toast.error("Membership number invalid");
+      return false;
+    }
+    return true;
   };
 
   const onSubmitHandler = async (e) => {
     e.preventDefault();
-    if (loading || phoneError) return;
+    if (loading || phoneError || membershipError) return;
     if (!validateForm()) return;
     setLoading(true);
-
     try {
       const token = await getToken();
-      const email = user?.emailAddresses[0]?.emailAddress;
-      if (!email) {
-        throw new Error("No email address found in Clerk profile");
-      }
-      const normalizedPhone = phone.replace(/[\s-+]/g, "").replace(/^\+880/, "");
-      const formData = { name, email, phone: normalizedPhone, address, designation, membershipNo, plotNo };
+      const email = user?.primaryEmailAddress?.emailAddress;
+      if (!email) throw new Error("No primary email found in Clerk profile");
+
+      const normalizedPhone = normalizePhone(phone);
+      const formData = {
+        name,
+        email,
+        phone: normalizedPhone,
+        address,
+        designation,
+        membershipNo,
+        plotNo,
+      };
+
       const { data } = await axios.post("/api/members", formData, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -74,24 +139,20 @@ const CreateProfile = () => {
         navigate("/dashboard");
       } else {
         toast.error(data.message || "Could not create profile");
-        setLoading(false);
       }
     } catch (error) {
       toast.error(error.response?.data?.message || error.message || "Error creating profile");
+    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-50 px-4">
-      <form
-        onSubmit={onSubmitHandler}
-        className="bg-white shadow-lg rounded-xl p-8 w-full max-w-2xl"
-      >
+      <form onSubmit={onSubmitHandler} className="bg-white shadow-lg rounded-xl p-8 w-full max-w-2xl">
         <h2 className="text-2xl font-semibold mb-6 text-center">
-          🏡 Create Your Member Profile
+          Create Your Member Profile
         </h2>
-
         {[
           { label: "Full Name", value: name, setValue: setName, type: "text" },
           {
@@ -99,12 +160,19 @@ const CreateProfile = () => {
             value: phone,
             setValue: setPhone,
             type: "tel",
-            
             error: phoneError,
+            onChange: handlePhoneChange,
           },
           { label: "Address", value: address, setValue: setAddress, type: "text" },
           { label: "Designation", value: designation, setValue: setDesignation, type: "text" },
-          { label: "Membership No", value: membershipNo, setValue: setMembershipNo, type: "text" },
+          {
+            label: "Membership No",
+            value: membershipNo,
+            setValue: setMembershipNo,
+            type: "text",
+            error: membershipError,
+            onChange: handleMembershipChange,
+          },
           { label: "Plot No", value: plotNo, setValue: setPlotNo, type: "text" },
         ].map((f) => (
           <div key={f.label} className="mb-4">
@@ -112,7 +180,7 @@ const CreateProfile = () => {
             <input
               type={f.type}
               value={f.value}
-              onChange={f.label === "Phone Number" ? handlePhoneChange : (e) => f.setValue(e.target.value)}
+              onChange={f.onChange || ((e) => f.setValue(e.target.value))}
               required
               placeholder={f.placeholder || ""}
               className={`border ${
@@ -122,12 +190,11 @@ const CreateProfile = () => {
             {f.error && <p className="text-red-500 text-sm mt-1">{f.error}</p>}
           </div>
         ))}
-
         <button
           type="submit"
-          disabled={loading || phoneError}
+          disabled={loading || phoneError || membershipError}
           className={`w-full py-2 rounded-lg text-white transition ${
-            loading || phoneError
+            loading || phoneError || membershipError
               ? "bg-gray-400 cursor-not-allowed"
               : "bg-indigo-600 hover:bg-indigo-700"
           }`}

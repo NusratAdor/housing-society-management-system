@@ -19,8 +19,18 @@ const clerkWebhooks = async (req, res) => {
 
     switch (type) {
       case "user.updated": {
+        // Find the primary email using primary_email_address_id
+        const primaryEmail = data.email_addresses.find(
+          (email) => email.id === data.primary_email_address_id
+        )?.email_address;
+
+        if (!primaryEmail) {
+          console.log(`No primary email found for clerkUserId: ${data.id}`);
+          break;
+        }
+
         const memberData = {
-          email: data.email_addresses[0].email_address,
+          email: primaryEmail,
           name: data.first_name + " " + data.last_name,
         };
         const updatedMember = await Member.findOneAndUpdate(

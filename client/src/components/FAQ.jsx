@@ -45,15 +45,7 @@ const FAQSection = () => {
             </div>
           ))}
         </div>
-        <button
-          onClick={() => {
-            navigate("/faqs");
-            window.scrollTo(0, 0);
-          }}
-          className="mt-12 px-4 py-2 text-sm font-medium border border-gray-300 rounded-full bg-white hover:bg-gray-50 transition-all cursor-pointer"
-        >
-          View All FAQs
-        </button>
+        
       </div>
     </div>
   );

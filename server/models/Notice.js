@@ -1,16 +1,16 @@
+// models/Notice.js
 import mongoose from "mongoose";
 
 const noticeSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
-    summary: { type: String },
-    date: { type: Date, default: Date.now },
-    image: { type: String },
-    content: { type: String },
+    date: { type: String, required: true }, // Stored as string (e.g., "2025-10-27")
+    summary: { type: String, required: true },
+    content: { type: String, required: true },
+    image: { type: String }, // Cloudinary URL
+    createdBy: { type: String, required: true }, // Clerk userId of admin
   },
   { timestamps: true }
 );
 
-const Notice = mongoose.model("Notice", noticeSchema);
-
-export default Notice;
+export default mongoose.model("Notice", noticeSchema);

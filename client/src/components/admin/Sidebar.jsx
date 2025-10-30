@@ -1,6 +1,13 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { Users, Bell, MessageSquare, Image, LayoutDashboard } from "lucide-react";
+import {
+  Users,
+  Bell,
+  MessageSquare,
+  Image,
+  LayoutDashboard,
+  DollarSign,               // <-- NEW ICON
+} from "lucide-react";
 
 const Sidebar = () => {
   const sidebarLinks = [
@@ -9,6 +16,10 @@ const Sidebar = () => {
     { name: "Manage Notices", path: "/admin/manage-notices", icon: <Bell className="min-h-6 min-w-6" /> },
     { name: "Manage FAQs", path: "/admin/manage-faqs", icon: <MessageSquare className="min-h-6 min-w-6" /> },
     { name: "Manage Gallery", path: "/admin/manage-gallery", icon: <Image className="min-h-6 min-w-6" /> },
+
+    // ------------------- NEW ITEM -------------------
+    { name: "Manage Payments", path: "/admin/payments", icon: <DollarSign className="min-h-6 min-w-6" /> },
+    // ------------------------------------------------
   ];
 
   return (

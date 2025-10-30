@@ -1,64 +1,129 @@
-import React, { useState } from "react";
-import { faqsDummyData } from "../../assets/assets";
+// pages/admin/ManageFAQs.jsx
+import React, { useState, useEffect } from "react";
 import Title from "../../components/Title";
 import { motion } from "framer-motion";
+import axios from "axios";
+import { useAuth } from "@clerk/clerk-react";
+import { toast } from "react-hot-toast";
+import { formatDate } from "../../utils/formatDate";
 
 const ManageFAQs = () => {
-  const [faqs, setFaqs] = useState(faqsDummyData);
-  const [pendingQuestions, setPendingQuestions] = useState([
-    { _id: "pending_001", question: "How to book the clubhouse?", askedBy: "Alice Brown", askedAt: "Jul 25, 2025" },
-    { _id: "pending_002", question: "What are the parking rules?", askedBy: "Bob Wilson", askedAt: "Jul 26, 2025" },
-  ]);
-  const [formData, setFormData] = useState({ _id: null, question: "", answer: "", askedBy: "", answeredAt: "" });
+  const { getToken } = useAuth();
+  const [pendingQuestions, setPendingQuestions] = useState([]);
+  const [faqs, setFaqs] = useState([]);
+  const [formData, setFormData] = useState({
+    _id: null,
+    question: "",
+    answer: "",
+    askedBy: "",
+    clerkUserId: "",
+  });
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
-
-  const handleAnswer = (question) => {
-    setFormData({ _id: null, question: question.question, answer: "", askedBy: question.askedBy, answeredAt: "" });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const answeredAt = new Date().toLocaleDateString();
-    if (formData._id) {
-      console.log("Update FAQ:", formData);
-      setFaqs(faqs.map((f) => (f._id === formData._id ? { ...formData, answeredAt } : f)));
-    } else {
-      console.log("Add FAQ:", formData);
-      setFaqs([...faqs, { ...formData, _id: `faq_${faqs.length + 1}`.padStart(3, "0"), answeredAt }]);
-      setPendingQuestions(pendingQuestions.filter((q) => q.question !== formData.question));
+  const fetchData = async () => {
+    try {
+      const token = await getToken();
+      const [pRes, fRes] = await Promise.all([
+        axios.get("/api/faqs/pending", { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get("/api/faqs", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      setPendingQuestions(pRes.data.pending || []);
+      setFaqs(fRes.data.faqs || []);
+    } catch (err) {
+      toast.error("Failed to load FAQs");
     }
-    setFormData({ _id: null, question: "", answer: "", askedBy: "", answeredAt: "" });
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [getToken]);
+
+  const handleAnswer = (q) => {
+    setFormData({
+      _id: null,
+      question: q.question,
+      answer: "",
+      askedBy: q.askedBy || "Member",
+      clerkUserId: q.clerkUserId,
+    });
   };
 
   const handleEdit = (faq) => {
     setFormData(faq);
   };
 
-  const handleDelete = (id) => {
-    console.log("Delete FAQ:", id);
-    setFaqs(faqs.filter((f) => f._id !== id));
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const token = await getToken();
+      if (formData._id) {
+        const { data } = await axios.put(
+          `/api/faqs/${formData._id}`,
+          { answer: formData.answer },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (data.success) {
+          setFaqs((prev) => prev.map((f) => (f._id === formData._id ? data.faq : f)));
+          toast.success("FAQ updated");
+        }
+      } else {
+        const { data } = await axios.post(
+          "/api/faqs",
+          {
+            question: formData.question,
+            answer: formData.answer,
+            askedBy: formData.askedBy,
+            clerkUserId: formData.clerkUserId,
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (data.success) {
+          setPendingQuestions((prev) => prev.filter((p) => p.question !== formData.question));
+          setFaqs((prev) => [...prev, data.faq]);
+          toast.success("Question answered");
+        }
+      }
+      setFormData({ _id: null, question: "", answer: "", askedBy: "", clerkUserId: "" });
+    } catch {
+      toast.error("Failed to submit");
+    }
   };
 
-  const handleDeletePending = (id) => {
-    console.log("Delete pending question:", id);
-    setPendingQuestions(pendingQuestions.filter((q) => q._id !== id));
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this FAQ?")) return;
+    try {
+      const token = await getToken();
+      await axios.delete(`/api/faqs/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setFaqs((prev) => prev.filter((f) => f._id !== id));
+      toast.success("FAQ deleted");
+    } catch {
+      toast.error("Failed to delete");
+    }
+  };
+
+  const handleDeletePending = async (id) => {
+    if (!window.confirm("Delete pending question?")) return;
+    try {
+      const token = await getToken();
+      await axios.delete(`/api/faqs/pending/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setPendingQuestions((prev) => prev.filter((p) => p._id !== id));
+      toast.success("Pending question removed");
+    } catch {
+      toast.error("Failed to delete");
+    }
   };
 
   return (
     <div className="w-full bg-white">
-      <Title
-        title="Manage FAQs"
-        subTitle="Answer member questions and manage FAQs."
-      />
+      <Title title="Manage FAQs" subTitle="Answer member questions and manage FAQs." />
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Form */}
         <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5 }}
           className="bg-white border border-gray-300 rounded-md p-6 shadow-sm"
         >
           <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
@@ -69,108 +134,100 @@ const ManageFAQs = () => {
               <label className="block text-sm text-gray-600 mb-1 font-outfit">Question</label>
               <input
                 type="text"
-                name="question"
                 value={formData.question}
-                onChange={handleChange}
-                className="w-full p-2 border border-gray-300 rounded-md"
-                readOnly={!!formData._id || !!formData.askedBy}
-                required
+                readOnly
+                className="w-full p-2 border border-gray-300 rounded-md bg-gray-50"
               />
             </div>
             <div className="mb-4">
               <label className="block text-sm text-gray-600 mb-1 font-outfit">Asked By</label>
               <input
                 type="text"
-                name="askedBy"
                 value={formData.askedBy}
-                onChange={handleChange}
-                className="w-full p-2 border border-gray-300 rounded-md"
-                readOnly={!!formData.askedBy}
+                readOnly
+                className="w-full p-2 border border-gray-300 rounded-md bg-gray-50"
               />
             </div>
             <div className="mb-4">
               <label className="block text-sm text-gray-600 mb-1 font-outfit">Answer</label>
               <textarea
-                name="answer"
                 value={formData.answer}
-                onChange={handleChange}
+                onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
                 className="w-full p-2 border border-gray-300 rounded-md"
                 rows="4"
                 required
               />
             </div>
-            <div className="flex gap-4">
-              <button
-                type="submit"
-                className="bg-[var(--color-primary)] text-white rounded-md py-2 px-4 font-outfit hover:bg-blue-700"
-              >
-                {formData._id ? "Update" : "Answer"}
-              </button>
-              {(formData._id || formData.askedBy) && (
-                <button
-                  type="button"
-                  onClick={() => setFormData({ _id: null, question: "", answer: "", askedBy: "", answeredAt: "" })}
-                  className="bg-gray-500 text-white rounded-md py-2 px-4 font-outfit hover:bg-gray-600"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
+            <button
+              type="submit"
+              className="bg-[var(--color-primary)] text-white rounded-md py-2 px-4 font-outfit hover:bg-blue-700 w-full"
+            >
+              {formData._id ? "Update Answer" : "Submit Answer"}
+            </button>
           </form>
         </motion.div>
+
+        {/* Pending + Answered */}
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5 }}
           className="lg:col-span-2 bg-white border border-gray-300 rounded-md p-6 shadow-sm"
         >
           <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">Pending Questions</h3>
-          <div className="space-y-4 mb-6">
-            {pendingQuestions.length === 0 && <p className="text-gray-600 font-outfit">No pending questions.</p>}
-            {pendingQuestions.map((question) => (
-              <div
-                key={question._id}
-                className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)]"
-              >
-                <h4 className="font-playfair text-base font-semibold text-gray-800">{question.question}</h4>
-                <p className="text-gray-600 font-outfit">Asked by: {question.askedBy} ({question.askedAt})</p>
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={() => handleAnswer(question)}
-                    className="text-[var(--color-primary)] hover:underline font-outfit"
-                  >
-                    Answer
-                  </button>
-                  <button
-                    onClick={() => handleDeletePending(question._id)}
-                    className="text-red-500 hover:underline font-outfit"
-                  >
-                    Delete
-                  </button>
+          <div className="space-y-4 mb-8">
+            {pendingQuestions.length === 0 ? (
+              <p className="text-gray-500 font-outfit">No pending questions.</p>
+            ) : (
+              pendingQuestions.map((q) => (
+                <div
+                  key={q._id}
+                  className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)] transition-all"
+                >
+                  <h4 className="font-playfair text-base font-semibold text-gray-800">{q.question}</h4>
+                  <p className="text-gray-600 font-outfit text-sm">
+                    Asked by: <strong>{q.askedBy}</strong> • {formatDate(q.askedAt)}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => handleAnswer(q)}
+                      className="text-[var(--color-primary)] hover:underline font-outfit text-sm"
+                    >
+                      Answer
+                    </button>
+                    <button
+                      onClick={() => handleDeletePending(q._id)}
+                      className="text-red-500 hover:underline font-outfit text-sm"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
+
           <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">Answered FAQs</h3>
           <div className="space-y-4">
-            {faqs.map((faq) => (
+            {faqs.map((f) => (
               <div
-                key={faq._id}
-                className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)]"
+                key={f._id}
+                className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)] transition-all"
               >
-                <h4 className="font-playfair text-base font-semibold text-gray-800">{faq.question}</h4>
-                <p className="text-gray-600 font-outfit">Answer: {faq.answer}</p>
-                <p className="text-gray-600 font-outfit">Asked by: {faq.askedBy} | Answered: {faq.answeredAt}</p>
-                <div className="flex gap-2 mt-2">
+                <h4 className="font-playfair text-base font-semibold text-gray-800">{f.question}</h4>
+                <p className="text-gray-600 font-outfit mt-1">{f.answer}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Asked by: {f.askedBy} • Answered: {formatDate(f.answeredAt)}
+                </p>
+                <div className="mt-2 flex gap-2">
                   <button
-                    onClick={() => handleEdit(faq)}
-                    className="text-[var(--color-primary)] hover:underline font-outfit"
+                    onClick={() => handleEdit(f)}
+                    className="text-[var(--color-primary)] hover:underline font-outfit text-sm"
                   >
                     Edit
                   </button>
                   <button
-                    onClick={() => handleDelete(faq._id)}
-                    className="text-red-500 hover:underline font-outfit"
+                    onClick={() => handleDelete(f._id)}
+                    className="text-red-500 hover:underline font-outfit text-sm"
                   >
                     Delete
                   </button>

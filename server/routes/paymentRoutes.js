@@ -1,11 +1,28 @@
+// routes/paymentRoutes.js
 import express from "express";
-import { protect, protectAdmin } from "../middleware/authMiddleware.js";
-import { getPaymentHistory, markPaymentAsPaid, createMonthlyPayment } from "../controllers/paymentController.js";
+import { protect } from "../middleware/authMiddleware.js";
+import {
+  createPaymentSession,
+  paymentCallback,
+  getMemberPayments,
+  getPendingPayments,
+  approvePayment,
+  rejectPayment,
+} from "../controllers/paymentController.js";
 
-const paymentRouter = express.Router();
+const router = express.Router();
 
-paymentRouter.get("/me", protect, getPaymentHistory);
-paymentRouter.put("/:id/pay", protect, markPaymentAsPaid);
-paymentRouter.post("/", protectAdmin, createMonthlyPayment);
+// PROTECTED ROUTES (Member)
+router.use(protect);                     // ← ADD THIS
+router.post("/create", createPaymentSession);
+router.get("/me", getMemberPayments);
 
-export default paymentRouter;
+// PUBLIC CALLBACK (IPN)
+router.post("/callback", paymentCallback);
+
+// ADMIN ROUTES
+router.get("/pending", getPendingPayments);
+router.put("/approve/:id", approvePayment);
+router.put("/reject/:id", rejectPayment);
+
+export default router;

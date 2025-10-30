@@ -1,10 +1,26 @@
+// routes/noticeRoutes.js
 import express from "express";
-import { protectAdmin } from "../middleware/authMiddleware.js";
-import { getNotices, createNotice } from "../controllers/noticeController.js";
+import { protect } from "../middleware/authMiddleware.js";
+import { isAdmin } from "../middleware/adminMiddleware.js";
+import upload from "../middleware/uploadMiddleware.js";
+import {
+  createNotice,
+  getNotices,
+  getNoticeById,
+  updateNotice,
+  deleteNotice,
+} from "../controllers/noticeController.js";
 
-const noticeRouter = express.Router();
+const router = express.Router();
 
-noticeRouter.get("/", getNotices);
-noticeRouter.post("/", protectAdmin, createNotice);
+// Public routes
+router.get("/", getNotices);
+router.get("/:id", getNoticeById);
 
-export default noticeRouter;
+// Admin-only routes
+router.use(protect, isAdmin);
+router.post("/", upload.single("image"), createNotice);
+router.put("/:id", upload.single("image"), updateNotice);
+router.delete("/:id", deleteNotice);
+
+export default router;

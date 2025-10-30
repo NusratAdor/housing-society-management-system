@@ -1,37 +1,51 @@
+// src/components/Hero.jsx
 import React from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { useUser } from "@clerk/clerk-react";
+import { useUser, useClerk } from "@clerk/clerk-react";
+import { useAppContext } from "../context/AppContext";
+import { useTranslation } from "react-i18next";
 
 const Hero = () => {
   const navigate = useNavigate();
   const { user } = useUser();
+  const { openSignIn } = useClerk();
+  const { memberProfile, loadingProfile, isAdmin } = useAppContext();
+  const { t } = useTranslation();
+
+  const handleMainButtonClick = () => {
+    if (isAdmin) return navigate("/admin");
+    if (memberProfile) return navigate("/dashboard");
+    if (!user) return openSignIn();
+    return navigate("/create-profile");
+  };
+
+  const mainButtonLabel = isAdmin
+    ? t("Admin Panel")
+    : memberProfile
+    ? t("Dashboard")
+    : t("Join or Log In to Get Started");
+
+  // true → show **white outlined** button
+  const isWhiteOutlined = isAdmin || memberProfile;
 
   return (
     <div className="relative h-screen w-full">
       {/* Background Image */}
       <div
         className="absolute inset-0 bg-[url('/src/assets/heroImage1.jpg')] bg-cover bg-center bg-no-repeat"
-        style={{ filter: "brightness(60%)" }} // Darken the image
+        style={{ filter: "brightness(60%)" }}
       ></div>
 
       {/* Overlay content */}
-      <div
-        className="
-          relative z-10 w-full max-w-7xl mx-auto 
-          flex flex-col h-full px-4 md:px-8
-          items-center justify-center
-          md:items-start md:justify-center text-center md:text-left
-          text-black
-        "
-      >
+      <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col h-full px-4 md:px-8 items-center justify-center md:items-start md:justify-center text-center md:text-left text-black">
         <motion.h1
           initial={{ opacity: 0, y: -30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
           className="font-playfair font-bold md:font-extrabold text-2xl sm:text-4xl md:text-5xl md:text-[56px] md:leading-[56px] max-w-xl mt-4 text-white"
         >
-          Government Officer's Housing Society (GOHS)
+          {t("Government Officer's Housing Society (GOHS)")}
         </motion.h1>
 
         <motion.p
@@ -40,39 +54,61 @@ const Hero = () => {
           transition={{ delay: 0.4, duration: 0.8 }}
           className="mt-2 max-w-lg text-sm md:text-base text-white"
         >
-          Connect with your community, manage your membership, track payments,
-          view notices, and stay updated — all in one secure platform designed
-          for our 500+ society members.
+          {t(
+            "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members."
+          )}
         </motion.p>
 
+        {/* HERO BUTTON – WHITE OUTLINED FOR ADMIN/MEMBER */}
         <motion.button
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.8, duration: 0.6 }}
-          onClick={() => navigate(user ? "/dashboard" : "/sign-up")}
-          className="mt-8 mb-6 flex items-center space-x-2 border border-white text-white text-xs rounded-full px-4 pr-1.5 py-1.5 hover:bg-[#2E8B57] transition font-outfit"
+          onClick={handleMainButtonClick}
+          className={`
+            mt-8 mb-6 flex items-center gap-2
+            rounded-full px-5 py-2
+            text-xs md:text-sm font-medium font-outfit
+            transition-all duration-300
+            group
+            ${
+              isWhiteOutlined
+                ? // WHITE OUTLINED
+                  "border-2 border-white text-white bg-transparent hover:bg-white/10"
+                : // FILLED EMERALD
+                  "bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:from-emerald-600 hover:to-teal-700 shadow-md hover:shadow-lg"
+            }
+          `}
           type="button"
         >
-          <span>
-            {user ? "Go to Dashboard" : "Join or Log In to Get Started"}
-          </span>
-          <span className="flex items-center justify-center size-6 p-1 rounded-full bg-[#2E8B57]">
+          <span>{mainButtonLabel}</span>
+
+          {/* Arrow – moves on hover */}
+          <motion.span
+            className={`
+              flex items-center justify-center size-5 rounded-full
+              ${isWhiteOutlined ? "bg-white/20 backdrop-blur-sm" : "bg-white/15 backdrop-blur-sm"}
+            `}
+            whileHover={{ x: 4 }}
+            transition={{ type: "spring", stiffness: 400, damping: 10 }}
+          >
             <svg
-              width="14"
-              height="11"
+              width="12"
+              height="10"
               viewBox="0 0 16 13"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
+              className="text-white"
             >
               <path
                 d="M1 6.5h14M9.5 1 15 6.5 9.5 12"
-                stroke="#fff"
-                strokeWidth="1.5"
+                stroke="currentColor"
+                strokeWidth="1"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
-          </span>
+          </motion.span>
         </motion.button>
       </div>
     </div>

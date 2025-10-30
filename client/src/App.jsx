@@ -1,12 +1,12 @@
-import React, { useEffect } from "react";
+// App.jsx
+import React from "react";
 import Navbar from "./components/Navbar";
-import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
+import { Routes, Route, useLocation, Navigate } from "react-router-dom";
 import {
   ClerkProvider,
   SignedIn,
   SignedOut,
   useAuth,
-  useUser,
 } from "@clerk/clerk-react";
 import Home from "./pages/Home";
 import Footer from "./components/Footer";
@@ -16,50 +16,28 @@ import ManageMembers from "./pages/admin/ManageMembers";
 import ManageNotices from "./pages/admin/ManageNotices";
 import ManageFAQs from "./pages/admin/ManageFAQs";
 import ManageGallery from "./pages/admin/ManageGallery";
+import ManagePayments from "./pages/admin/ManagePayments";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import MemberDashboard from "./pages/MemberDashboard";
 import Notices from "./pages/Notices";
+import NoticeDetail from "./pages/NoticeDetail";
 import Gallery from "./pages/Gallery";
 import Contact from "./pages/Contact";
 import CreateProfile from "./pages/CreateProfile";
-import axios from "axios";
 import { AnimatePresence, motion } from "framer-motion";
 import { useAppContext } from "./context/AppContext";
 import { Toaster } from "react-hot-toast";
 
-const App = () => {
-  const { pathname } = useLocation();
-  const { isLoaded, getToken } = useAuth();
-  const { user, memberProfile, fetchMemberProfile } = useAppContext();
 
-  const isAdminPath = pathname.startsWith("/admin");
-  const hideNavbarPaths = ["/sign-in", "/sign-up", "/create-profile"];
-  const hideNavbar = isAdminPath || hideNavbarPaths.includes(pathname);
+// PROTECTED ROUTE – FIXED
+// App.jsx (only ProtectedRoute part changed)
+const ProtectedRoute = ({ children, allowedRoles }) => {
+  const { memberProfile, loadingProfile } = useAppContext();
+  const { isSignedIn } = useAuth();
 
-  useEffect(() => {
-    const checkProfile = async () => {
-      if (!user) return;
-
-      try {
-        const token = await getToken();
-        const { data } = await axios.get(
-          `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/members/me`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-
-        if (data.success && data.member) {
-          if (!memberProfile) fetchMemberProfile();
-        }
-      } catch (error) {
-        // No redirect; let Navbar handle navigation
-      }
-    };
-
-    checkProfile();
-  }, [user, memberProfile, fetchMemberProfile, getToken]);
-
-  if (!isLoaded) {
+  // 1. Wait for Clerk + profile load
+  if (!isSignedIn || loadingProfile) {
     return (
       <div className="w-full h-screen flex items-center justify-center bg-white">
         <div className="text-gray-600 font-outfit">Loading...</div>
@@ -67,11 +45,41 @@ const App = () => {
     );
   }
 
+  // 2. No profile → force create profile
+  if (!memberProfile) {
+    return <Navigate to="/create-profile" replace />;
+  }
+
+  // 3. Role check
+  const userRole = memberProfile.role || "member";
+  if (!allowedRoles.includes(userRole)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+};
+
+const App = () => {
+  const { pathname } = useLocation();
+  const { isLoaded } = useAuth();
+  const { loadingProfile } = useAppContext();
+
+  if (!isLoaded || loadingProfile) {
+    return (
+      <div className="w-full h-screen flex items-center justify-center bg-white">
+        <div className="text-gray-600 font-outfit">Loading...</div>
+      </div>
+    );
+  }
+
+  const isAdminPath = pathname.startsWith("/admin");
+  const hideNavbarPaths = ["/sign-in", "/sign-up", "/create-profile"];
+  const hideNavbar = isAdminPath || hideNavbarPaths.includes(pathname);
+
   return (
     <div>
       <Toaster />
       {!hideNavbar && <Navbar />}
-
       <div
         className={`${
           pathname !== "/" && !hideNavbar ? "mt-[50px]" : ""
@@ -86,10 +94,14 @@ const App = () => {
             transition={{ duration: 0.25, ease: "easeInOut" }}
           >
             <Routes location={pathname} key={pathname}>
+              {/* Public Routes */}
               <Route path="/" element={<Home />} />
               <Route path="/notices" element={<Notices />} />
+              <Route path="/notices/:id" element={<NoticeDetail />} />
               <Route path="/gallery" element={<Gallery />} />
               <Route path="/contact" element={<Contact />} />
+
+              {/* Auth Routes */}
               <Route
                 path="/sign-in"
                 element={
@@ -106,6 +118,8 @@ const App = () => {
                   </SignedOut>
                 }
               />
+
+              {/* Member Routes */}
               <Route
                 path="/create-profile"
                 element={
@@ -118,15 +132,21 @@ const App = () => {
                 path="/dashboard"
                 element={
                   <SignedIn>
-                    <MemberDashboard />
+                    <ProtectedRoute allowedRoles={["member"]}>
+                      <MemberDashboard />
+                    </ProtectedRoute>
                   </SignedIn>
                 }
               />
+
+              {/* Admin Routes */}
               <Route
                 path="/admin"
                 element={
                   <SignedIn>
-                    <Layout />
+                    <ProtectedRoute allowedRoles={["admin"]}>
+                      <Layout />
+                    </ProtectedRoute>
                   </SignedIn>
                 }
               >
@@ -135,12 +155,16 @@ const App = () => {
                 <Route path="manage-notices" element={<ManageNotices />} />
                 <Route path="manage-faqs" element={<ManageFAQs />} />
                 <Route path="manage-gallery" element={<ManageGallery />} />
+                <Route path="payments" element={<ManagePayments />} />
               </Route>
+
+              {/* Catch All */}
+              <Route path="*" element={<Navigate to="/" />} />
+              
             </Routes>
           </motion.div>
         </AnimatePresence>
       </div>
-
       {!hideNavbar && <Footer />}
     </div>
   );
