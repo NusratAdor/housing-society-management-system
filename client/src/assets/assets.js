@@ -151,7 +151,7 @@ export const galleryDummyData = [
     title: "Housing Load",
     image: eventImage2,
     date: "Mar 15, 2025",
-    description: "Residents came together for a successful cleanup drive.",
+    description: "",
   },
   {
     _id: "gallery_003",
