@@ -281,58 +281,60 @@ const ManageNotices = () => {
               {notices.length === 0 ? (
                 <p className="text-gray-500 text-center py-8 font-outfit">No notices available.</p>
               ) : (
-                notices.map((notice) => (
-                  <motion.div
-                    key={notice._id}
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.3 }}
-                    className="p-4 border border-gray-200 rounded-lg hover:border-emerald-500 transition-all bg-gray-50/50"
-                  >
-                    {/* Mobile: Image on top */}
-                    {notice.image && (
-                      <div className="mb-3 -mx-4 -mt-4 rounded-t-lg overflow-hidden">
-                        <img
-                          src={notice.image}
-                          alt={notice.title}
-                          className="w-full h-48 object-cover"
-                        />
-                      </div>
-                    )}
+                {notices.map((notice) => (
+  <motion.div
+    key={notice._id}
+    layout
+    initial={{ opacity: 0, y: 10 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, scale: 0.95 }}
+    transition={{ duration: 0.3 }}
+    className="p-4 border border-gray-200 rounded-lg hover:border-[var(--color-primary)] transition-all bg-gray-50/50"
+  >
+    {notice.image && (
+      <div className="mb-3 -mx-4 -mt-4 rounded-t-lg overflow-hidden">
+        <img
+          src={notice.image}
+          alt={notice.title}
+          className="w-full h-48 object-cover"
+        />
+      </div>
+    )}
 
-                    <div className={notice.image ? "px-1" : ""}>
-                      <h4 className="font-playfair text-base font-semibold text-gray-800 line-clamp-2">
-                        {notice.title}
-                      </h4>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {notice.date} | Posted: {new Date(notice.createdAt).toLocaleDateString()}
-                      </p>
-                      <p className="text-sm text-gray-700 mt-2 line-clamp-2">{notice.summary}</p>
-                      <p className="text-sm text-gray-600 mt-1 line-clamp-3">{notice.content}</p>
+    <div className={notice.image ? "px-1" : ""}>
+      <h4 className="font-playfair text-base font-semibold text-gray-800 line-clamp-2">
+        {notice.title}
+      </h4>
+      <p className="text-xs text-gray-500 mt-1">
+        {notice.date} | Posted: {new Date(notice.createdAt).toLocaleDateString()}
+      </p>
+      <p className="text-sm text-gray-700 mt-2 line-clamp-2">{notice.summary}</p>
+      <p className="text-sm text-gray-600 mt-1 line-clamp-3">{notice.content}</p>
 
-                      {/* Action Buttons – Stack on Mobile */}
-                      <div className="flex flex-col sm:flex-row gap-2 mt-3">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEdit(notice)}
-                          className="text-emerald-600 border-emerald-600 hover:bg-emerald-50 flex-1 sm:flex-initial"
-                        >
-                          <Edit className="h-3.5 w-3.5 mr-1" /> Edit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleDelete(notice._id, notice.title)}
-                          className="text-red-600 border-red-600 hover:bg-red-50 flex-1 sm:flex-initial"
-                        >
-                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
+      <div className="flex flex-col sm:flex-row gap-2 mt-3">
+        {/* EDIT BUTTON – MATCHES DESKTOP */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleEdit(notice)}
+          className="text-[var(--color-primary)] border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 flex-1 sm:flex-initial"
+        >
+          <Edit className="h-3.5 w-3.5 mr-1" /> Edit
+        </Button>
+
+        {/* DELETE BUTTON – RED (CONSISTENT) */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => handleDelete(notice._id, notice.title)}
+          className="text-red-600 border-red-600 hover:bg-red-50 flex-1 sm:flex-initial"
+        >
+          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+        </Button>
+      </div>
+    </div>
+  </motion.div>
+))}
                 ))
               )}
             </div>
