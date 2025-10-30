@@ -9,7 +9,7 @@ const Navbar = () => {
   return (
     <div className="flex items-center justify-between px-4 md:px-8 border-b border-gray-300 py-3 bg-white transition-all duration-300">
       <Link to="/admin" className="flex items-center gap-2">
-        <img src={assets.logo} alt="Logo" className="h-9 opacity-80" />
+        <img src={assets.logoScrolled} alt="Logo" className="h-9 opacity-80" />
         
       </Link>
       <div className="flex items-center gap-4">
