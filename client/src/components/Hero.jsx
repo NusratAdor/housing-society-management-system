@@ -13,20 +13,24 @@ const Hero = () => {
   const { memberProfile, loadingProfile, isAdmin } = useAppContext();
   const { t } = useTranslation();
 
+  // EXACT SAME LOGIC AS NAVBAR
   const handleMainButtonClick = () => {
     if (isAdmin) return navigate("/admin");
     if (memberProfile) return navigate("/dashboard");
-    if (!user) return openSignIn();
-    return navigate("/create-profile");
+    if (!user) return openSignIn(); // Show Clerk modal
+    return navigate("/create-profile"); // Logged in, no profile
   };
 
+  // EXACT SAME LABEL LOGIC AS NAVBAR
   const mainButtonLabel = isAdmin
     ? t("Admin Panel")
     : memberProfile
     ? t("Dashboard")
-    : t("Join or Log In to Get Started");
+    : !user
+    ? t("Join or Log In to Get Started")
+    : t("Create Profile"); // ← THIS IS THE KEY FIX
 
-  // true → show **white outlined** button
+  // White outline only for Dashboard / Admin Panel
   const isWhiteOutlined = isAdmin || memberProfile;
 
   return (
@@ -38,7 +42,7 @@ const Hero = () => {
       ></div>
 
       {/* Overlay content */}
-      <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col h-full px-4 md:px-8 items-center justify-center md:items-start md:justify-center text-center md:text-left text-black">
+      <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col h-full px-4 md:px-8 items-center justify-center md:items-start md:justify-center text-center md:text-left">
         <motion.h1
           initial={{ opacity: 0, y: -30 }}
           animate={{ opacity: 1, y: 0 }}
@@ -59,7 +63,7 @@ const Hero = () => {
           )}
         </motion.p>
 
-        {/* HERO BUTTON – WHITE OUTLINED FOR ADMIN/MEMBER */}
+        {/* HERO BUTTON – PERFECTLY SYNCED WITH NAVBAR */}
         <motion.button
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -69,21 +73,18 @@ const Hero = () => {
             mt-8 mb-6 flex items-center gap-2
             rounded-full px-5 py-2
             text-xs md:text-sm font-medium font-outfit
-            transition-all duration-300
-            group
+            transition-all duration-300 group
             ${
               isWhiteOutlined
-                ? // WHITE OUTLINED
-                  "border-2 border-white text-white bg-transparent hover:bg-white/10"
-                : // FILLED EMERALD
-                  "bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:from-emerald-600 hover:to-teal-700 shadow-md hover:shadow-lg"
+                ? "border-2 border-white text-white bg-transparent hover:bg-white/10"
+                : "bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:from-emerald-600 hover:to-teal-700 shadow-md hover:shadow-lg"
             }
           `}
           type="button"
         >
           <span>{mainButtonLabel}</span>
 
-          {/* Arrow – moves on hover */}
+          {/* Arrow */}
           <motion.span
             className={`
               flex items-center justify-center size-5 rounded-full
