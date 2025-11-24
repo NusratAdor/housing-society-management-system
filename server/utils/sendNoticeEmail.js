@@ -4,13 +4,16 @@ import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const sendNoticeEmail = async (to, notice) => {
-  try {
-    const { title, date, summary, content, image } = notice;
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY missing");
+  }
 
-    await resend.emails.send({
-      from: `GOHS Notices <${process.env.FROM_EMAIL}>`,
-      to: [to],
-      subject: `New Notice: ${title}`,
+  const { title, date, summary, content, image } = notice;
+
+  const data = await resend.emails.send({
+    from: `GOHS Notices <${process.env.FROM_EMAIL}>`,
+    to: [to],
+    subject: `New Notice: ${title}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
           <h2 style="color: #047857; text-align: center;">Government Officer's Housing Society</h2>
@@ -41,9 +44,9 @@ export const sendNoticeEmail = async (to, notice) => {
       `,
     });
 
-    console.log(`Email sent to ${to}`);
-  } catch (error) {
-    console.error(`Failed to send email to ${to}:`, error.message);
-    // Don't throw – one failed email shouldn't stop notice creation
+if (data.error) {
+    throw new Error(data.error.message);
   }
+
+  return data;
 };

@@ -8,7 +8,14 @@ import { sendNoticeEmail } from "../utils/sendNoticeEmail.js"; // NEW
 export const createNotice = async (req, res) => {
   try {
     const { title, date, summary, content } = req.body;
-    const createdBy = req.auth.userId;
+
+    // Fix: Clerk v5+ → req.auth is a function
+    const auth = typeof req.auth === "function" ? await req.auth() : req.auth;
+    const createdBy = auth?.userId;
+
+    if (!createdBy) {
+      return res.status(401).json({ success: false, message: "Unauthorized – no user ID" });
+    }
 
     if (!title || !date || !summary || !content) {
       return res.status(400).json({ success: false, message: "All fields are required" });
@@ -16,8 +23,16 @@ export const createNotice = async (req, res) => {
 
     let image = "";
     if (req.file) {
-      const uploadResult = await cloudinary.uploader.upload(req.file.path);
-      image = uploadResult.secure_url;
+      try {
+        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+          folder: "gohs/notices",
+          transformation: { quality: "auto", fetch_format: "auto" },
+        });
+        image = uploadResult.secure_url;
+      } catch (uploadError) {
+        console.error("Cloudinary upload failed:", uploadError.message);
+        // Continue without image
+      }
     }
 
     const notice = await Notice.create({
@@ -29,35 +44,42 @@ export const createNotice = async (req, res) => {
       createdBy,
     });
 
-    // Create in-app notification (for all members)
+    // In-app notification
     await Notification.create({
       type: "Notice",
       content: `New notice posted: ${title}`,
-      adminOnly: false, // Show to all
+      adminOnly: false,
     });
 
-    // === SEND EMAIL TO ALL MEMBERS (ASYNC – NON-BLOCKING) ===
-  const members = await Member.find({}).select("email name").limit(10);
+    // SEND EMAILS TO ALL MEMBERS (RELIABLE & SAFE)
+    const members = await Member.find({}).select("email name");
 
-for (const member of members) {
-  if (member.email) {
-    try {
-      await sendNoticeEmail(member.email, notice);
-      console.log(`Email sent to: ${member.email}`);
-    } catch (error) {
-      console.error(`Failed to send email to ${member.email}:`, error.message);
-      // One failed email won't stop others
+    console.log(`Found ${members.length} members. Sending emails...`);
+
+    for (const member of members) {
+      if (!member.email) continue;
+
+      try {
+        await sendNoticeEmail(member.email, notice.toObject());
+        console.log(`Email sent to: ${member.email}`);
+        
+        // Prevent Resend rate limit (10/sec) → 120ms delay = ~8/sec
+        await new Promise(resolve => setTimeout(resolve, 120));
+      } catch (emailError) {
+        console.error(`Failed to send email to ${member.email}:`, emailError.message);
+        // Don't stop — continue with next member
+      }
     }
-  }
-}
+
+    console.log("All emails processed successfully!");
 
     res.status(201).json({
       success: true,
-      message: "Notice created and emails sent successfully",
+      message: "Notice created and emails sent to all members!",
       notice,
     });
   } catch (error) {
-    console.error(`createNotice error: ${error.message}`);
+    console.error("createNotice error:", error.message);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
