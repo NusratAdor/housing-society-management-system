@@ -37,12 +37,19 @@ export const createNotice = async (req, res) => {
     });
 
     // === SEND EMAIL TO ALL MEMBERS (ASYNC – NON-BLOCKING) ===
-    const members = await Member.find({}).select("email name");
-    members.forEach(async (member) => {
-      if (member.email) {
-        await sendNoticeEmail(member.email, notice);
-      }
-    });
+  const members = await Member.find({}).select("email name").limit(10);
+
+for (const member of members) {
+  if (member.email) {
+    try {
+      await sendNoticeEmail(member.email, notice);
+      console.log(`Email sent to: ${member.email}`);
+    } catch (error) {
+      console.error(`Failed to send email to ${member.email}:`, error.message);
+      // One failed email won't stop others
+    }
+  }
+}
 
     res.status(201).json({
       success: true,
