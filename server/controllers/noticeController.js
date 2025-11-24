@@ -1,7 +1,9 @@
 // controllers/noticeController.js
 import Notice from "../models/Notice.js";
+import Member from "../models/Member.js";
 import Notification from "../models/Notification.js";
 import { v2 as cloudinary } from "cloudinary";
+import { sendNoticeEmail } from "../utils/sendNoticeEmail.js"; // NEW
 
 export const createNotice = async (req, res) => {
   try {
@@ -27,14 +29,26 @@ export const createNotice = async (req, res) => {
       createdBy,
     });
 
-    // Create notification for notice creation
+    // Create in-app notification (for all members)
     await Notification.create({
       type: "Notice",
       content: `New notice posted: ${title}`,
-      adminOnly: true,
+      adminOnly: false, // Show to all
     });
 
-    res.status(201).json({ success: true, message: "Notice created successfully", notice });
+    // === SEND EMAIL TO ALL MEMBERS (ASYNC – NON-BLOCKING) ===
+    const members = await Member.find({}).select("email name");
+    members.forEach(async (member) => {
+      if (member.email) {
+        await sendNoticeEmail(member.email, notice);
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Notice created and emails sent successfully",
+      notice,
+    });
   } catch (error) {
     console.error(`createNotice error: ${error.message}`);
     res.status(500).json({ success: false, message: "Server error" });
@@ -110,4 +124,4 @@ export const deleteNotice = async (req, res) => {
     console.error(`deleteNotice error: ${error.message}`);
     res.status(500).json({ success: false, message: "Server error" });
   }
-};
+};         
