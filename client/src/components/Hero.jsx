@@ -37,8 +37,8 @@ const Hero = () => {
     <div className="relative h-screen w-full">
       {/* Background Image */}
       <div
-        className="absolute inset-0 bg-[url('/src/assets/heroImage1.jpg')] bg-cover bg-center bg-no-repeat"
-        style={{ filter: "brightness(60%)" }}
+        className="absolute inset-0 bg-[url('/src/assets/heroImage6.png')] bg-cover bg-center bg-no-repeat"
+        style={{ filter: "brightness(55%)" }}
       ></div>
 
       {/* Overlay content */}
