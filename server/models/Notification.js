@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 
 const notificationSchema = new mongoose.Schema(
   {
-    type: { type: String, required: true, enum: ["Member", "Notice", "FAQ", "Gallery", "Question", "MemberUpdate"] },
+    type: { type: String, required: true, enum: ["Member", "Notice", "FAQ", "Gallery", "Question", "MemberUpdate", "Payment", "AdminApproved"] },
     content: { type: String, required: true },
     clerkUserId: { type: String },           // <-- for member-specific notifications
     adminOnly: { type: Boolean, default: true },

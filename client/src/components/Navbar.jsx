@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { assets } from "../assets/assets";
-import { useClerk, UserButton } from "@clerk/clerk-react";
+import { UserButton } from "@clerk/clerk-react";
 import { useAppContext } from "../context/AppContext";
 import { useTranslation } from "react-i18next";
 import LanguageToggle from "./LanguageToggle";
@@ -10,7 +10,6 @@ import LanguageToggle from "./LanguageToggle";
 const Navbar = () => {
   const { t } = useTranslation();
 
-  // ---------- REMOVE FAQs ----------
   const navLinks = [
     { name: t("Home"), path: "/" },
     { name: t("Notices"), path: "/notices" },
@@ -22,7 +21,6 @@ const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { user, navigate, memberProfile, loadingProfile, isAdmin } =
     useAppContext();
-  const { openSignIn } = useClerk();
   const location = useLocation();
   const isHome = location.pathname === "/";
 
@@ -37,7 +35,7 @@ const Navbar = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isHome]);
 
-  // Button logic (same as Hero)
+  // Button logic
   const handleMainButtonClick = () => {
     if (isAdmin) return navigate("/admin");
     if (memberProfile) return navigate("/dashboard");
@@ -87,7 +85,7 @@ const Navbar = () => {
             </Link>
           ))}
 
-          {/* ==== GREEN JOIN / CREATE PROFILE BUTTON ==== */}
+          {/* Dashboard / Admin / Create Profile button */}
           {user && !loadingProfile && (
             <button
               onClick={handleMainButtonClick}
@@ -109,34 +107,34 @@ const Navbar = () => {
 
         {/* Desktop Auth Section */}
         <div className="hidden md:flex items-center gap-3">
-          {/* Language toggle – white on transparent */}
+          {/* Language toggle */}
           <div className={isScrolled ? "" : "text-white hover:text-black"}>
             <LanguageToggle />
           </div>
 
           {user ? (
-            <UserButton afterSignOut={() => navigate("/")} />
+            <UserButton afterSignOutUrl="/" />
           ) : (
-            <button
-              onClick={() => openSignIn()}
+            // ✅ CHANGED: was openSignIn() popup, now navigates to /sign-in page
+            <Link
+              to="/sign-in"
               className="
-        bg-gradient-to-r from-emerald-500 to-teal-600
-        hover:from-emerald-600 hover:to-teal-700
-        text-white font-outfit font-medium text-sm
-        rounded-full px-6 py-2.5
-        shadow-sm hover:shadow-md
-        transition-all duration-300
-        group
-      "
+                bg-gradient-to-r from-emerald-500 to-teal-600
+                hover:from-emerald-600 hover:to-teal-700
+                text-white font-outfit font-medium text-sm
+                rounded-full px-6 py-2.5
+                shadow-sm hover:shadow-md
+                transition-all duration-300
+              "
             >
               {t("Sign In")}
-            </button>
+            </Link>
           )}
         </div>
 
         {/* Mobile Menu Toggle */}
         <div className="flex items-center gap-3 md:hidden">
-          {user && <UserButton afterSignOut={() => navigate("/")} />}
+          {user && <UserButton afterSignOutUrl="/" />}
           <img
             onClick={() => setIsMenuOpen(!isMenuOpen)}
             src={assets.menuIcon}
@@ -194,22 +192,21 @@ const Navbar = () => {
         )}
 
         {!user && (
-          <button
-            onClick={() => {
-              openSignIn();
-              setIsMenuOpen(false);
-            }}
+          // ✅ CHANGED: was openSignIn() popup, now navigates to /sign-in page
+          <Link
+            to="/sign-in"
+            onClick={() => setIsMenuOpen(false)}
             className="
-      bg-gradient-to-r from-emerald-500 to-teal-600
-      hover:from-emerald-600 hover:to-teal-700
-      text-white font-outfit font-medium text-base
-      rounded-full px-8 py-2.5
-      shadow-sm hover:shadow-md
-      transition-all duration-300
-    "
+              bg-gradient-to-r from-emerald-500 to-teal-600
+              hover:from-emerald-600 hover:to-teal-700
+              text-white font-outfit font-medium text-base
+              rounded-full px-8 py-2.5
+              shadow-sm hover:shadow-md
+              transition-all duration-300
+            "
           >
-            Sign In
-          </button>
+            {t("Sign In")}
+          </Link>
         )}
       </div>
     </nav>
