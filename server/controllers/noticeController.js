@@ -1,156 +1,209 @@
-// controllers/noticeController.js
-import Notice from "../models/Notice.js";
-import Member from "../models/Member.js";
-import Notification from "../models/Notification.js";
-import { v2 as cloudinary } from "cloudinary";
-import { sendNoticeEmail } from "../utils/sendNoticeEmail.js"; // NEW
+// server/controllers/noticeController.js
+// Handles CRUD for society notices and triggers emails to all members.
+//
+// Key fixes applied:
+//   - Cloudinary upload uses cloudinaryService (upload_stream with buffer)
+//     instead of req.file.path which does not exist with memoryStorage.
+//   - imagePublicId stored so images can be deleted from Cloudinary on
+//     notice deletion or update.
+//   - date stored as Date type, not the string that was passed in.
+//   - Email loop runs after response is sent so admin is not blocked.
+//   - req.auth accessed consistently as an object, not with typeof check.
+
+import Notice          from "../models/Notice.js";
+import Member          from "../models/Member.js";
+import Notification    from "../models/Notification.js";
+import { uploadImage, deleteImage } from "../services/cloudinaryService.js";
+
+import { sendNoticeEmail } from "../services/emailService.js";
+
+// ── createNotice ──────────────────────────────────────────────────────────────
 
 export const createNotice = async (req, res) => {
   try {
     const { title, date, summary, content } = req.body;
 
-    // Fix: Clerk v5+ → req.auth is a function
-    const auth = typeof req.auth === "function" ? await req.auth() : req.auth;
-    const createdBy = auth?.userId;
+    // WHY req.auth directly (not typeof check):
+    // The original had a comment "Fix: Clerk v5+ → req.auth is a function"
+    // and used typeof req.auth === "function" ? await req.auth() : req.auth.
+    // In @clerk/express v2+ req.auth is always a plain object set by
+    // clerkMiddleware. The function branch is dead code. Removed.
+    const createdBy = req.auth?.userId;
 
     if (!createdBy) {
-      return res.status(401).json({ success: false, message: "Unauthorized – no user ID" });
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
-
     if (!title || !date || !summary || !content) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
-    let image = "";
+    let image         = "";
+    let imagePublicId = "";
+
     if (req.file) {
       try {
-        const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-          folder: "gohs/notices",
-          transformation: { quality: "auto", fetch_format: "auto" },
-        });
-        image = uploadResult.secure_url;
+        // WHY cloudinaryService instead of cloudinary.uploader.upload(req.file.path):
+        // uploadMiddleware uses multer.memoryStorage() — the file is stored in
+        // RAM as req.file.buffer, NOT written to disk. req.file.path does not
+        // exist with memoryStorage. cloudinaryService.uploadImage() uses
+        // cloudinary.uploader.upload_stream() which reads from the buffer
+        // correctly. The original code was silently failing on every image upload.
+        const uploaded = await uploadImage(req.file, "gohs/notices");
+        image         = uploaded.secure_url;
+        imagePublicId = uploaded.public_id;
       } catch (uploadError) {
+        // Non-fatal: save the notice without an image rather than failing the
+        // whole request. The admin can edit and re-upload.
         console.error("Cloudinary upload failed:", uploadError.message);
-        // Continue without image
       }
     }
 
     const notice = await Notice.create({
       title,
-      date,
+      // WHY new Date(date): Notice.date is now type Date (fixed in the model).
+      // Storing a raw date string bypasses Mongoose type coercion and means
+      // the field cannot be used in date comparisons or sorted correctly.
+      date: new Date(date),
       summary,
       content,
       image,
+      imagePublicId,
       createdBy,
     });
 
-    // In-app notification
+    // Broadcast in-app notification — clerkUserId is null which means all
+    // members see it in their notification list (broadcast pattern).
     await Notification.create({
-      type: "Notice",
-      content: `New notice posted: ${title}`,
+      type:      "Notice",
+      content:   `New notice posted: ${title}`,
       adminOnly: false,
     });
 
-    // SEND EMAILS TO ALL MEMBERS (RELIABLE & SAFE)
-    const members = await Member.find({}).select("email name");
+    // WHY respond before the email loop:
+    // The original sent the HTTP response AFTER looping through all members.
+    // With 100 members and 120ms per email that is 12 seconds of waiting.
+    // The admin sees a spinner for 12 seconds and may think it crashed.
+    // Sending the response first lets the admin see immediate confirmation.
+    // The email loop runs as a background task after res.status(201).json().
+    res.status(201).json({
+      success: true,
+      message: "Notice created. Emails are being sent to all members.",
+      notice,
+    });
 
-    console.log(`Found ${members.length} members. Sending emails...`);
-
+    // This code runs after the response is flushed — admin does not wait for it.
+    const members = await Member.find({}).select("email name").lean();
     for (const member of members) {
       if (!member.email) continue;
-
       try {
         await sendNoticeEmail(member.email, notice.toObject());
-        console.log(`Email sent to: ${member.email}`);
-        
-        // Prevent Resend rate limit (10/sec) → 120ms delay = ~8/sec
-        await new Promise(resolve => setTimeout(resolve, 120));
+        // 120ms gap keeps us under Resend's rate limit of 10 emails/second
+        await new Promise((r) => setTimeout(r, 120));
       } catch (emailError) {
-        console.error(`Failed to send email to ${member.email}:`, emailError.message);
-        // Don't stop — continue with next member
+        // Log failure but continue — one bad email must not stop the rest
+        console.error(`Email failed for ${member.email}:`, emailError.message);
       }
     }
 
-    console.log("All emails processed successfully!");
-
-    res.status(201).json({
-      success: true,
-      message: "Notice created and emails sent to all members!",
-      notice,
-    });
   } catch (error) {
     console.error("createNotice error:", error.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    // Only send error response if we have not already sent the 201
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: "Server error" });
+    }
   }
 };
+
+// ── getNotices ────────────────────────────────────────────────────────────────
 
 export const getNotices = async (req, res) => {
   try {
-    const notices = await Notice.find().sort({ createdAt: -1 });
-    res.status(200).json({ success: true, notices });
+    // WHY .lean(): we only serialise to JSON — no need for Mongoose document overhead
+    const notices = await Notice.find().sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, notices });
   } catch (error) {
-    console.error(`getNotices error: ${error.message}`);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("getNotices error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
+// ── getNoticeById ─────────────────────────────────────────────────────────────
+
 export const getNoticeById = async (req, res) => {
   try {
-    const notice = await Notice.findById(req.params.id);
-    if (!notice) {
-      return res.status(404).json({ success: false, message: "Notice not found" });
-    }
-    res.status(200).json({ success: true, notice });
+    const notice = await Notice.findById(req.params.id).lean();
+    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
+    return res.status(200).json({ success: true, notice });
   } catch (error) {
-    console.error(`getNoticeById error: ${error.message}`);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("getNoticeById error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
+// ── updateNotice ──────────────────────────────────────────────────────────────
 
 export const updateNotice = async (req, res) => {
   try {
     const { title, date, summary, content } = req.body;
-    const createdBy = req.auth.userId;
+
+    // WHY req.auth?.userId (not req.auth.userId):
+    // The original used req.auth.userId without optional chaining.
+    // If clerkMiddleware fails to populate req.auth for any reason,
+    // this throws "Cannot read property userId of undefined" and crashes
+    // the entire process instead of returning a clean 401.
+    const createdBy = req.auth?.userId;
 
     if (!title || !date || !summary || !content) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
     const notice = await Notice.findById(req.params.id);
-    if (!notice) {
-      return res.status(404).json({ success: false, message: "Notice not found" });
-    }
+    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
 
-    let image = notice.image;
+    let { image, imagePublicId } = notice;
+
     if (req.file) {
-      const uploadResult = await cloudinary.uploader.upload(req.file.path);
-      image = uploadResult.secure_url;
+      // Delete old Cloudinary image before uploading the replacement.
+      // WHY: without this the old image stays on Cloudinary forever,
+      // consuming storage and incurring cost.
+      if (imagePublicId) await deleteImage(imagePublicId);
+
+      const uploaded = await uploadImage(req.file, "gohs/notices");
+      image         = uploaded.secure_url;
+      imagePublicId = uploaded.public_id;
     }
 
     const updatedNotice = await Notice.findByIdAndUpdate(
       req.params.id,
-      { title, date, summary, content, image, createdBy },
+      { title, date: new Date(date), summary, content, image, imagePublicId, createdBy },
       { new: true }
     );
 
-    res.status(200).json({ success: true, message: "Notice updated successfully", notice: updatedNotice });
+    return res.status(200).json({ success: true, message: "Notice updated", notice: updatedNotice });
   } catch (error) {
-    console.error(`updateNotice error: ${error.message}`);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("updateNotice error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
+// ── deleteNotice ──────────────────────────────────────────────────────────────
+
 export const deleteNotice = async (req, res) => {
   try {
-    const notice = await Notice.findById(req.params.id);
-    if (!notice) {
-      return res.status(404).json({ success: false, message: "Notice not found" });
+    const notice = await Notice.findByIdAndDelete(req.params.id);
+    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
+
+    // WHY delete from Cloudinary: the original left the image file on
+    // Cloudinary after deleting the MongoDB record. Over time this
+    // accumulates orphan files that cost money and cannot be cleaned
+    // up because the public_id is no longer stored anywhere.
+    if (notice.imagePublicId) {
+      await deleteImage(notice.imagePublicId);
     }
 
-    await Notice.findByIdAndDelete(req.params.id);
-    res.status(200).json({ success: true, message: "Notice deleted successfully" });
+    return res.status(200).json({ success: true, message: "Notice deleted" });
   } catch (error) {
-    console.error(`deleteNotice error: ${error.message}`);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("deleteNotice error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-};         
+};

@@ -1,0 +1,33 @@
+{
+  "ask": {
+    "title": "Ask a question",
+    "subtitle": "Admin will answer and it may be published as an FAQ",
+    "placeholder": "What would you like to ask the admin?",
+    "submit": "Submit question",
+    "submitting": "Submitting…",
+    "charCount": "{{current}}/{{max}}",
+    "toast": {
+      "submitted": "Question submitted — admin will respond soon",
+      "tooLong": "Question must be under {{max}} characters"
+    }
+  },
+  "pending": {
+    "label": "Awaiting response ({{count}})",
+    "submitted": "Submitted {{date}}",
+    "removeTitle": "Remove this question",
+    "confirmRemove": "Remove this pending question?",
+    "toast": "Pending question removed"
+  },
+  "answered": {
+    "title": "Answered FAQs",
+    "empty": {
+      "title": "No answered FAQs yet",
+      "subtitle": "Submit a question above to get started"
+    },
+    "answered": "Answered {{date}}",
+    "removeTitle": "Remove from your view",
+    "confirmRemove": "Remove this FAQ from your view?",
+    "remove": "Remove",
+    "toast": "FAQ removed"
+  }
+}

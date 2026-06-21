@@ -1,320 +1,492 @@
-// controllers/paymentController.js
-import Payment from "../models/Payment.js";
-import Member from "../models/Member.js";
+// server/controllers/paymentController.js
+//
+// Member-facing payment endpoints.
+// Step 5 adds: getDueBreakdown, getPaymentHistory
+// Step 6 adds: createPaymentSession (below in this same file)
+// Step 7 adds: paymentCallback, approvePayment, rejectPayment
+//
+// This file grows across steps — all payment controller code lives here.
+
+import mongoose     from "mongoose";
+import Member       from "../models/Member.js";
+import Payment      from "../models/Payment.js";
+import {
+  getMemberDueBreakdown,
+  getMemberPaymentHistory,
+  getPaymentAllocationDetails,
+} from "../services/paymentService.js";
+import axiosLib      from "axios";
+import { validatePaymentSelection } from "../services/paymentValidationService.js";
+import { allocatePayment }          from "../services/allocationService.js";
+import { verifySSLCommerzPayment }  from "../services/sslCommerzService.js";
+import { sendPaymentConfirmationEmail } from "../services/emailService.js";
 import Notification from "../models/Notification.js";
-import { sendPaymentSuccessEmail } from "../services/emailService.js";
-import axios from "axios";
 
-const monthlyFee = 300;
+import {
+  getMemberFullDashboardData,
+  getMemberTransactionHistory,
+} from "../services/dashboardService.js";
 
-// =============== CREATE PAYMENT SESSION ===============
-// controllers/paymentController.js (only the create part changed)
 
-export const createPaymentSession = async (req, res) => {
+
+// ─── GET /api/payments/me/breakdown ───────────────────────────────────────────
+// Powers the entire PaymentSection component on the member dashboard.
+// Returns everything the UI needs in one API call.
+
+// ─── GET /api/payments/me/breakdown ───────────────────────────────────────────
+// Replaces the Step 5 version with the enriched version.
+// Single endpoint — returns everything PaymentSection needs.
+// No other API calls needed from the frontend payment section.
+
+export const getDueBreakdown = async (req, res) => {
   try {
-    const { amount } = req.body;
-    const clerkUserId = req.clerkUserId; // set by protect middleware
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
 
-    if (!clerkUserId)
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    if (!amount || amount < 1)
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid amount" });
-
-    const member = await Member.findOne({ clerkUserId });
-    if (!member)
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
-
-    const tranId = `TX${Date.now()}`;
-    const storeId = process.env.SSLCOMMERZ_STORE_ID?.trim();
-    const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
-    if (!storeId || !storePass) {
-      return res
-        .status(500)
-        .json({ success: false, message: "Gateway not configured" });
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    // ---------- SSLCOMMERZ REQUEST ----------
-    const postData = {
-      store_id: storeId,
-      store_passwd: storePass,
-      total_amount: Number(amount).toFixed(2),
-      currency: "BDT",
-      tran_id: tranId,
-      success_url: `${process.env.BACKEND_URL}/payment/success`,
-      fail_url: `${process.env.BACKEND_URL}/payment/failed`,
-      cancel_url: `${process.env.BACKEND_URL}/payment/cancel`,
-      ipn_url: `${process.env.BACKEND_URL}/api/payments/callback`,
-      
-      shipping_method: "NO",
-      num_of_item: "1",
-      product_name: "Membership Dues",
-      product_category: "Membership",
-      product_profile: "general",
-      cus_name: member.name,
-      cus_email: member.email,
-      cus_add1: member.address || "",
-      cus_city: "Dhaka",
-      cus_country: "Bangladesh",
-      cus_phone: member.phone || "",
-      value_a: clerkUserId,
-    };
+    const data = await getMemberFullDashboardData(member._id);
 
-    const response = await axios.post(
-      "https://sandbox.sslcommerz.com/gwprocess/v4/api.php",
-      new URLSearchParams(postData).toString(),
+    return res.status(200).json({ success: true, ...data });
+  } catch (error) {
+    console.error("getDueBreakdown error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── GET /api/payments/me ─────────────────────────────────────────────────────
+// Transaction history for the member — completed, failed, and rejected payments.
+
+export const getMemberPayments = async (req, res) => {
+  try {
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    const payments = await getMemberPaymentHistory(member._id);
+
+    return res.status(200).json({ success: true, payments });
+  } catch (error) {
+    console.error("getMemberPayments error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+
+
+// ─── GET /api/payments/me/history ─────────────────────────────────────────────
+// Transaction history with per-payment allocation breakdown.
+// Used by the expandable transaction table in the dashboard.
+// Separate from /me/breakdown because it is heavier and opened on demand.
+
+export const getMemberHistory = async (req, res) => {
+  try {
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    const limit   = Math.min(parseInt(req.query.limit || "24", 10), 100);
+    const history = await getMemberTransactionHistory(member._id, limit);
+
+    return res.status(200).json({ success: true, history });
+  } catch (error) {
+    console.error("getMemberHistory error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+
+
+
+
+// ─── GET /api/payments/:id/allocations ───────────────────────────────────────
+// Returns the allocation breakdown for a specific payment.
+// Used for receipt display — member can see what their payment covered.
+
+export const getPaymentAllocations = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid payment ID" });
+    }
+
+    // Verify this payment belongs to the requesting member
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    const payment = await Payment
+      .findOne({ _id: id, member: member._id })
+      .lean();
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message:  "Payment not found or does not belong to you",
+      });
+    }
+
+    const details = await getPaymentAllocationDetails(id);
+
+    return res.status(200).json({
+      success: true,
+      payment,
+      ...details,
+    });
+  } catch (error) {
+    console.error("getPaymentAllocations error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── POST /api/payments/create ────────────────────────────────────────────────
+// Creates an SSLCommerz payment session for the member's selected charges.
+//
+// Request body:
+//   selectedMonthlyIds  (Array<string>) — MonthlyCharge _ids to pay
+//   selectedExtraIds    (Array<string>) — ExtraCharge _ids to pay
+//
+// Flow:
+//   1. Validate selection (FIFO, ownership, unpaid status)
+//   2. Compute verified total from DB records
+//   3. Create pending Payment record
+//   4. Open SSLCommerz session with charge IDs in value_b
+//   5. Return gateway URL to frontend
+//
+// Why we store charge IDs in SSLCommerz value_b:
+//   The IPN callback needs to know which charges to allocate the payment to.
+//   value_b is SSLCommerz's custom data field that gets echoed back in the
+//   callback. We serialize the charge IDs there so the callback can retrieve
+//   them without any server-side session or database lookup between steps.
+
+export const createPaymentSession = async (req, res) => {
+  
+  // TEMPORARY debug logs
+  console.log("ENV CHECK:", {
+    storeId:     process.env.SSLCOMMERZ_STORE_ID,
+    storePass:   process.env.SSLCOMMERZ_STORE_PASS,
+    backendUrl:  process.env.BACKEND_URL,
+    frontendUrl: process.env.FRONTEND_URL,
+  });
+
+  let payment = null; // declare here so catch block can access it
+
+  try {
+    const { selectedMonthlyIds = [], selectedExtraIds = [] } = req.body;
+
+    if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "selectedMonthlyIds and selectedExtraIds must be arrays",
+      });
+    }
+
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    let validationResult;
+    try {
+      validationResult = await validatePaymentSelection({
+        memberId: member._id,
+        selectedMonthlyIds,
+        selectedExtraIds,
+      });
+    } catch (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
+    const { totalAmount, selectedMonthly, selectedExtra } = validationResult;
+
+    const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
+    const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
+
+    if (!storeId || !storePass) {
+      return res.status(500).json({
+        success: false,
+        message: "Payment gateway is not configured. Contact administrator.",
+      });
+    }
+
+    const tranId = `TX-${Date.now()}-${String(member._id).slice(-6)}`;
+
+    // declared at top so catch block can clean it up
+    payment = await Payment.create({
+      member:        member._id,
+      amount:        totalAmount,
+      transactionId: tranId,
+      status:        "pending",
+      gateway:       "sslcommerz",
+    });
+
+    const selectionPayload = JSON.stringify({
+      paymentId:          String(payment._id),
+      selectedMonthlyIds: selectedMonthly.map(c => String(c._id)),
+      selectedExtraIds:   selectedExtra.map(c => String(c._id)),
+    });
+
+    const sslGatewayUrl = process.env.NODE_ENV === "production"
+      ? "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
+      : "https://sandbox.sslcommerz.com/gwprocess/v4/api.php";
+
+  const postData = [
+  `store_id=${storeId}`,
+  `store_passwd=${encodeURIComponent(storePass)}`,
+  `total_amount=${totalAmount.toFixed(2)}`,
+  `currency=BDT`,
+  `tran_id=${tranId}`,
+  `success_url=${process.env.BACKEND_URL}/payment/success`,
+  `fail_url=${process.env.BACKEND_URL}/payment/failed`,
+  `cancel_url=${process.env.BACKEND_URL}/payment/cancel`,
+  `ipn_url=${process.env.BACKEND_URL}/api/payments/callback`,
+  `product_name=Society+Maintenance+Dues`,
+  `product_category=Membership`,
+  `product_profile=general`,
+  `shipping_method=NO`,
+  `num_of_item=${selectedMonthly.length + selectedExtra.length}`,
+  `cus_name=${encodeURIComponent(member.name)}`,
+  `cus_email=${encodeURIComponent(member.email)}`,
+  `cus_phone=${encodeURIComponent(member.phone || "")}`,
+  `cus_add1=${encodeURIComponent(member.address || "Dhaka")}`,
+  `cus_city=Dhaka`,
+  `cus_country=Bangladesh`,
+  `value_a=${req.clerkUserId}`,
+  `value_b=${encodeURIComponent(selectionPayload)}`,
+].join("&");
+
+   // TEMPORARY — delete after testing
+console.log("full payload:", postData);
+
+    const sslResponse = await axiosLib.post(
+      sslGatewayUrl,
+      postData.toString(),
       {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         timeout: 15000,
       }
     );
 
-    const data = response.data;
-    if (data.status !== "SUCCESS" || !data.GatewayPageURL) {
+    console.log("SSLCommerz raw response:", JSON.stringify(sslResponse.data));
+
+    if (
+      sslResponse.data.status !== "SUCCESS" ||
+      !sslResponse.data.GatewayPageURL
+    ) {
+      if (payment) await Payment.findByIdAndDelete(payment._id);
+      console.error("SSLCommerz session failed:", sslResponse.data);
       return res.status(400).json({
         success: false,
-        message: data.failedreason || "Gateway error",
+        message: sslResponse.data.failedreason || "Payment gateway rejected the request",
       });
     }
 
-    // ---------- SAVE PENDING (NO month/year) ----------
-    await Payment.create({
-      member: member._id,
-      amount: Number(amount),
-      transactionId: tranId,
-      status: "Pending",
-      method: "Gateway",
+    return res.status(200).json({
+      success:   true,
+      url:       sslResponse.data.GatewayPageURL,
+      paymentId: String(payment._id),
     });
 
-    return res.json({ success: true, url: data.GatewayPageURL });
   } catch (error) {
-    console.error("Payment init error:", error.response?.data || error.message);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to start payment" });
-  }
+  if (payment) await Payment.findByIdAndDelete(payment._id);
+  console.error("createPaymentSession error:", error.message);
+  console.error("SSLCommerz response data:", JSON.stringify(error.response?.data));
+  console.error("SSLCommerz response headers:", JSON.stringify(error.response?.headers));
+  console.error("SSLCommerz status code:", error.response?.status);
+  console.error("Full error:", error.toJSON?.() || error);
+  return res.status(500).json({ success: false, message: "Server error" });
+}
 };
 
-// =============== CALLBACK – AUTO ASSIGN MONTHS ===============
+
+
+
+// ─── POST /api/payments/callback ─────────────────────────────────────────────
+// IPN (Instant Payment Notification) endpoint called by SSLCommerz servers.
+// This is called by SSLCommerz, NOT by the member's browser.
+//
+// The member's browser goes to /payment/success → frontend.
+// SSLCommerz separately POSTs to this URL with the payment result.
+// These are two independent flows that may arrive in any order.
+//
+// Security requirements:
+//   1. Verify the payment with SSLCommerz's validation API (not just status field)
+//   2. Cross-reference transaction ID to prevent replay attacks
+//   3. Be idempotent — SSLCommerz may send the callback more than once
+//   4. Respond quickly — SSLCommerz has a short timeout for IPN callbacks
+//
+// Response format: plain text "OK" or "FAILED" — SSLCommerz expects this.
+
 export const paymentCallback = async (req, res) => {
+  const { tran_id, status, val_id, value_a, value_b } = req.body;
+
+  // ── Basic presence check ──────────────────────────────────────────────
+  if (!tran_id) {
+    console.error("[IPN] Missing tran_id in callback");
+    return res.status(400).send("MISSING_TRAN_ID");
+  }
+
+  console.info(`[IPN] Received callback for tran_id: ${tran_id}, status: ${status}`);
+
   try {
-    const { tran_id, status, val_id, card_type, bank_tran_id } = req.body;
-    if (!tran_id) return res.status(400).send("Missing tran_id");
+    // ── Find the pending payment record ───────────────────────────────────
+    const payment = await Payment.findOne({ transactionId: tran_id });
 
-    const payment = await Payment.findOne({ transactionId: tran_id }).populate(
-      "member"
-    );
-    if (!payment) return res.status(404).send("Payment not found");
-
-    if (["VALID", "VALIDATED", "SUCCESS"].includes(status)) {
-      // ---- Mark gateway payment as Paid ----
-      payment.status = "Paid";
-      payment.paidAt = new Date();
-      payment.method = card_type?.split("-")[0] || "Gateway";
-      payment.sslValId = val_id;
-      payment.bankTranId = bank_tran_id;
-      await payment.save();
-
-      const member = payment.member;
-      const monthlyFee = 300;
-      let remaining = payment.amount;
-
-      // ---- 1. Pay off oldest *unpaid* months (if any) ----
-      const unpaid = await Payment.find({
-        member: member._id,
-        status: { $ne: "Paid" },
-        month: { $exists: true },
-      }).sort({ year: 1, month: 1 });
-
-      for (const p of unpaid) {
-        if (remaining >= monthlyFee) {
-          p.status = "Paid";
-          p.paidAt = new Date();
-          await p.save();
-          remaining -= monthlyFee;
-        } else if (remaining > 0) {
-          p.amount = remaining;
-          p.status = "Partial";
-          await p.save();
-          remaining = 0;
-          break;
-        } else break;
-      }
-
-      // ---- 2. If still money left → create *future* paid months ----
-      if (remaining >= monthlyFee) {
-        let cursor = new Date(); // start from next month
-        while (remaining >= monthlyFee) {
-          cursor.setMonth(cursor.getMonth() + 1);
-          await Payment.create({
-            member: member._id,
-            amount: monthlyFee,
-            month: cursor.getMonth() + 1,
-            year: cursor.getFullYear(),
-            status: "Paid",
-            method: "Gateway",
-            paidAt: new Date(),
-            transactionId: tran_id, // link to original gateway tx
-          });
-          remaining -= monthlyFee;
-        }
-      }
-
-      // ---- 3. Update member dueAmount & status ----
-      member.dueAmount = Math.max(0, (member.dueAmount || 0) - payment.amount);
-      member.paymentStatus = member.dueAmount === 0 ? "Paid" : "Due";
-      await member.save();
-
-      // ---- 4. Notify + email ----
-      await Notification.create({
-        type: "Payment",
-        content: `Payment of ৳${payment.amount} successful. Due reduced.`,
-        clerkUserId: member.clerkUserId,
-        adminOnly: false,
-      });
-
-      await sendPaymentSuccessEmail({
-        to: member.email,
-        name: member.name,
-        amount: payment.amount,
-        month: "Multiple",
-        year: new Date().getFullYear(),
-      });
-
-      return res.send("OK");
-    } else {
-      payment.status = "Failed";
-      payment.failedReason = status || "Failed";
-      await payment.save();
-      return res.send("FAILED");
+    if (!payment) {
+      console.error(`[IPN] No payment found for tran_id: ${tran_id}`);
+      // Return 200 to prevent SSLCommerz from retrying indefinitely
+      return res.status(200).send("PAYMENT_NOT_FOUND");
     }
-  } catch (error) {
-    console.error("IPN error:", error);
-    return res.status(500).send("ERROR");
-  }
-};
 
-// =============== MEMBER HISTORY ===============
-export const getMemberPayments = async (req, res) => {
-  try {
-    const clerkUserId = req.clerkUserId;
-    if (!clerkUserId)
-      return res.status(401).json({ success: false, message: "Unauthorized" });
+    // ── Idempotency check ─────────────────────────────────────────────────
+    if (payment.status === "completed") {
+      // Already processed — duplicate callback. Acknowledge silently.
+      console.info(`[IPN] Payment ${tran_id} already completed — ignoring duplicate`);
+      return res.status(200).send("OK");
+    }
 
-    const member = await Member.findOne({ clerkUserId });
-    if (!member)
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+    // ── Handle non-successful gateway status without API call ─────────────
+    const successStatuses = ["VALID", "VALIDATED"];
+    if (!successStatuses.includes(status)) {
+      payment.status = "failed";
+      await payment.save();
+      console.info(`[IPN] Payment ${tran_id} failed with gateway status: ${status}`);
+      return res.status(200).send("FAILED");
+    }
 
-    const payments = await Payment.find({ member: member._id }).sort({
-      year: -1,
-      month: -1,
-    });
-    return res.json({ success: true, payments });
-  } catch (error) {
-    console.error("getMemberPayments error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-
-// =============== ADMIN FUNCTIONS (same as before) ===============
-export const getPendingPayments = async (req, res) => {
-  try {
-    const payments = await Payment.find({ status: "Pending" }).populate(
-      "member"
-    );
-    return res.json({ success: true, payments });
-  } catch (error) {
-    console.error("getPendingPayments error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-
-export const approvePayment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const payment = await Payment.findById(id).populate("member");
-    if (!payment)
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
-
-    payment.status = "Paid";
-    payment.paidAt = new Date();
-    await payment.save();
-
-    const member = await Member.findById(payment.member._id);
-    member.dueAmount = Math.max(0, (member.dueAmount || 0) - payment.amount);
-    member.paymentStatus =
-      member.dueAmount === 0
-        ? "Paid"
-        : member.dueAmount > 0
-        ? "Due"
-        : "Pending";
-    await member.save();
-
-    await Notification.create({
-      type: "Payment",
-      content: `Your payment for ${payment.month}/${payment.year} has been approved.`,
-      clerkUserId: member.clerkUserId,
-      adminOnly: false,
-    });
-
+    // ── CRITICAL: Verify payment with SSLCommerz validation API ──────────
+    // Never trust the callback body alone — always verify with the API.
+    let verificationResult;
     try {
-      await sendPaymentSuccessEmail({
-        to: member.email,
-        name: member.name,
-        month: payment.month,
-        year: payment.year,
-        amount: payment.amount,
+      verificationResult = await verifySSLCommerzPayment({
+        valId:  val_id,
+        tranId: tran_id,
       });
-    } catch (mailErr) {
-      console.error("Approve payment mail failed:", mailErr);
+    } catch (verifyError) {
+      // Validation API unreachable — do not mark as failed yet.
+      // SSLCommerz will retry the IPN callback. Log and return 500
+      // so SSLCommerz knows to retry.
+      console.error(`[IPN] Validation API error for ${tran_id}:`, verifyError.message);
+      return res.status(500).send("VALIDATION_API_ERROR");
     }
 
-    return res.json({ success: true });
-  } catch (error) {
-    console.error("approvePayment error:", error);
-    return res.status(500).json({ success: false, message: "Approval failed" });
-  }
-};
+    if (!verificationResult.isValid) {
+      // Payment verification failed — mark as failed
+      payment.status = "failed";
+      await payment.save();
+      console.warn(
+        `[IPN] Payment ${tran_id} failed validation:`,
+        verificationResult.reason || verificationResult.validationData?.status
+      );
+      return res.status(200).send("VALIDATION_FAILED");
+    }
 
-export const rejectPayment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { rejectedReason } = req.body;
-    if (!rejectedReason?.trim())
-      return res
-        .status(400)
-        .json({ success: false, message: "Reason is required" });
+    // ── Parse the selection payload stored in value_b ─────────────────────
+    let selectionData;
+    try {
+      selectionData = JSON.parse(value_b || "{}");
+    } catch {
+      console.error(`[IPN] Could not parse value_b for tran_id ${tran_id}:`, value_b);
+      payment.status = "failed";
+      await payment.save();
+      return res.status(200).send("INVALID_SELECTION_DATA");
+    }
 
-    const payment = await Payment.findById(id).populate("member");
-    if (!payment)
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
+    const {
+      paymentId:          storedPaymentId,
+      selectedMonthlyIds: monthlyIds = [],
+      selectedExtraIds:   extraIds   = [],
+    } = selectionData;
 
-    payment.status = "Rejected";
-    payment.rejectedAt = new Date();
-    payment.rejectedReason = rejectedReason;
+    // Cross-check: the payment ID in value_b must match the payment we found
+    if (String(payment._id) !== String(storedPaymentId)) {
+      console.error(
+        `[IPN] Payment ID mismatch. tran_id: ${tran_id}, ` +
+        `DB payment: ${payment._id}, value_b payment: ${storedPaymentId}`
+      );
+      payment.status = "failed";
+      await payment.save();
+      return res.status(200).send("PAYMENT_ID_MISMATCH");
+    }
+
+    // Store SSLCommerz validation data on the payment for audit
+    payment.gatewayValidationId = val_id;
     await payment.save();
 
-    await Notification.create({
-      type: "Payment",
-      content: `Your payment for ${payment.month}/${payment.year} was rejected: ${rejectedReason}`,
-      clerkUserId: payment.member.clerkUserId,
-      adminOnly: false,
+    // ── Atomically allocate the payment ───────────────────────────────────
+    const { receiptNumber } = await allocatePayment({
+      paymentId:         payment._id,
+      selectedMonthlyIds: monthlyIds,
+      selectedExtraIds:   extraIds,
     });
 
-    return res.json({ success: true });
+    console.info(
+      `[IPN] Payment ${tran_id} allocated successfully. Receipt: ${receiptNumber}`
+    );
+
+    // ── Post-allocation: notifications and email ──────────────────────────
+    // These run AFTER the transaction commits.
+    // Failures here do NOT roll back the payment — money is already allocated.
+    // Each step is wrapped in its own try/catch so one failure does not
+    // prevent the others.
+
+    // Find the member for notification and email
+    const member = await Member.findById(payment.member).lean();
+
+    if (member) {
+      // In-app notification
+      try {
+        await Notification.create({
+          type:        "Payment",
+          content:     `Payment of ৳${payment.amount.toLocaleString()} confirmed. Receipt: ${receiptNumber}`,
+          clerkUserId: member.clerkUserId,
+          adminOnly:   false,
+        });
+      } catch (notifError) {
+        console.error("[IPN] Notification creation failed:", notifError.message);
+      }
+
+      // Confirmation email — non-blocking fire-and-forget
+      // Email failure must never fail the payment confirmation
+      sendPaymentConfirmationEmail({
+        to:            member.email,
+        name:          member.name,
+        amount:        payment.amount,
+        receiptNumber,
+        paidAt:        payment.paidAt || new Date(),
+        monthlyIds,
+        extraIds,
+      }).catch(emailErr => {
+        console.error("[IPN] Confirmation email failed:", emailErr.message);
+      });
+    }
+
+    return res.status(200).send("OK");
   } catch (error) {
-    console.error("rejectPayment error:", error);
-    return res
-      .status(500)
-      .json({ success: false, message: "Rejection failed" });
+    console.error(`[IPN] Unhandled error for tran_id ${tran_id}:`, error.message);
+    // Return 500 so SSLCommerz retries the callback
+    return res.status(500).send("ERROR");
   }
 };

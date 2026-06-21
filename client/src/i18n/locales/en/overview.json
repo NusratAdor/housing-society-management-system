@@ -1,0 +1,32 @@
+{
+  "status": {
+    "label": "Payment status",
+    "allClear": "All clear, {{name}}",
+    "nothingOwed": "Nothing is owed. Your account is fully up to date.",
+    "outstanding": "Outstanding dues",
+    "monthlyFee": "Monthly fee",
+    "lastPayment": "Last payment",
+    "receipt": "Receipt",
+    "viewHistory": "View history",
+    "oldestUnpaid": "Oldest unpaid"
+  },
+  "breakdown": {
+    "monthlyDues": "Monthly dues",
+    "extraCharges": "Extra charges",
+    "month_one": "{{count}} month",
+    "month_other": "{{count}} months",
+    "charge_one": "{{count}} charge",
+    "charge_other": "{{count}} charges"
+  },
+  "description": {
+    "both": "{{monthCount}} unpaid month and {{chargeCount}} extra charge are included in this total.",
+    "both_months": "{{monthCount}} unpaid months and {{chargeCount}} extra charges are included in this total.",
+    "monthsOnly_one": "{{count}} month of maintenance fees is outstanding.",
+    "monthsOnly_other": "{{count}} months of maintenance fees are outstanding.",
+    "chargesOnly_one": "{{count}} extra charge has not been paid yet.",
+    "chargesOnly_other": "{{count}} extra charges have not been paid yet."
+  },
+  "historyStrip": {
+    "label": "12-month overview"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "title": "Get in Touch",
+  "address": {
+    "label": "Address",
+    "value": "Fordnagar, Singair, Manikgonj"
+  },
+  "phone": {
+    "label": "Phone",
+    "value": "+8801737051767"
+  },
+  "email": {
+    "label": "Email",
+    "value": "gomcsadmn975@gmail.com"
+  },
+  "hours": {
+    "label": "Office Hours",
+    "weekdays": "Sunday - Thursday: 9:00 AM - 6:00 PM",
+    "weekend": "Friday & Saturday: Closed"
+  },
+  "form": {
+    "name": "Your Name",
+    "email": "Your Email",
+    "subject": "Subject",
+    "message": "Your Message",
+    "send": "Send Message"
+  }
+}

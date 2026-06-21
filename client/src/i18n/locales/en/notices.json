@@ -1,0 +1,24 @@
+{
+  "title": "Notices",
+  "subtitle": "Stay updated with the latest community announcements.",
+  "viewAll": "View all",
+  "refresh": "Refresh notices",
+  "readMore": "Read More",
+  "noImage": "No Image",
+  "empty": {
+    "title": "No notices yet",
+    "subtitle": "Society announcements will appear here"
+  },
+  "error": {
+    "message": "Could not load notices",
+    "retry": "Try again"
+  },
+  "detail": {
+    "backToNotices": "Back to Notices",
+    "date": "Date",
+    "postedOn": "Posted on"
+  },
+  "list": {
+    "posted": "Posted:"
+  }
+}

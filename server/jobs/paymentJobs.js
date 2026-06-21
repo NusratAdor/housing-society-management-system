@@ -1,77 +1,144 @@
-// jobs/paymentJobs.js
-import cron from "node-cron";
-import Member from "../models/Member.js";
-import Notification from "../models/Notification.js";
-import { sendDueReminderEmail } from "../services/emailService.js";
+// server/jobs/paymentJobs.js
+//
+// Daily cron job. Registered once at server startup via runDailyJobs().
+// Schedule: 09:00 AM server time every day.
+//
+// Task 1 — 1st of month:
+//   Create MonthlyCharge for every member at the locked fee for that month.
+//
+// Task 2 — 7 days before month-end:
+//   Send due reminder emails + in-app notifications to members with dues.
+//
+// All business logic lives in services — this file orchestrates only.
+// Each task is wrapped in its own try/catch so one failure cannot
+// prevent the other from running.
 
-/**
- * Daily job (runs at 09:00 server time) that:
- * - Sends due reminder 7 days before month end to members with dueAmount > 0.
- * - Optionally adds this month's fee to dueAmount on the 1st (enable via env).
- */
+import cron                      from "node-cron";
+import Member                    from "../models/Member.js";
+import Notification              from "../models/Notification.js";
+import { createMonthlyChargesForMonth } from "../services/chargeService.js";
+import { getMemberDueBreakdown }         from "../services/paymentService.js";
+import {
+  sendDueReminderEmail,
+} from "../services/emailService.js";
+
+// ─── runDailyJobs ─────────────────────────────────────────────────────────────
 
 const runDailyJobs = () => {
-  // run at 09:00 every day
+  // "0 9 * * *" = 09:00 AM every day
   cron.schedule("0 9 * * *", async () => {
-    try {
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth() + 1; // 1..12
-      const lastDay = new Date(currentYear, now.getMonth() + 1, 0).getDate();
-      const day = now.getDate();
+    const now            = new Date();
+    const currentMonth   = now.getMonth() + 1;
+    const currentYear    = now.getFullYear();
+    const dayOfMonth     = now.getDate();
+    const lastDayOfMonth = new Date(currentYear, now.getMonth() + 1, 0).getDate();
 
-      // 1) Optionally add monthly fee on 1st if enabled
-    if (process.env.AUTO_ADD_MONTHLY === "true" && day === 1) {
-  const members = await Member.find({});
-  for (const m of members) {
-    m.dueAmount = (m.dueAmount || 0) + 300;
-    m.paymentStatus = m.dueAmount === 0 ? "Paid" : m.dueAmount > 0 ? "Due" : "Pending";
+    console.info(
+      `[Cron] Daily job — ` +
+      `${String(dayOfMonth).padStart(2, "0")}/${String(currentMonth).padStart(2, "0")}/${currentYear}`
+    );
 
-    // create a "Pending" payment entry for the new month
-    await Payment.create({
-      member: m._id,
-      amount: 300,
-      month: currentMonth,
-      year: currentYear,
-      status: "Pending",
-      method: "Manual",
-      transactionId: `MANUAL-${m._id}-${currentYear}-${currentMonth}`,
-    });
+    // ── Task 1: 1st of month → create monthly charges ──────────────────────
+    if (dayOfMonth === 1) {
+      try {
+        const result = await createMonthlyChargesForMonth({
+          month:       currentMonth,
+          year:        currentYear,
+          performedBy: "SYSTEM",
+        });
 
-    await m.save();
-  }
-}
+        console.info(
+          `[Cron] Monthly charges: created=${result.created}, ` +
+          `skipped=${result.skipped}, fee=৳${result.fee}`
+        );
 
-      // 2) Send reminders 7 days before month end
-      const remindDay = lastDay - 7;
-      if (day === remindDay) {
-        const membersToRemind = await Member.find({ dueAmount: { $gt: 0 } });
-        for (const m of membersToRemind) {
+        // Broadcast in-app notification to all members
+        await Notification.create({
+          type:        "Payment",
+          content:     `Monthly maintenance fee of ৳${result.fee.toLocaleString()} ` +
+                       `has been added for ${currentMonth}/${currentYear}. ` +
+                       `Please pay before month-end.`,
+          clerkUserId: null,   // null = broadcast to all members
+          adminOnly:   false,
+        });
+      } catch (error) {
+        console.error("[Cron] Monthly charge creation failed:", error.message);
+      }
+    }
+
+    // ── Task 2: 7 days before month-end → due reminders ────────────────────
+    if (dayOfMonth === lastDayOfMonth - 7) {
+      try {
+        const members = await Member
+          .find({})
+          .select("_id clerkUserId name email")
+          .lean();
+
+        let reminded  = 0;
+        let skipped   = 0;
+        let emailFail = 0;
+
+        for (const member of members) {
+          // Full breakdown so email includes monthly + extra breakdown
+          const breakdown = await getMemberDueBreakdown(member._id);
+
+          if (breakdown.totalDue === 0) {
+            skipped++;
+            continue;
+          }
+
+          // In-app notification
           try {
-            // optionally compute months list (not perfect if you don't track unpaid months separately)
-            const monthsDue = []; // placeholder; you could compute from payments DB
-            await sendDueReminderEmail({
-              to: m.email,
-              name: m.name,
-              dueAmount: m.dueAmount || 0,
-              monthsDue,
-            });
-
             await Notification.create({
-              type: "Payment",
-              content: `Reminder email sent for due amount ৳${(m.dueAmount || 0).toFixed(2)}`,
-              clerkUserId: m.clerkUserId,
-              adminOnly: false,
+              type:        "Payment",
+              content:
+                `Reminder: You have ৳${breakdown.totalDue.toLocaleString()} ` +
+                `outstanding. Please pay before month-end.`,
+              clerkUserId: member.clerkUserId,
+              adminOnly:   false,
             });
-          } catch (mailErr) {
-            console.error("Reminder email error for", m.email, mailErr);
+          } catch (notifErr) {
+            console.error(
+              `[Cron] Notification failed for ${member.clerkUserId}:`,
+              notifErr.message
+            );
+          }
+
+          // Due reminder email
+          try {
+            await sendDueReminderEmail({
+              to:              member.email,
+              name:            member.name,
+              totalDue:        breakdown.totalDue,
+              totalMonthlyDue: breakdown.totalMonthlyDue,
+              totalExtraDue:   breakdown.totalExtraDue,
+              unpaidMonths:    breakdown.unpaidMonthlyCharges,
+              unpaidCharges:   breakdown.unpaidExtraCharges,
+            });
+            reminded++;
+
+            // 120ms gap — stays under Resend's 10 emails/second rate limit
+            await new Promise(r => setTimeout(r, 120));
+          } catch (emailErr) {
+            emailFail++;
+            console.error(
+              `[Cron] Reminder email failed for ${member.email}:`,
+              emailErr.message
+            );
           }
         }
+
+        console.info(
+          `[Cron] Reminders: sent=${reminded}, ` +
+          `skipped(paid)=${skipped}, emailFailed=${emailFail}`
+        );
+      } catch (error) {
+        console.error("[Cron] Reminder job failed:", error.message);
       }
-    } catch (error) {
-      console.error("Daily payment job error:", error);
     }
   });
+
+  console.info("[Cron] Daily payment jobs registered — runs at 09:00 AM");
 };
 
 export default runDailyJobs;

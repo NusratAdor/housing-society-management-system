@@ -1,0 +1,25 @@
+{
+  "tabs": {
+    "overview": "Overview",
+    "payment": "Payment",
+    "profile": "Profile",
+    "notices": "Notices",
+    "faqs": "FAQs"
+  },
+  "tabsShort": {
+    "overview": "Home",
+    "payment": "Pay",
+    "profile": "Profile",
+    "notices": "Notices",
+    "faqs": "FAQs"
+  },
+  "sidebar": {
+    "accountStatus": "Account status",
+    "duesPaid": "Dues paid",
+    "duesPending": "Dues pending"
+  },
+  "header": {
+    "welcomeBack": "Welcome back, {{name}}",
+    "plot": "Plot"
+  }
+}

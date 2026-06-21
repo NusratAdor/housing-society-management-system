@@ -1,9 +1,8 @@
 // components/CommunityGallery.jsx
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Title from "./Title";
 import { motion } from "framer-motion";
-import axios from "axios";
+import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
 import { ArrowRight } from "lucide-react";   // <-- NEW
 
@@ -11,7 +10,7 @@ const container = { hidden: {}, show: { transition: { staggerChildren: 0.15 } } 
 const card = { hidden: { opacity: 0, scale: 0.95 }, show: { opacity: 1, scale: 1 } };
 
 const CommunityGallery = () => {
-  const navigate = useNavigate();
+  const { axios, navigate } = useAppContext();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -19,7 +18,7 @@ const CommunityGallery = () => {
     const fetch = async () => {
       try {
         const { data } = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/gallery`
+          `/api/gallery`
         );
         if (data.success) setItems(data.gallery);
       } catch {

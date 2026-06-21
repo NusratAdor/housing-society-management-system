@@ -1,9 +1,14 @@
+// client/src/pages/SignUp.jsx
+
 import { SignUp } from "@clerk/clerk-react";
+import usePageTitle from "../hooks/usePageTitle";
 
 const SignUpPage = () => {
+  usePageTitle("Sign Up | GOHS");
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <SignUp 
+      <SignUp
         routing="path"
         path="/sign-up"
         fallbackRedirectUrl="/create-profile"
@@ -14,3 +19,4 @@ const SignUpPage = () => {
 };
 
 export default SignUpPage;
+

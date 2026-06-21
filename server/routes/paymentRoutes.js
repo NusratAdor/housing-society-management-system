@@ -1,28 +1,37 @@
-// routes/paymentRoutes.js
-import express from "express";
+// server/routes/paymentRoutes.js — complete file through Step 9
+
+import express     from "express";
 import { protect } from "../middleware/authMiddleware.js";
+import { isAdmin } from "../middleware/adminMiddleware.js";
 import {
+  getDueBreakdown,
+  getMemberPayments,
+  getMemberHistory,
+  getPaymentAllocations,
   createPaymentSession,
   paymentCallback,
-  getMemberPayments,
-  getPendingPayments,
-  approvePayment,
-  rejectPayment,
 } from "../controllers/paymentController.js";
+
+import {
+  getPendingPayments,
+  rejectPayment,
+} from "../controllers/adminPaymentController.js";
 
 const router = express.Router();
 
-// PROTECTED ROUTES (Member)
-router.use(protect);                     // ← ADD THIS
-router.post("/create", createPaymentSession);
-router.get("/me", getMemberPayments);
-
-// PUBLIC CALLBACK (IPN)
+// ── PUBLIC — IPN callback from SSLCommerz ─────────────────────────────────────
+// Must be before protect middleware — SSLCommerz has no auth token
 router.post("/callback", paymentCallback);
 
-// ADMIN ROUTES
-router.get("/pending", getPendingPayments);
-router.put("/approve/:id", approvePayment);
-router.put("/reject/:id", rejectPayment);
+// ── MEMBER ────────────────────────────────────────────────────────────────────
+// Literal paths before parameterised /:id paths — critical Express rule
+router.get("/me/breakdown",    protect, getDueBreakdown);
+router.get("/me/history",      protect, getMemberHistory);
+router.get("/me",              protect, getMemberPayments);
+router.post("/create",         protect, createPaymentSession);
+router.get("/:id/allocations", protect, getPaymentAllocations);
+
+router.get("/pending",      protect, isAdmin, getPendingPayments);
+router.put("/:id/reject",   protect, isAdmin, rejectPayment);
 
 export default router;

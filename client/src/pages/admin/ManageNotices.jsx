@@ -2,8 +2,6 @@
 import React, { useState, useEffect } from "react";
 import Title from "../../components/Title";
 import { motion } from "framer-motion";
-import { useAuth } from "@clerk/clerk-react";
-import axios from "axios";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Trash2, Edit } from "lucide-react";
@@ -17,9 +15,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useAppContext } from "../../context/AppContext";
+
+import usePageTitle from "../../hooks/usePageTitle";
+
 
 const ManageNotices = () => {
-  const { getToken } = useAuth();
+  const { axios, getToken } = useAppContext();
+  usePageTitle("Manage Notices");
+
   const [notices, setNotices] = useState([]);
   const [formData, setFormData] = useState({
     _id: null,
@@ -41,9 +45,7 @@ const ManageNotices = () => {
       setLoading(true);
       const token = await getToken();
       const response = await axios.get(
-        `${
-          import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
-        }/api/notices`,
+        `/api/notices`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.data.success) {
@@ -92,9 +94,7 @@ const ManageNotices = () => {
       if (formData._id) {
         // Update
         const response = await axios.put(
-          `${
-            import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
-          }/api/notices/${formData._id}`,
+          `/api/notices/${formData._id}`,
           formDataToSend,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -107,9 +107,7 @@ const ManageNotices = () => {
       } else {
         // Create
         const response = await axios.post(
-          `${
-            import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
-          }/api/notices`,
+          "/api/notices",
           formDataToSend,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -160,9 +158,7 @@ const ManageNotices = () => {
       const token = await getToken();
       if (!token) throw new Error("Authentication token not found");
       const response = await axios.delete(
-        `${
-          import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"
-        }/api/notices/${deleteNoticeId}`,
+        `/api/notices/${deleteNoticeId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (response.data.success) {

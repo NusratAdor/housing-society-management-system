@@ -1,0 +1,37 @@
+{
+  "title": "Profile details",
+  "subtitle": "Keep your contact information up to date",
+  "fields": {
+    "name": "Full name",
+    "phone": "Phone",
+    "address": "Address",
+    "designation": "Designation",
+    "plotNumber": "Plot number",
+    "email": "Email",
+    "membershipNumber": "Membership number"
+  },
+  "hints": {
+    "email": "Managed by your sign-in account",
+    "membershipNumber": "Assigned by admin — contact admin to change"
+  },
+  "actions": {
+    "save": "Save changes",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "requestAdmin": "Request admin access",
+    "requesting": "Requesting…",
+    "adminActive": "Admin access active",
+    "adminPending": "Admin request pending"
+  },
+  "errors": {
+    "phone": "Enter a valid Bangladeshi number e.g. 01700000000",
+    "phoneRequired": "Fix the phone number before saving",
+    "noEmail": "No email found on your account"
+  },
+  "toast": {
+    "saved": "Profile saved",
+    "adminRequested": "Admin request submitted",
+    "adminAlreadyPending": "Your request is already pending",
+    "alreadyAdmin": "You already have admin access"
+  }
+}

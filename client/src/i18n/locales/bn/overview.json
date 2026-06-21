@@ -1,0 +1,32 @@
+{
+  "status": {
+    "label": "পেমেন্টের অবস্থা",
+    "allClear": "সব পরিষ্কার, {{name}}",
+    "nothingOwed": "কোনো বকেয়া নেই। আপনার অ্যাকাউন্ট সম্পূর্ণ আপডেট।",
+    "outstanding": "বকেয়া পাওনা",
+    "monthlyFee": "মাসিক ফি",
+    "lastPayment": "সর্বশেষ পেমেন্ট",
+    "receipt": "রসিদ",
+    "viewHistory": "ইতিহাস দেখুন",
+    "oldestUnpaid": "সবচেয়ে পুরানো বকেয়া"
+  },
+  "breakdown": {
+    "monthlyDues": "মাসিক বকেয়া",
+    "extraCharges": "অতিরিক্ত চার্জ",
+    "month_one": "{{count}} মাস",
+    "month_other": "{{count}} মাস",
+    "charge_one": "{{count}} চার্জ",
+    "charge_other": "{{count}} চার্জ"
+  },
+  "description": {
+    "both": "মোট {{monthCount}} মাসের বকেয়া এবং {{chargeCount}}টি অতিরিক্ত চার্জ অন্তর্ভুক্ত।",
+    "both_months": "মোট {{monthCount}} মাসের বকেয়া এবং {{chargeCount}}টি অতিরিক্ত চার্জ অন্তর্ভুক্ত।",
+    "monthsOnly_one": "{{count}} মাসের রক্ষণাবেক্ষণ ফি বকেয়া আছে।",
+    "monthsOnly_other": "{{count}} মাসের রক্ষণাবেক্ষণ ফি বকেয়া আছে।",
+    "chargesOnly_one": "{{count}}টি অতিরিক্ত চার্জ এখনো পরিশোধিত হয়নি।",
+    "chargesOnly_other": "{{count}}টি অতিরিক্ত চার্জ এখনো পরিশোধিত হয়নি।"
+  },
+  "historyStrip": {
+    "label": "১২ মাসের সারসংক্ষেপ"
+  }
+}

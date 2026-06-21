@@ -1,15 +1,21 @@
-// models/Notification.js
+// server/models/Notification.js
 import mongoose from "mongoose";
 
 const notificationSchema = new mongoose.Schema(
   {
-    type: { type: String, required: true, enum: ["Member", "Notice", "FAQ", "Gallery", "Question", "MemberUpdate", "Payment", "AdminApproved"] },
-    content: { type: String, required: true },
-    clerkUserId: { type: String },           // <-- for member-specific notifications
-    adminOnly: { type: Boolean, default: true },
-    createdAt: { type: Date, default: Date.now },
+    type: {
+      type: String,
+      required: true,
+      enum: [
+        "Member", "Notice", "FAQ", "Gallery",
+        "Question", "MemberUpdate", "Payment", "AdminApproved", "AdminRejected",
+      ],
+    },
+    content:     { type: String, required: true },
+    clerkUserId: { type: String, default: null, index: true },  // null = broadcast
+    adminOnly:   { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true }   // provides createdAt and updatedAt automatically
 );
 
 export default mongoose.model("Notification", notificationSchema);

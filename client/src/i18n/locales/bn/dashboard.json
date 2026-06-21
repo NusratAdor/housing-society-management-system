@@ -1,0 +1,25 @@
+{
+  "tabs": {
+    "overview": "সারসংক্ষেপ",
+    "payment": "পেমেন্ট",
+    "profile": "প্রোফাইল",
+    "notices": "নোটিস",
+    "faqs": "প্রশ্নোত্তর"
+  },
+  "tabsShort": {
+    "overview": "হোম",
+    "payment": "পে",
+    "profile": "প্রোফাইল",
+    "notices": "নোটিস",
+    "faqs": "প্রশ্নোত্তর"
+  },
+  "sidebar": {
+    "accountStatus": "অ্যাকাউন্টের অবস্থা",
+    "duesPaid": "বকেয়া পরিশোধিত",
+    "duesPending": "বকেয়া বাকি"
+  },
+  "header": {
+    "welcomeBack": "স্বাগতম, {{name}}",
+    "plot": "প্লট"
+  }
+}

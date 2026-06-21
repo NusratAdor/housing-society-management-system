@@ -10,12 +10,15 @@ import {
 
 const router = express.Router();
 
+// === MEMBER ROUTE (any authenticated user) ===
+router.get("/me", protect, getMemberNotifications);
+
+
 // === ADMIN ROUTES (admin-only) ===
 router.use(protect, isAdmin);
 router.get("/", getAdminNotifications);
 router.delete("/", deleteAllNotifications);
 
-// === MEMBER ROUTE (any authenticated user) ===
-router.get("/me", protect, getMemberNotifications);
+
 
 export default router;

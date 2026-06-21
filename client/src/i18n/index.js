@@ -1,54 +1,65 @@
-// src/i18n/index.js
+// client/src/i18n/index.js
+//
+// Loads namespaced JSON files instead of one flat inline object.
+// Keys are semantic (navbar.dashboard) not English sentences.
+// Benefit: English wording can be edited freely without orphaning
+// Bengali translations, because the key itself never changes.
+
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
 
-// Translation files
-const resources = {
-  en: {
-    translation: {
-      // Navbar
-      Home: "Home",
-      Notices: "Notices",
-      Gallery: "Gallery",
-      FAQs: "FAQs",
-      Contact: "Contact",
-      "Admin Panel": "Admin Panel",
-      Dashboard: "Dashboard",
-      "Create Profile": "Create Profile",
-      "Sign In": "Sign In",
-      "Government Officer's Housing Society (GOHS)": "Government Officer's Housing Society (GOHS)",
-      "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members.":
-        "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members.",
-      "Join or Log In to Get Started": "Join or Log In to Get Started",
+import enNavbar    from "./locales/en/navbar.json";
+import enDashboard from "./locales/en/dashboard.json";
+import enOverview  from "./locales/en/overview.json";
+import enPayment   from "./locales/en/payment.json";
+import enProfile   from "./locales/en/profile.json";
+import enNotices   from "./locales/en/notices.json";
+import enFaqs      from "./locales/en/faqs.json";
 
-      // Add more keys as needed
-    },
-  },
-  bn: {
-    translation: {
-      Home: "হোম",
-      Notices: "নোটিস",
-      Gallery: "গ্যালারি",
-      FAQs: "প্রশ্নোত্তর",
-      Contact: "যোগাযোগ",
-      "Admin Panel": "অ্যাডমিন প্যানেল",
-      Dashboard: "ড্যাশবোর্ড",
-      "Create Profile": "প্রোফাইল তৈরি",
-      "Sign In": "সাইন ইন",
-      "Government Officer's Housing Society (GOHS)": "সরকারি কর্মকর্তাদের আবাসন সমিতি (GOHS)",
-      "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members.":
-        "আপনার সম্প্রদায়ের সাথে সংযোগ করুন, সদস্যপদ ব্যবস্থাপনা করুন, পেমেন্ট ট্র্যাক করুন, নোটিস দেখুন এবং আপডেট থাকুন — আমাদের ৫০০+ সদস্যের জন্য তৈরি একটি নিরাপদ প্ল্যাটফর্মে।",
-      "Join or Log In to Get Started": "শুরু করতে যোগ দিন বা লগইন করুন",
-    },
-  },
-};
+import bnNavbar    from "./locales/bn/navbar.json";
+import bnDashboard from "./locales/bn/dashboard.json";
+import bnOverview  from "./locales/bn/overview.json";
+import bnPayment   from "./locales/bn/payment.json";
+import bnProfile   from "./locales/bn/profile.json";
+import bnNotices   from "./locales/bn/notices.json";
+import bnFaqs      from "./locales/bn/faqs.json";
+import enGallery from "./locales/en/gallery.json";
+import enContact from "./locales/en/contact.json";
+import bnGallery from "./locales/bn/gallery.json";
+import bnContact from "./locales/bn/contact.json";
 
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources,
+    resources: {
+      en: {
+        navbar:    enNavbar,
+        dashboard: enDashboard,
+        overview:  enOverview,
+        payment:   enPayment,
+        profile:   enProfile,
+        notices:   enNotices,
+        faqs:      enFaqs,
+        gallery: enGallery, 
+        contact: enContact
+      },
+      bn: {
+        navbar:    bnNavbar,
+        dashboard: bnDashboard,
+        overview:  bnOverview,
+        payment:   bnPayment,
+        profile:   bnProfile,
+        notices:   bnNotices,
+        faqs:      bnFaqs,
+        gallery: enGallery, 
+        contact: enContact
+      },
+    },
+    // Default namespace — t("key") without a ns arg looks here first
+    defaultNS: "dashboard",
+    ns: ["navbar", "dashboard", "overview", "payment", "profile", "notices", "faqs", "gallery", "contact"],
     fallbackLng: "en",
     interpolation: { escapeValue: false },
     detection: {

@@ -1,0 +1,67 @@
+{
+  "summary": {
+    "allClear": "All dues cleared",
+    "allClearSub": "You're fully up to date — nothing is owed right now.",
+    "monthlyFee": "Monthly fee",
+    "outstanding": "Outstanding dues",
+    "monthlyDues": "Monthly dues",
+    "extraCharges": "Extra charges",
+    "nextDue": "Next due",
+    "lastPayment": "Last payment",
+    "receipt": "Receipt",
+    "descBoth_one": "Total of {{monthCount}} unpaid month and {{chargeCount}} extra charge.",
+    "descBoth_other": "Total of {{monthCount}} unpaid months and {{chargeCount}} extra charges.",
+    "descMonthly_one": "Total for {{count}} unpaid month of maintenance fees.",
+    "descMonthly_other": "Total for {{count}} unpaid months of maintenance fees.",
+    "descExtra_one": "Total for {{count}} unpaid extra charge.",
+    "descExtra_other": "Total for {{count}} unpaid extra charges."
+  },
+  "pending": {
+    "title": "Payment in progress",
+    "body": "You have a pending payment of ৳{{amount}}. If you completed payment on the gateway, please wait a few minutes and refresh."
+  },
+  "history12": "12-month history",
+  "monthly": {
+    "title": "Monthly dues",
+    "subtitle": "Paid in chronological order — oldest month first",
+    "allPaid": "All monthly dues cleared — you're up to date!",
+    "selectHint": "Select months to pay. Each selection includes all earlier unpaid months automatically.",
+    "selectedSummary_one": "{{count}} month selected · ৳{{amount}}",
+    "selectedSummary_other": "{{count}} months selected · ৳{{amount}}"
+  },
+  "extra": {
+    "title": "Additional charges",
+    "pending_one": "{{count}} pending · ৳{{total}} total",
+    "pending_other": "{{count}} pending · ৳{{total}} total",
+    "dueBy": "Due by {{date}}"
+  },
+  "pay": {
+    "totalSelected": "Total selected",
+    "selectAbove": "Select charges above",
+    "monthLine_one": "{{count}} month · ৳{{amount}}",
+    "monthLine_other": "{{count}} months · ৳{{amount}}",
+    "extraLine_one": "{{count}} extra charge · ৳{{amount}}",
+    "extraLine_other": "{{count}} extra charges · ৳{{amount}}",
+    "remaining": "৳{{amount}} still remaining after payment",
+    "payNow": "Pay Now",
+    "processing": "Processing…"
+  },
+  "history": {
+    "title": "Transaction history",
+    "loading": "Loading…",
+    "records_one": "{{count}} record",
+    "records_other": "{{count}} records",
+    "clickToLoad": "Click to load",
+    "covered": "This payment covered",
+    "monthlyDues": "Monthly Dues",
+    "noBreakdown": "No breakdown available",
+    "rejectionReason": "Rejection reason:",
+    "downloadReceipt": "Download Receipt ({{id}})"
+  },
+  "export": {
+    "trigger": "Export",
+    "period": "Select period",
+    "from": "From",
+    "to": "To"
+  }
+}

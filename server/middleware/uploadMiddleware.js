@@ -1,5 +1,27 @@
+// middleware/uploadMiddleware.js
+
 import multer from "multer";
 
-const upload = multer({storage: multer.diskStorage({})})
+const storage = multer.memoryStorage();
 
-export default upload;   
+const fileFilter = (req, file, cb) => {
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
+
+  if (!allowed.includes(file.mimetype)) {
+    return cb(new Error("Only JPG, PNG, WEBP allowed"));
+  }
+
+  cb(null, true);
+};
+
+const upload = multer({
+  storage,
+
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+
+  fileFilter,
+});
+
+export default upload;

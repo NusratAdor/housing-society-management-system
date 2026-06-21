@@ -1,10 +1,9 @@
 // components/NoticesPreview.jsx
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import Title from "../components/Title";
 import { ArrowRight } from "lucide-react";
 import { motion } from "framer-motion";
-import axios from "axios";
+import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
 import { formatDate } from "../utils/formatDate"; // <-- ADDED
 
@@ -18,7 +17,7 @@ const fadeUpVariant = {
 };
 
 const NoticesPreview = () => {
-  const navigate = useNavigate();
+  const { axios, navigate } = useAppContext();
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -27,7 +26,7 @@ const NoticesPreview = () => {
       try {
         setLoading(true);
         const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices`
+          `/api/notices`
         );
         if (response.data.success) {
           setNotices(response.data.notices);

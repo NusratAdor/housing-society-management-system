@@ -2,8 +2,6 @@
 import React, { useState, useEffect } from "react";
 import Title from "../../components/Title";
 import { motion } from "framer-motion";
-import { useAuth } from "@clerk/clerk-react";
-import axios from "axios";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Trash2, Edit } from "lucide-react";
@@ -18,8 +16,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+import { useAppContext } from "../../context/AppContext";
+
+import usePageTitle from "../../hooks/usePageTitle";
+
 const ManageGallery = () => {
-  const { getToken } = useAuth();
+  const { axios, getToken } = useAppContext();
+  usePageTitle("Manage Gallery");
+
   const [gallery, setGallery] = useState([]);
   const [formData, setFormData] = useState({
     _id: null,
@@ -39,7 +43,7 @@ const ManageGallery = () => {
       setLoading(true);
       const token = await getToken();
       const { data } = await axios.get(
-        `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/gallery`,
+        `/api/gallery`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success) setGallery(data.gallery);
@@ -81,13 +85,13 @@ const ManageGallery = () => {
       let res;
       if (formData._id) {
         res = await axios.put(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/gallery/${formData._id}`,
+          `/api/gallery/${formData._id}`,
           payload,
           { headers: { Authorization: `Bearer ${token}` } }
         );
       } else {
         res = await axios.post(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/gallery`,
+          `/api/gallery`,
           payload,
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -126,7 +130,7 @@ const ManageGallery = () => {
     try {
       const token = await getToken();
       const { data } = await axios.delete(
-        `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/gallery/${deleteId}`,
+        `/api/gallery/${deleteId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success) {

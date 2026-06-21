@@ -1,7 +1,15 @@
 import React from "react";
+import usePageTitle from "../hooks/usePageTitle";
+import { useTranslation } from "react-i18next";
 
 const Contact = () => {
+
+  const { t } = useTranslation("navbar");
+  usePageTitle(t("contact"));
+
+
   return (
+
     <div className="w-full bg-white">
       {/* Google Map */}
       <div className="w-full h-[350px]">

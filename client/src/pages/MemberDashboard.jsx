@@ -1,622 +1,292 @@
-// pages/MemberDashboard.jsx
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { toast } from "react-hot-toast";
-import Title from "../components/Title";
+// client/src/pages/MemberDashboard.jsx
+//
+// CHANGES from previous version:
+//   1. All fixes from the previous visual iteration preserved:
+//      - bg-gray-100 page background for desktop contrast
+//      - border-t separator line between navbar and dashboard
+//      - gradient accent bar at sidebar top
+//      - mobile pill row pt-3/pb-2.5 breathing room
+//      - shadow on sidebar
+//   2. i18n (useTranslation) added — TABS defined inside component body
+//      so t() re-evaluates on language change.
+//   3. FIX: onActionComplete now explicitly passes "profile" instead of
+//      tabRef.current. tabRef.current had a timing issue — the ref could
+//      hold "overview" if React batched the state update before the ref
+//      was updated. Explicit "profile" is always correct for ProfileSection.
+
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  LayoutDashboard, CreditCard, User, Bell,
+  MessageCircle, CheckCircle2, AlertCircle,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useAppContext } from "../context/AppContext";
-import { formatDate } from "../utils/formatDate";
-import { useLocation } from "react-router-dom";
 
-// Helper: compute the last 3 months with payment status
-const getLastThreeMonths = (payments = []) => {
-  const now = new Date();
-  const months = [];
+import OverviewCard   from "../components/member/OverviewCard";
+import PaymentSection from "../components/member/PaymentSection";
+import ProfileSection from "../components/member/ProfileSection";
+import NoticesSection from "../components/member/NoticesSection";
+import FAQSection     from "../components/member/FAQSection";
 
-  for (let i = 2; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const month = d.toLocaleString("default", { month: "long" });
-    const year = d.getFullYear();
+import usePageTitle from "../hooks/usePageTitle";
 
-    // Look for paid payment in this month/year
-    const paid = payments.some(
-      (p) =>
-        p.status === "Paid" &&
-        p.month === d.getMonth() + 1 &&
-        p.year === year
-    );
-
-    months.push({
-      month,
-      year,
-      status: paid ? "Paid" : "Unpaid",
-    });
-  }
-  return months;
+// Component map — static, lives outside component
+const TAB_COMPONENTS = {
+  overview: OverviewCard,
+  payment:  PaymentSection,
+  profile:  ProfileSection,
+  notices:  NoticesSection,
+  faqs:     FAQSection,
 };
 
-const MemberDashboard = () => {
-  const {
-    user,
-    memberProfile,
-    loadingProfile,
-    fetchMemberProfile,
-    axios,
-    getToken,
-    navigate,
-  } = useAppContext();
+export default function MemberDashboard() {
+  const { memberProfile, loadingProfile, navigate } = useAppContext();
+  const { t } = useTranslation("dashboard");
 
+  const [activeTab, setActiveTab] = useState("overview");
+  const pillsRef = useRef(null);
+
+  // TABS inside component so t() rebuilds on language change
+  const TABS = [
+    { id: "overview", label: t("tabs.overview"), shortLabel: t("tabsShort.overview"), icon: LayoutDashboard },
+    { id: "payment",  label: t("tabs.payment"),  shortLabel: t("tabsShort.payment"),  icon: CreditCard      },
+    { id: "profile",  label: t("tabs.profile"),  shortLabel: t("tabsShort.profile"),  icon: User            },
+    { id: "notices",  label: t("tabs.notices"),  shortLabel: t("tabsShort.notices"),  icon: Bell            },
+    { id: "faqs",     label: t("tabs.faqs"),     shortLabel: t("tabsShort.faqs"),     icon: MessageCircle   },
+  ];
+
+  // Auth guard
   useEffect(() => {
     if (!loadingProfile && !memberProfile) {
       navigate("/create-profile", { replace: true });
     }
   }, [memberProfile, loadingProfile, navigate]);
 
-  // ── Profile ─────────────────────────────────────
-  const [profile, setProfile] = useState({
-    name: "",
-    address: "",
-    designation: "",
-    email: "",
-    phone: "",
-    membershipNumber: "",
-    plotNumber: "",
-    paymentStatus: "Pending",
-    pendingAdmin: false,
-  });
-  // ── Questions & FAQs ─────────────────────────────
-  const [question, setQuestion] = useState("");
-  const [submittedQuestions, setSubmittedQuestions] = useState([]);
-  const [answeredFAQs, setAnsweredFAQs] = useState([]);
-  // ── Notices & Notifications ──────────────────────
-  const [notices, setNotices] = useState([]);
-  const [notifications, setNotifications] = useState([]);
-  // ── Payments ─────────────────────────────────────
-  const [payments, setPayments] = useState([]);
-  const [amount, setAmount] = useState("");
-  const [loadingPayment, setLoadingPayment] = useState(false);
-  const location = useLocation();
-  const monthlyFee = 300;
-  // ── Fetch helpers ─────────────────────────────────
-  const fetchNotices = async () => {
-    try {
-      const { data } = await axios.get("/api/notices");
-      if (data.success) setNotices(data.notices.slice(0, 3));
-    } catch {
-      toast.error("Failed to load notices");
-    }
-  };
-  const fetchAnsweredFAQs = async () => {
-    try {
-      const { data } = await axios.get("/api/faqs");
-      if (data.success) setAnsweredFAQs(data.faqs);
-    } catch {
-      toast.error("Failed to load answered FAQs");
-    }
-  };
-  const fetchMemberNotifications = async () => {
-    try {
-      const token = await getToken();
-      const { data } = await axios.get("/api/notifications/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (data.success) setNotifications(data.notifications);
-    } catch (err) {
-      console.error("Failed to fetch notifications:", err);
-    }
-  };
-  const fetchPayments = async () => {
-    try {
-      const token = await getToken();
-      const { data } = await axios.get("/api/payments/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (data.success) setPayments(data.payments);
-    } catch (err) {
-      console.error("Fetch payments error:", err);
-    }
-  };
-  // ── Question handling ─────────────────────────────
-  const handleQuestionSubmit = async (e) => {
-    e.preventDefault();
-    if (!question.trim()) return;
-    try {
-      const token = await getToken();
-      const { data } = await axios.post(
-        "/api/faqs/pending",
-        { question },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (data.success) {
-        setSubmittedQuestions((prev) => [
-          ...prev,
-          { question, askedAt: new Date().toISOString() },
-        ]);
-        setQuestion("");
-        toast.success("Question submitted!");
-      }
-    } catch {
-      toast.error("Failed to submit question");
-    }
-  };
-  const handleDeleteSubmitted = (index) => {
-    if (!window.confirm("Delete this submitted question?")) return;
-    setSubmittedQuestions((prev) => prev.filter((_, i) => i !== index));
-    toast.success("Question deleted");
-  };
-  const handleDeleteAnswered = async (faqId) => {
-    if (!window.confirm("Delete this answered FAQ?")) return;
-    try {
-      const token = await getToken();
-      const { data } = await axios.delete(`/api/faqs/member/${faqId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (data.success) {
-        setAnsweredFAQs((prev) => prev.filter((f) => f._id !== faqId));
-        toast.success("FAQ deleted");
-      }
-    } catch (err) {
-      console.error("Delete FAQ error:", err);
-      toast.error("Failed to delete FAQ");
-    }
-  };
-  // ── Profile handling ─────────────────────────────
-  const handleProfileUpdate = async (e) => {
-    e.preventDefault();
-    try {
-      const token = await getToken();
-      const email =
-        memberProfile?.email || user?.primaryEmailAddress?.emailAddress;
-      if (!email) {
-        toast.error("No primary email found in profile");
-        return;
-      }
-      const { data } = await axios.post(
-        "/api/members",
-        {
-          name: profile.name,
-          email,
-          phone: profile.phone,
-          address: profile.address,
-          designation: profile.designation,
-          membershipNo: profile.membershipNumber,
-          plotNo: profile.plotNumber,
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (data.success) {
-        toast.success(data.message || "Profile updated successfully!");
-        fetchMemberProfile();
-      } else {
-        toast.error(data.message || "Could not update profile");
-      }
-    } catch (error) {
-      const message = error.response?.data?.message || "Error updating profile";
-      toast.error(message);
-    }
-  };
-  const handleRequestAdmin = async () => {
-    if (profile.pendingAdmin) {
-      toast.error("Admin request already pending");
-      return;
-    }
-    if (memberProfile?.role === "admin") {
-      toast.error("You are already an admin");
-      return;
-    }
-    try {
-      const token = await getToken();
-      const { data } = await axios.post(
-        "/api/members/request-admin",
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (data.success) {
-        toast.success(data.message || "Admin request submitted successfully!");
-        setProfile({ ...profile, pendingAdmin: true });
-        fetchMemberProfile();
-      } else {
-        toast.error(data.message || "Failed to submit admin request");
-      }
-    } catch (error) {
-      toast.error(
-        error.response?.data?.message || "Error submitting admin request"
-      );
-    }
-  };
-  // ── PAYMENT GATEWAY (SSLCOMMERZ) ─────────────────
-  const handleGatewayPay = async () => {
-  if (!amount || amount <= 0) {
-    toast.error("Please enter a valid amount.");
-    return;
-  }
-
-  setLoadingPayment(true);
-  try {
-    const token = await getToken();
-    const { data } = await axios.post(
-      "/api/payments/create",
-      { amount: Number(amount) },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (data.success && data.url) {
-      window.location.href = data.url;
-    } else {
-      toast.error(data.message || "Payment initialization failed");
-    }
-  } catch (err) {
-    console.error("Payment error:", err.response?.data || err);
-    toast.error(err.response?.data?.message || "Failed to start payment");
-  } finally {
-    setLoadingPayment(false);
-  }
-};
-  // ── Effects ───────────────────────────────────────
-useEffect(() => {
-  const params = new URLSearchParams(location.search);
-  const status = params.get("payment_status");
-
-  if (status === "VALID") {
-    fetchPayments();
-    fetchMemberProfile();
-    toast.success("Payment successful! Due updated.");
-    window.history.replaceState({}, "", "/dashboard");
-  } else if (status === "FAILED" || status === "CANCEL") {
-    toast.error("Payment failed or cancelled.");
-    window.history.replaceState({}, "", "/dashboard");
-  }
-}, [location.search, fetchPayments, fetchMemberProfile]);
-
+  // Scroll active pill into view on mobile
   useEffect(() => {
-    fetchNotices();
-    fetchAnsweredFAQs();
-    fetchMemberNotifications();
-    fetchPayments();
-    const interval = setInterval(() => {
-      fetchNotices();
-      fetchMemberNotifications();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [getToken]);
-  useEffect(() => {
-    if (user && memberProfile) {
-      setProfile({
-        name: memberProfile.name || "",
-        address: memberProfile.address || "",
-        designation: memberProfile.designation || "",
-        email:
-          memberProfile.email || user?.primaryEmailAddress?.emailAddress || "",
-        phone: memberProfile.phone || "",
-        membershipNumber: memberProfile.membershipNo || "",
-        plotNumber: memberProfile.plotNo || "",
-        paymentStatus: memberProfile.paymentStatus || "Pending",
-        pendingAdmin: memberProfile.pendingAdmin || false,
-      });
-    }
-  }, [user, memberProfile]);
-  // ── CRITICAL: Wait for profile & show loading ─────
+    if (!pillsRef.current) return;
+    const el = pillsRef.current.querySelector("[data-active='true']");
+    el?.scrollIntoView({ inline: "center", behavior: "smooth", block: "nearest" });
+  }, [activeTab]);
+
+  const goToPayment = useCallback(() => setActiveTab("payment"), []);
+
+  // FIX: explicitly lock to "profile" — no ref, no stale closure possible.
+  // ProfileSection calls this after save/requestAdmin. We always want to
+  // stay on the profile tab. Passing tabRef.current was unreliable because
+  // the ref could reflect "overview" if React batched state before the ref
+  // update. This one-liner is correct and simple.
+  const stayOnProfile = useCallback(() => setActiveTab("profile"), []);
+
   if (loadingProfile) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-lg font-outfit">Loading profile...</div>
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-7 h-7 border-2 border-gray-200 border-t-[var(--color-primary)] rounded-full animate-spin" />
+          <p className="text-sm text-gray-400 font-outfit">Loading…</p>
+        </div>
       </div>
     );
   }
-  if (!memberProfile) {
-    return null; // AppContext handles redirect
-  }
-  // ── UI helpers ─────────────────────────────────────
-  const formFields = [
-    { label: "Name", key: "name" },
-    { label: "Address", key: "address" },
-    { label: "Designation", key: "designation" },
-    { label: "Email", key: "email", readOnly: true },
-    { label: "Phone", key: "phone" },
-    { label: "Membership Number", key: "membershipNumber", readOnly: true },
-    { label: "Plot Number", key: "plotNumber" },
-    { label: "Payment Status", key: "paymentStatus", readOnly: true },
-  ];
 
-  const lastThree = getLastThreeMonths(payments);
+  if (!memberProfile) return null;
+
+  const activeTabDef    = TABS.find(tab => tab.id === activeTab) ?? TABS[0];
+
+  usePageTitle(activeTabDef.label);
+
+  const ActiveComponent = TAB_COMPONENTS[activeTab] ?? OverviewCard;
+
+  const sectionProps = {
+    ...(activeTab === "overview" && { onGoToPayment: goToPayment, memberProfile }),
+    // FIX: only ProfileSection receives onActionComplete, and it explicitly
+    // stays on "profile" — no other tab ever calls this callback.
+    ...(activeTab === "profile"  && { onActionComplete: stayOnProfile }),
+  };
+
+  const isPaid = memberProfile.paymentStatus === "Paid";
+
+  const initials = (memberProfile.name ?? "M")
+    .split(" ").filter(Boolean).slice(0, 2)
+    .map(w => w[0].toUpperCase()).join("");
 
   return (
-    <div className="w-full bg-white py-20 min-h-screen">
+    <div className="pt-16 min-h-screen bg-gray-100 font-outfit" style={{ animation: "page-fade 0.4s ease both" }}>
       <div className="max-w-7xl mx-auto px-4 md:px-8">
-        <Title
-          title="Member Dashboard"
-          subTitle="Manage your profile, view notices, submit questions, and track payments."
-        />
-        <div className="mt-12 grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* ── PROFILE ── */}
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5 }}
-            className="bg-white border border-gray-200 rounded-md p-6 shadow-md"
+
+        {/* ── MOBILE sticky pill nav ──────────────────────────────────── */}
+        <div className="lg:hidden sticky top-16 z-30 -mx-4 px-4
+          bg-gray-100/95 backdrop-blur-sm border-b border-gray-200 pt-3 pb-2.5">
+          <div
+            ref={pillsRef}
+            className="flex gap-2 overflow-x-auto"
+            style={{ scrollbarWidth: "none" }}
           >
-            <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-              Profile Details
-            </h3>
-            <form onSubmit={handleProfileUpdate} className="space-y-4">
-              {formFields.map(({ label, key, readOnly }) => (
-                <div key={key}>
-                  <label className="block text-sm text-gray-600 mb-1 font-outfit">
-                    {label}
-                  </label>
-                  <input
-                    type="text"
-                    value={profile[key]}
-                    onChange={(e) =>
-                      setProfile({ ...profile, [key]: e.target.value })
+            {TABS.map(({ id, shortLabel, icon: Icon }) => {
+              const isActive = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  data-active={isActive}
+                  onClick={() => setActiveTab(id)}
+                  className={`
+                    flex items-center gap-1.5 px-4 py-2 rounded-full
+                    text-xs font-semibold whitespace-nowrap flex-shrink-0 border
+                    transition-all duration-150
+                    ${isActive
+                      ? "bg-gray-900 border-gray-900 text-white shadow-sm"
+                      : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
                     }
-                    readOnly={readOnly}
-                    className={`w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[var(--color-primary)] ${
-                      readOnly ? "bg-gray-100 cursor-not-allowed" : ""
-                    }`}
-                  />
-                </div>
-              ))}
-              <div className="flex gap-4">
-                <button
-                  type="submit"
-                  className="bg-[var(--color-primary)] text-white rounded-md py-2 px-4 font-outfit hover:bg-blue-700"
+                  `}
                 >
-                  Update Profile
+                  <Icon style={{ width: 11, height: 11 }} />
+                  {shortLabel}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleRequestAdmin}
-                  disabled={
-                    profile.pendingAdmin || memberProfile?.role === "admin"
-                  }
-                  className={`bg-green-500 text-white rounded-md py-2 px-4 font-outfit hover:bg-green-600 ${
-                    profile.pendingAdmin || memberProfile?.role === "admin"
-                      ? "opacity-50 cursor-not-allowed"
-                      : ""
-                  }`}
-                >
-                  {profile.pendingAdmin
-                    ? "Admin Request Pending"
-                    : memberProfile?.role === "admin"
-                    ? "You Are Admin"
-                    : "Request Admin"}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-          {/* ── RIGHT COLUMN ── */}
-          <div className="space-y-8">
-            {/* Recent Notices */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="bg-white border border-gray-200 rounded-md p-6 shadow-md"
-            >
-              <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-                Recent Notices
-              </h3>
-              <div className="space-y-4">
-                {notices.map((n) => (
-                  <Link
-                    key={n._id}
-                    to={`/notices/${n._id}`}
-                    className="block p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)]"
-                  >
-                    <div className="flex gap-4">
-                      {n.image && (
-                        <img
-                          src={n.image}
-                          alt={n.title}
-                          className="h-16 w-16 object-cover rounded-md"
-                        />
-                      )}
-                      <div>
-                        <h4 className="font-playfair text-base font-semibold text-gray-800">
-                          {n.title}
-                        </h4>
-                        <p className="text-gray-600 font-outfit text-sm">
-                          {formatDate(n.date)}
-                        </p>
-                        <p className="text-gray-600 font-outfit text-sm">
-                          {n.summary}
-                        </p>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </motion.div>
-            {/* Submit Question */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="bg-white border border-gray-200 rounded-md p-6 shadow-md"
-            >
-              <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-                Submit a Question
-              </h3>
-              <form onSubmit={handleQuestionSubmit} className="space-y-4">
-                <textarea
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Enter your question for the admin..."
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[var(--color-primary)] font-outfit"
-                  rows="4"
-                  required
-                />
-                <button
-                  type="submit"
-                  className="bg-[var(--color-primary)] text-white rounded-md py-2 px-4 font-outfit hover:bg-blue-700"
-                >
-                  Submit Question
-                </button>
-              </form>
-              {submittedQuestions.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="font-semibold mb-2 text-gray-700">
-                    Your Submitted Questions
-                  </h4>
-                  <ul className="list-disc pl-5 text-sm text-gray-600 space-y-2">
-                    {submittedQuestions.map((q, i) => (
-                      <li key={i} className="flex justify-between items-center">
-                        <div>
-                          {q.question}{" "}
-                          <span className="text-xs text-gray-400">
-                            ({formatDate(q.askedAt)})
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleDeleteSubmitted(i)}
-                          className="text-red-500 hover:underline text-xs ml-2"
-                        >
-                          Delete
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </motion.div>
-            {/* Answered FAQs */}
-            {answeredFAQs.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.3 }}
-                className="bg-white border border-gray-200 rounded-md p-6 shadow-md"
-              >
-                <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-                  Answered FAQs
-                </h3>
-                <div className="space-y-4">
-                  {answeredFAQs.map((faq) => (
-                    <div
-                      key={faq._id}
-                      className="p-4 border border-gray-200 rounded-md"
-                    >
-                      <h4 className="font-semibold text-gray-800">
-                        {faq.question}
-                      </h4>
-                      <p className="text-gray-600">{faq.answer}</p>
-                      <p className="text-xs text-gray-400">
-                        Answered: {formatDate(faq.answeredAt)}
-                      </p>
-                      <button
-                        onClick={() => handleDeleteAnswered(faq._id)}
-                        className="text-red-500 hover:underline text-xs mt-2"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-            {/* Notifications */}
-            {notifications.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.4 }}
-                className="bg-white border border-gray-200 rounded-md p-6 shadow-md"
-              >
-                <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-                  Notifications
-                </h3>
-                <div className="space-y-4">
-                  {notifications.map((n) => (
-                    <div
-                      key={n._id}
-                      className="p-3 border border-gray-200 rounded-md hover:bg-gray-50 font-outfit"
-                    >
-                      {n.content}{" "}
-                      <span className="text-xs text-gray-400">
-                        ({formatDate(n.createdAt)})
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
+              );
+            })}
           </div>
         </div>
-        {/* ── PAYMENT SECTION (SSLCOMMERZ GATEWAY) ───────────────────── */}
-       
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mt-12 bg-white border border-gray-200 rounded-md p-6 shadow-md"
-        >
-          <div className="flex justify-between items-center mb-4">
-    <h3 className="font-playfair text-lg font-semibold text-gray-800">
-      Monthly Fee: 300 TK
-    </h3>
-    {memberProfile.dueAmount > 0 && (
-      <div className="text-red-600 font-semibold">
-        Due: ৳{memberProfile.dueAmount}
-      </div>
-    )}
-  </div>
 
-          <div className="flex gap-3 mb-4">
-    <input
-      type="number"
-      value={amount}
-      onChange={(e) => setAmount(e.target.value)}
-      placeholder={`Enter amount (e.g., ${memberProfile.dueAmount || 300})`}
-      className="border border-gray-300 rounded-md px-3 py-2 w-full focus:outline-none focus:ring focus:ring-blue-300"
-      min="1"
-    />
-    <button
-      onClick={handleGatewayPay}
-      disabled={!amount || amount <= 0 || loadingPayment}
-      className="bg-[var(--color-primary)] text-white py-2 px-4 rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-      {loadingPayment ? "Processing…" : "Pay Now"}
-    </button>
-  </div>
+        <div className="flex items-start">
 
-          {/* Updated Payment History Table */}
-          <div className="mt-6 overflow-x-auto">
-            <h4 className="font-semibold mb-2 text-gray-800">
-              Last 3 Months Payment Status
-            </h4>
-            <table className="w-full text-sm text-left text-gray-700 border">
-              <thead className="bg-gray-100 text-xs uppercase text-gray-600">
-                <tr>
-                  <th className="py-2 px-4">Month</th>
-                  <th className="py-2 px-4">Year</th>
-                  <th className="py-2 px-4">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lastThree.map((m, i) => (
-                  <tr key={i} className="border-t border-gray-100">
-                    <td className="py-2 px-4">{m.month}</td>
-                    <td className="py-2 px-4">{m.year}</td>
-                    <td className="py-2 px-4">
-                      <span
-                        className={`inline-block px-3 py-1 text-xs font-semibold rounded-full ${
-                          m.status === "Paid"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
-                        }`}
-                      >
-                        {m.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </motion.div>
+          {/* ── SIDEBAR ──────────────────────────────────────────────────── */}
+          <aside
+            className="hidden lg:flex flex-col w-[220px] flex-shrink-0
+              sticky top-16 self-start min-h-[calc(100vh-64px)]
+              bg-white border-r border-gray-200
+              shadow-[1px_0_12px_rgba(0,0,0,0.04)]"
+          >
+            {/* Gradient accent bar — visual connector to navbar */}
+            <div className="h-[2px] w-full flex-shrink-0
+              bg-gradient-to-r from-[var(--color-primary)] to-teal-400" />
+
+            {/* Member identity */}
+            <div className="px-5 pt-4 pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full flex-shrink-0
+                  bg-gradient-to-br from-[var(--color-primary)]/20 to-teal-100
+                  flex items-center justify-center
+                  ring-2 ring-white shadow-sm">
+                  <span className="text-xs font-bold text-[var(--color-primary)]">
+                    {initials}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate leading-tight">
+                    {memberProfile.name ?? "Member"}
+                  </p>
+                  <p className="text-[11px] text-gray-400 truncate mt-0.5 font-mono">
+                    {memberProfile.membershipNo ?? ""}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Nav items */}
+            <nav className="flex-1 py-3 px-3 space-y-0.5">
+              {TABS.map(({ id, label, icon: Icon }) => {
+                const isActive = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setActiveTab(id)}
+                    className={`
+                      relative w-full flex items-center gap-3 px-3 py-2.5
+                      rounded-xl text-sm transition-colors duration-150 text-left group
+                      ${isActive
+                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold"
+                        : "text-gray-500 font-medium hover:bg-gray-50 hover:text-gray-800"
+                      }
+                    `}
+                  >
+                    {isActive && (
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2
+                        w-[3px] h-5 bg-[var(--color-primary)] rounded-r-full" />
+                    )}
+                    <Icon
+                      style={{ width: 16, height: 16 }}
+                      strokeWidth={isActive ? 2.2 : 1.6}
+                      className={`flex-shrink-0 transition-colors ${
+                        isActive
+                          ? "text-[var(--color-primary)]"
+                          : "text-gray-400 group-hover:text-gray-600"
+                      }`}
+                    />
+                    <span className="truncate">{label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Sidebar footer — account status */}
+            <div className="px-4 pb-5 pt-3 border-t border-gray-100">
+              <p className="text-[10px] text-gray-400 uppercase tracking-widest mb-2 px-1">
+                {t("sidebar.accountStatus")}
+              </p>
+              <div className={`flex items-center gap-2 px-3 py-2.5
+                rounded-xl border text-xs font-semibold
+                ${isPaid
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  : "bg-amber-50 border-amber-200 text-amber-700"
+                }`}>
+                {isPaid
+                  ? <CheckCircle2 size={13} className="text-emerald-500 flex-shrink-0" />
+                  : <AlertCircle  size={13} className="text-amber-500  flex-shrink-0" />
+                }
+                {isPaid ? t("sidebar.duesPaid") : t("sidebar.duesPending")}
+              </div>
+            </div>
+          </aside>
+
+          {/* ── MAIN CONTENT ───────────────────────────────────────────────── */}
+          <main className="flex-1 min-w-0 lg:pl-8 pt-6 pb-20 border-t border-gray-200">
+
+            {/* Page heading */}
+            <div className="flex items-center justify-between mb-7">
+              <div>
+                <h1 className="text-2xl font-semibold text-gray-900 font-playfair">
+                  {activeTabDef.label}
+                </h1>
+                {activeTab === "overview" && (
+                  <p className="text-sm text-gray-400 mt-1">
+                    {t("header.welcomeBack", {
+                      name: memberProfile.name?.split(" ")[0] ?? "there",
+                    })}
+                  </p>
+                )}
+              </div>
+
+              {memberProfile.plotNo && (
+                <span className="flex-shrink-0 inline-flex items-center gap-1.5
+                  px-3 py-1.5 bg-white border border-gray-200 shadow-sm
+                  text-xs rounded-full">
+                  <span className="text-[10px] text-gray-400 uppercase tracking-widest">
+                    {t("header.plot")}
+                  </span>
+                  <span className="font-semibold text-gray-800">
+                    {memberProfile.plotNo}
+                  </span>
+                </span>
+              )}
+            </div>
+
+            {/* Section content */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0  }}
+                exit={{    opacity: 0, y: -6  }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <ActiveComponent {...sectionProps} />
+              </motion.div>
+            </AnimatePresence>
+
+          </main>
+        </div>
       </div>
     </div>
   );
-};
-export default MemberDashboard;
+}

@@ -1,19 +1,23 @@
-// controllers/notificationController.js
+// server/controllers/notificationController.js
+//
+// CHANGE: getAdminNotifications limit raised from 5 → 15.
+// 5 was too few — admin activity feed needs enough context to be useful.
+// 15 matches the professional standard for dashboard activity feeds
+// (Vercel, Linear, Stripe all show ~10-15 recent events).
+// All other handlers unchanged.
+
 import Notification from "../models/Notification.js";
 
-/**
- * Get recent admin-only notifications (for admin dashboard)
- */
+// Admin dashboard activity feed
 export const getAdminNotifications = async (req, res) => {
   try {
     const notifications = await Notification.find({ adminOnly: true })
       .sort({ createdAt: -1 })
-      .limit(5);
+      .limit(15);                    // was 5
 
     return res.status(200).json({
       success: true,
       notifications,
-      message: notifications.length ? undefined : "No notifications found",
     });
   } catch (error) {
     console.error(`getAdminNotifications error: ${error.message}`);
@@ -21,9 +25,7 @@ export const getAdminNotifications = async (req, res) => {
   }
 };
 
-/**
- * Delete all admin-only notifications
- */
+// Clear all admin notifications
 export const deleteAllNotifications = async (req, res) => {
   try {
     await Notification.deleteMany({ adminOnly: true });
@@ -37,34 +39,27 @@ export const deleteAllNotifications = async (req, res) => {
   }
 };
 
-/**
- * Get notifications for the authenticated member
- * Includes:
- *  - Personal notifications (clerkUserId matches)
- *  - Broadcast messages (adminOnly: false, clerkUserId: null)
- */
+// Member notifications
 export const getMemberNotifications = async (req, res) => {
   try {
     const { clerkUserId } = req;
 
     if (!clerkUserId) {
-      return res.status(400).json({ success: false, message: "User ID is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID is required" });
     }
 
     const notifications = await Notification.find({
       $or: [
-        { clerkUserId },                            // Personal
-        { adminOnly: false, clerkUserId: null }     // Broadcast
-      ]
+        { clerkUserId },
+        { adminOnly: false, clerkUserId: null },
+      ],
     })
       .sort({ createdAt: -1 })
       .limit(10);
 
-    return res.status(200).json({
-      success: true,
-      notifications,
-      message: notifications.length ? undefined : "No notifications found",
-    });
+    return res.status(200).json({ success: true, notifications });
   } catch (error) {
     console.error(`getMemberNotifications error: ${error.message}`);
     return res.status(500).json({ success: false, message: "Server error" });

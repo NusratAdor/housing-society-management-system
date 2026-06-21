@@ -1,36 +1,45 @@
-// pages/Notices.jsx
-import React, { useState, useEffect } from "react";
+// client/src/pages/Notices.jsx
+// CHANGE: catch block no longer calls toast.error()
+// Same reasoning as Gallery.jsx — backend cold-start causes false errors.
+
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import Title from "../components/Title";
 import { motion } from "framer-motion";
-import axios from "axios";
-import { toast } from "react-hot-toast";
-import { formatDate } from "../utils/formatDate"; // <-- ADDED
+import { useAppContext } from "../context/AppContext";
+import { formatDate } from "../utils/formatDate";
+
+import usePageTitle from "../hooks/usePageTitle";
+import { useTranslation } from "react-i18next";
 
 const Notices = () => {
+  const { axios } = useAppContext();
+  const { t } = useTranslation("notices");
+  usePageTitle(t("title"));
+
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchNotices = async () => {
-      try {
-        setLoading(true);
-        const response = await axios.get(
-          `${import.meta.env.VITE_BACKEND_URL || "http://localhost:5000"}/api/notices`
-        );
-        if (response.data.success) {
-          setNotices(response.data.notices);
-        } else {
-          toast.error(response.data.message || "Failed to load notices");
-        }
-      } catch (error) {
-        toast.error("Error loading notices. Please try again.");
-      } finally {
-        setLoading(false);
+  const fetchNotices = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.get("/api/notices");
+      if (data.success) {
+        setNotices(data.notices);
       }
-    };
+      // If data.success is false, show empty — no toast
+    } catch {
+      // WHY silent: same reason as Gallery — backend cold-start.
+      // Empty state is shown. No toast.
+      setNotices([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [axios]);
+
+  useEffect(() => {
     fetchNotices();
-  }, []);
+  }, [fetchNotices]);
 
   return (
     <div className="w-full bg-white py-20 min-h-screen">
@@ -84,8 +93,10 @@ const Notices = () => {
                 </Link>
               </motion.div>
             ))}
-            {notices.length === 0 && (
-              <p className="text-gray-500 font-outfit">No notices available.</p>
+            {notices.length === 0 && !loading && (
+              <p className="text-gray-500 font-outfit col-span-full text-center">
+                No notices available.
+              </p>
             )}
           </div>
         )}

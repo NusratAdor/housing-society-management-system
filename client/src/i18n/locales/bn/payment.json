@@ -1,0 +1,67 @@
+{
+  "summary": {
+    "allClear": "সব বকেয়া পরিশোধিত",
+    "allClearSub": "আপনি সম্পূর্ণ আপডেট — এখন কোনো বকেয়া নেই।",
+    "monthlyFee": "মাসিক ফি",
+    "outstanding": "বকেয়া পাওনা",
+    "monthlyDues": "মাসিক বকেয়া",
+    "extraCharges": "অতিরিক্ত চার্জ",
+    "nextDue": "পরবর্তী বকেয়া",
+    "lastPayment": "সর্বশেষ পেমেন্ট",
+    "receipt": "রসিদ",
+    "descBoth_one": "মোট {{monthCount}} মাসের বকেয়া এবং {{chargeCount}}টি অতিরিক্ত চার্জ।",
+    "descBoth_other": "মোট {{monthCount}} মাসের বকেয়া এবং {{chargeCount}}টি অতিরিক্ত চার্জ।",
+    "descMonthly_one": "মোট {{count}} মাসের মেইনটেন্যান্স ফি বকেয়া।",
+    "descMonthly_other": "মোট {{count}} মাসের মেইনটেন্যান্স ফি বকেয়া।",
+    "descExtra_one": "মোট {{count}}টি অতিরিক্ত চার্জ বকেয়া।",
+    "descExtra_other": "মোট {{count}}টি অতিরিক্ত চার্জ বকেয়া।"
+  },
+  "pending": {
+    "title": "পেমেন্ট প্রক্রিয়াধীন",
+    "body": "আপনার ৳{{amount}} এর একটি পেমেন্ট প্রক্রিয়াধীন আছে। গেটওয়েতে পেমেন্ট সম্পন্ন হলে কয়েক মিনিট অপেক্ষা করুন এবং রিফ্রেশ করুন।"
+  },
+  "history12": "১২ মাসের ইতিহাস",
+  "monthly": {
+    "title": "মাসিক বকেয়া",
+    "subtitle": "কালানুক্রমিক ক্রমে পরিশোধ — সবচেয়ে পুরানো মাস আগে",
+    "allPaid": "সব মাসিক বকেয়া পরিশোধিত — আপনি আপডেট!",
+    "selectHint": "পরিশোধের জন্য মাস বেছে নিন। প্রতিটি নির্বাচনে আগের সব বকেয়া মাস স্বয়ংক্রিয়ভাবে যুক্ত হয়।",
+    "selectedSummary_one": "{{count}}টি মাস নির্বাচিত · ৳{{amount}}",
+    "selectedSummary_other": "{{count}}টি মাস নির্বাচিত · ৳{{amount}}"
+  },
+  "extra": {
+    "title": "অতিরিক্ত চার্জ",
+    "pending_one": "{{count}}টি বাকি · মোট ৳{{total}}",
+    "pending_other": "{{count}}টি বাকি · মোট ৳{{total}}",
+    "dueBy": "শেষ তারিখ {{date}}"
+  },
+  "pay": {
+    "totalSelected": "মোট নির্বাচিত",
+    "selectAbove": "উপরে চার্জ বেছে নিন",
+    "monthLine_one": "{{count}}টি মাস · ৳{{amount}}",
+    "monthLine_other": "{{count}}টি মাস · ৳{{amount}}",
+    "extraLine_one": "{{count}}টি অতিরিক্ত চার্জ · ৳{{amount}}",
+    "extraLine_other": "{{count}}টি অতিরিক্ত চার্জ · ৳{{amount}}",
+    "remaining": "পেমেন্টের পরেও ৳{{amount}} বাকি থাকবে",
+    "payNow": "এখন পেমেন্ট করুন",
+    "processing": "প্রক্রিয়াকরণ হচ্ছে…"
+  },
+  "history": {
+    "title": "লেনদেনের ইতিহাস",
+    "loading": "লোড হচ্ছে…",
+    "records_one": "{{count}}টি রেকর্ড",
+    "records_other": "{{count}}টি রেকর্ড",
+    "clickToLoad": "ক্লিক করুন",
+    "covered": "এই পেমেন্টে অন্তর্ভুক্ত ছিল",
+    "monthlyDues": "মাসিক বকেয়া",
+    "noBreakdown": "বিস্তারিত পাওয়া যায়নি",
+    "rejectionReason": "প্রত্যাখ্যানের কারণ:",
+    "downloadReceipt": "রসিদ ডাউনলোড করুন ({{id}})"
+  },
+  "export": {
+    "trigger": "রপ্তানি",
+    "period": "সময়কাল বেছে নিন",
+    "from": "থেকে",
+    "to": "পর্যন্ত"
+  }
+}
