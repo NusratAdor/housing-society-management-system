@@ -25,6 +25,7 @@ export const getCollectionMetrics = async () => {
     // two lightweight queries instead of one heavy $lookup pipeline
     unpaidMonthlyMembers,
     unpaidExtraMembers,
+    allMemberIds,   
   ] = await Promise.all([
 
     Payment.aggregate([
@@ -59,6 +60,8 @@ export const getCollectionMetrics = async () => {
 
     // Returns array of ObjectIds — one per member with an unpaid extra charge
     ExtraCharge.distinct("member", { status: "Unpaid" }),
+
+    Member.distinct("_id"),
   ]);
 
   // Union the two sets to get every member who owes anything
@@ -67,12 +70,17 @@ export const getCollectionMetrics = async () => {
     ...unpaidExtraMembers.map(String),
   ]);
 
-  const membersWithDuesCount = membersWithDuesSet.size;
+  const allMemberIdStrings = new Set(allMemberIds.map(String));
+
+  const membersWithDuesCount = [...membersWithDuesSet].filter(
+    id => allMemberIdStrings.has(id)
+  ).length;
+  
   const totalOutstanding =
     (outstandingMonthlyAgg[0]?.total || 0) +
     (outstandingExtraAgg[0]?.total   || 0);
 
-  return {
+return {
     totalCollection:     allTimeAgg[0]?.total     || 0,
     thisMonthCollection: thisMonthAgg[0]?.total    || 0,
     todayCollection:     todayAgg[0]?.total        || 0,

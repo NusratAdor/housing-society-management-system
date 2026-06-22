@@ -53,8 +53,8 @@ i18n
         profile:   bnProfile,
         notices:   bnNotices,
         faqs:      bnFaqs,
-        gallery: enGallery, 
-        contact: enContact
+        gallery: bnGallery, 
+        contact: bnContact
       },
     },
     // Default namespace — t("key") without a ns arg looks here first

@@ -15,16 +15,16 @@ const LoadingScreen = () => {
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
 
         <span style={{
-          fontSize: "13px",
+          fontSize: "18px",
           letterSpacing: "0.22em",
           color: "#9ca3af",
           fontFamily: "inherit",
           animation: "gohs-in 0.8s ease both",
         }}>
-          GOHS
+          GOMCS
         </span>
 
-        <div style={{ width: "40px", height: "1px", background: "#f3f4f6", overflow: "hidden" }}>
+        <div style={{ width: "60px", height: "1px", background: "#f3f4f6", overflow: "hidden" }}>
           <div style={{
             width: "100%",
             height: "100%",

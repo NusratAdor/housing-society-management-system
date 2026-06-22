@@ -49,6 +49,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(
   clerkMiddleware({
+
     onError: (error) => ({
       status: 401,
       message: "Unauthorized request",

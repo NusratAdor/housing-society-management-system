@@ -279,75 +279,154 @@ const Dashboard = () => {
         {/* ── Trend + Quick Actions — unchanged ─────────────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <motion.div
-            initial={isFirstLoad.current ? { opacity: 0, y: 16 } : false}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="lg:col-span-2 bg-white border border-gray-200
-              rounded-xl p-6 shadow-sm"
-          >
-            <div className="flex items-center gap-2 mb-5">
-              <TrendingUp className="h-4 w-4 text-[var(--color-primary)]" />
-              <h3 className="font-playfair text-base font-semibold text-gray-800">
-                12-Month Collection Trend
-              </h3>
-            </div>
-            {trend.length > 0 ? (
-              <div className="flex items-end gap-1.5 h-32">
-                {trend.map((point) => {
-                  const maxCollected = Math.max(
-                    ...trend.map((t) => t.collected),
-                    1,
-                  );
-                  const heightPct = Math.round(
-                    (point.collected / maxCollected) * 100,
-                  );
-                  return (
-                    <div
-                      key={`${point.year}-${point.month}`}
-                      className="flex-1 flex flex-col items-center gap-1
-                        group relative"
-                    >
-                      <div
-                        className="absolute -top-8 left-1/2 -translate-x-1/2
-                        bg-gray-800 text-white text-[10px] px-2 py-1 rounded
-                        opacity-0 group-hover:opacity-100 transition-opacity
-                        whitespace-nowrap pointer-events-none z-10"
-                      >
-                        ৳{point.collected.toLocaleString()}
-                      </div>
-                      <div
-                        style={{ height: `${Math.max(heightPct, 4)}%` }}
-                        className={`w-full rounded-t transition-all duration-300 ${
-                          point.collected > 0
-                            ? "bg-[var(--color-primary)]"
-                            : "bg-gray-100"
-                        }`}
-                      />
-                      <span className="text-[9px] text-gray-400">
-                        {MONTH_NAMES[point.month]}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
+  initial={isFirstLoad.current ? { opacity: 0, y: 12 } : false}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ delay: 0.15 }}
+  className="lg:col-span-2 bg-white border border-gray-100 rounded-xl p-6 shadow-sm flex flex-col"
+>
+  {/* Header */}
+  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div className="flex items-center gap-3">
+      <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg">
+        <TrendingUp className="h-4 w-4 text-slate-700" />
+      </div>
+      <div>
+        <h3 className="font-playfair text-base font-semibold text-gray-900 tracking-tight">
+          Collection Trend
+        </h3>
+        <p className="text-xs text-gray-400">12-month transaction volume</p>
+      </div>
+    </div>
+
+    <div className="flex items-center gap-5 text-xs font-medium text-gray-500">
+      <div className="flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-slate-800" />
+        <span>
+          This Month:{" "}
+          <strong className="text-slate-900 font-semibold">
+            ৳{metrics.thisMonthCollection.toLocaleString()}
+          </strong>
+        </span>
+      </div>
+      <div className="h-3 w-[1px] bg-gray-200" />
+      <div className="flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+        <span>
+          All Time:{" "}
+          <strong className="text-slate-900 font-semibold">
+            ৳{metrics.totalCollection.toLocaleString()}
+          </strong>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  {/* Chart */}
+  {trend.length > 0 ? (() => {
+    const maxCollected = Math.max(...trend.map(t => t.collected), 1);
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear  = now.getFullYear();
+
+    // Three Y-axis grid lines at 25%, 50%, 75% of max
+    const gridLines = [0.75, 0.5, 0.25];
+
+    return (
+      <div className="flex flex-col flex-1">
+        <div className="relative flex gap-2 items-end h-44">
+
+          {/* Y-axis grid lines — purely visual, no layout impact */}
+          <div className="absolute inset-0 flex flex-col justify-between pointer-events-none pb-0">
+            {gridLines.map((fraction) => (
               <div
-                className="h-32 flex items-center justify-center
-                text-gray-400 text-sm"
+                key={fraction}
+                className="w-full border-t border-dashed border-gray-100"
+                style={{ marginTop: `${(1 - fraction) * 100}%` }}
+              />
+            ))}
+          </div>
+
+          {trend.map((point, idx) => {
+            const heightPct   = Math.round((point.collected / maxCollected) * 100);
+            const hasData     = point.collected > 0;
+            const isThisMonth = point.month === currentMonth && point.year === currentYear;
+
+            return (
+              <div
+                key={`${point.year}-${point.month}`}
+                className="flex-1 flex flex-col items-center justify-end h-full group relative"
               >
-                No payment data yet
+                {/* Tooltip — fixed width, won't clip */}
+                {hasData && (
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2
+                    bg-gray-900 text-white text-[10px] font-medium px-2.5 py-1.5
+                    rounded-lg shadow-lg opacity-0 group-hover:opacity-100
+                    transition-opacity duration-150 whitespace-nowrap pointer-events-none z-30">
+                    <span className="block text-gray-400 text-[9px] mb-0.5">
+                      {MONTH_NAMES[point.month]} {point.year}
+                    </span>
+                    ৳{point.collected.toLocaleString()}
+                  </div>
+                )}
+
+                {/* Bar */}
+                <div className="w-full flex flex-col justify-end"
+                  style={{ height: "100%" }}>
+                  <motion.div
+                    initial={{ scaleY: 0, originY: 1 }}
+                    animate={{ scaleY: 1 }}
+                    transition={{
+                      delay: 0.15 + idx * 0.04,
+                      duration: 0.45,
+                      ease: [0.33, 1, 0.68, 1],
+                    }}
+                    style={{
+                      height: hasData ? `${Math.max(heightPct, 4)}%` : "2px",
+                      transformOrigin: "bottom",
+                    }}
+                    className={`w-full rounded-t-[3px] transition-colors duration-150
+                      ${isThisMonth
+                        ? "bg-slate-800 group-hover:bg-slate-700"
+                        : hasData
+                        ? "bg-slate-300 group-hover:bg-slate-400"
+                        : "bg-gray-100"
+                      }`}
+                  />
+                </div>
               </div>
-            )}
-            <div
-              className="mt-4 pt-4 border-t border-gray-100
-              flex justify-between text-xs text-gray-500"
-            >
-              <span>All time: ৳{metrics.totalCollection.toLocaleString()}</span>
-              <span>
-                This month: ৳{metrics.thisMonthCollection.toLocaleString()}
-              </span>
-            </div>
-          </motion.div>
+            );
+          })}
+        </div>
+
+        {/* Month labels — outside chart area, clean baseline */}
+        <div className="flex gap-2 mt-2.5">
+          {trend.map((point) => {
+            const isThisMonth = point.month === currentMonth && point.year === currentYear;
+            return (
+              <div
+                key={`label-${point.year}-${point.month}`}
+                className="flex-1 text-center"
+              >
+                <span className={`text-[10px] font-medium transition-colors
+                  ${isThisMonth
+                    ? "text-slate-800 font-semibold"
+                    : "text-gray-400"
+                  }`}>
+                  {MONTH_NAMES[point.month]}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })() : (
+    <div className="flex-1 flex items-center justify-center text-gray-400
+      text-xs font-medium bg-gray-50 rounded-xl border border-dashed border-gray-200 h-44">
+      No payment history found
+    </div>
+  )}
+</motion.div>
 
           <motion.div
             initial={isFirstLoad.current ? { opacity: 0, y: 16 } : false}
