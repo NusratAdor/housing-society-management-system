@@ -235,11 +235,13 @@ export const createPaymentSession = async (req, res) => {
       gateway:       "sslcommerz",
     });
 
-    const selectionPayload = JSON.stringify({
-      paymentId:          String(payment._id),
-      selectedMonthlyIds: selectedMonthly.map(c => String(c._id)),
-      selectedExtraIds:   selectedExtra.map(c => String(c._id)),
-    });
+   const selectionPayload = Buffer.from(
+  JSON.stringify({
+    paymentId:          String(payment._id),
+    selectedMonthlyIds: selectedMonthly.map(c => String(c._id)),
+    selectedExtraIds:   selectedExtra.map(c => String(c._id)),
+  })
+).toString("base64");
 
     const isLive = process.env.SSLCOMMERZ_IS_LIVE === "true";
 const sslGatewayUrl = isLive
@@ -410,14 +412,15 @@ export const paymentCallback = async (req, res) => {
 
     // ── Parse the selection payload stored in value_b ─────────────────────
     let selectionData;
-    try {
-      selectionData = JSON.parse(value_b || "{}");
-    } catch {
-      console.error(`[IPN] Could not parse value_b for tran_id ${tran_id}:`, value_b);
-      payment.status = "failed";
-      await payment.save();
-      return res.status(200).send("INVALID_SELECTION_DATA");
-    }
+try {
+  const decoded = Buffer.from(value_b || "", "base64").toString("utf8");
+  selectionData = JSON.parse(decoded || "{}");
+} catch {
+  console.error(`[IPN] Could not parse value_b for tran_id ${tran_id}:`, value_b);
+  payment.status = "failed";
+  await payment.save();
+  return res.status(200).send("INVALID_SELECTION_DATA");
+}
 
     const {
       paymentId:          storedPaymentId,
