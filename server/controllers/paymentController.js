@@ -253,42 +253,45 @@ const sslGatewayUrl = isLive
   ? "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
   : "https://sandbox.sslcommerz.com/gwprocess/v4/api.php";
 
-  const postData = [
-  `store_id=${storeId}`,
-  `store_passwd=${encodeURIComponent(storePass)}`,
-  `total_amount=${totalAmount.toFixed(2)}`,
-  `currency=BDT`,
-  `tran_id=${tranId}`,
-  `success_url=${process.env.BACKEND_URL}/payment/success`,
-  `fail_url=${process.env.BACKEND_URL}/payment/failed`,
-  `cancel_url=${process.env.BACKEND_URL}/payment/cancel`,
-  `ipn_url=${process.env.BACKEND_URL}/api/payments/callback`,
-  `product_name=Society+Maintenance+Dues`,
-  `product_category=Membership`,
-  `product_profile=general`,
-  `shipping_method=NO`,
-  `num_of_item=${selectedMonthly.length + selectedExtra.length}`,
-  `cus_name=${encodeURIComponent(member.name)}`,
-  `cus_email=${encodeURIComponent(member.email)}`,
-  `cus_phone=${encodeURIComponent(member.phone || "")}`,
-  `cus_add1=${encodeURIComponent(member.address || "Dhaka")}`,
-  `cus_city=Dhaka`,
-  `cus_country=Bangladesh`,
-  `value_a=${req.clerkUserId}`,
-  `value_b=${encodeURIComponent(selectionPayload)}`,
-].join("&");
+// WITH this — using URLSearchParams:
 
-   // TEMPORARY — delete after testing
-console.log("full payload:", postData);
+const params = new URLSearchParams();
+params.append("store_id",        storeId);
+params.append("store_passwd",    storePass);
+params.append("total_amount",    totalAmount.toFixed(2));
+params.append("currency",        "BDT");
+params.append("tran_id",         tranId);
+params.append("success_url",     `${process.env.BACKEND_URL}/payment/success`);
+params.append("fail_url",        `${process.env.BACKEND_URL}/payment/failed`);
+params.append("cancel_url",      `${process.env.BACKEND_URL}/payment/cancel`);
+params.append("ipn_url",         `${process.env.BACKEND_URL}/api/payments/callback`);
+params.append("product_name",    "Society Maintenance Dues");
+params.append("product_category","Membership");
+params.append("product_profile", "general");
+params.append("shipping_method", "NO");
+params.append("num_of_item",     String(selectedMonthly.length + selectedExtra.length));
+params.append("cus_name",        member.name);
+params.append("cus_email",       member.email);
+params.append("cus_phone",       member.phone || "");
+params.append("cus_add1",        member.address || "Dhaka");
+params.append("cus_city",        "Dhaka");
+params.append("cus_country",     "Bangladesh");
+params.append("value_a",         req.clerkUserId);
+params.append("value_b",         selectionPayload);
 
-    const sslResponse = await axiosLib.post(
-      sslGatewayUrl,
-      postData.toString(),
-      {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        timeout: 15000,
-      }
-    );
+// Log what we are actually sending
+console.log("=== SSLCOMMERZ URLSearchParams ===");
+console.log(params.toString());
+console.log("==================================");
+
+const sslResponse = await axiosLib.post(
+  sslGatewayUrl,
+  params,                    // pass URLSearchParams directly — Axios handles it natively
+  {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    timeout: 15000,
+  }
+);
 
     console.log("SSLCommerz raw response:", JSON.stringify(sslResponse.data));
 
