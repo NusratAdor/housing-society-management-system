@@ -24,6 +24,8 @@ import chargeRoutes from "./routes/chargeRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 
+import testRoutes from "./routes/testRoutes.js";
+
 await connectDB();
 connectCloudinary();
 
@@ -85,6 +87,7 @@ app.use("/api/reports", reportRoutes);
 
 // ── MOUNT REDIRECTS AT ROOT ──
 app.use("/payment", paymentRedirects);
+app.use("/test", testRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
