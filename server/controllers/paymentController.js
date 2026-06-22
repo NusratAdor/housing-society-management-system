@@ -248,9 +248,10 @@ export const createPaymentSession = async (req, res) => {
       selectedExtraIds:   selectedExtra.map(c => String(c._id)),
     });
 
-    const sslGatewayUrl = process.env.NODE_ENV === "production"
-      ? "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
-      : "https://sandbox.sslcommerz.com/gwprocess/v4/api.php";
+    const isLive = process.env.SSLCOMMERZ_IS_LIVE === "true";
+const sslGatewayUrl = isLive
+  ? "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
+  : "https://sandbox.sslcommerz.com/gwprocess/v4/api.php";
 
   const postData = [
   `store_id=${storeId}`,

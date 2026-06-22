@@ -9,12 +9,12 @@ import { writeAuditLog } from "../services/auditService.js";
 import { createMonthlyChargesForMonth } from "../services/chargeService.js";
 
 export const triggerMonthlyDue = async (req, res) => {
-  if (process.env.NODE_ENV === "production") {
-    return res.status(403).json({
-      success: false,
-      message:  "Manual trigger is not available in production",
-    });
-  }
+  if (process.env.DISABLE_MANUAL_TRIGGERS === "true") {
+  return res.status(403).json({
+    success: false,
+    message: "Manual trigger is not available in production",
+  });
+}
   try {
     const now   = new Date();
     const month = req.query.month ? parseInt(req.query.month, 10) : now.getMonth() + 1;
