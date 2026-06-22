@@ -246,35 +246,48 @@ const sslGatewayUrl = isLive
   ? "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
   : "https://sandbox.sslcommerz.com/gwprocess/v4/api.php";
 
-// WITH this — using URLSearchParams:
+// SSLCommerz sandbox has a parser bug where it does not decode
+// percent-encoded URL values in the POST body. URLs must be sent
+// as plain strings. Non-URL values can use URLSearchParams normally.
+//
+// We build the body manually as a raw string to control encoding precisely.
+// URL fields: sent as-is (SSLCommerz reads them directly)
+// Non-URL fields: still encoded correctly via encodeURIComponent
 
-const params = new URLSearchParams();
-params.append("store_id",         storeId);
-params.append("store_passwd",     storePass);
-params.append("total_amount",     totalAmount.toFixed(2));
-params.append("currency",         "BDT");
-params.append("tran_id",          tranId);
-params.append("success_url",      `${process.env.BACKEND_URL}/payment/success`);
-params.append("fail_url",         `${process.env.BACKEND_URL}/payment/failed`);
-params.append("cancel_url",       `${process.env.BACKEND_URL}/payment/cancel`);
-params.append("ipn_url",          `${process.env.BACKEND_URL}/api/payments/callback`);
-params.append("product_name",     "Society Maintenance Dues");
-params.append("product_category", "Membership");
-params.append("product_profile",  "general");
-params.append("shipping_method",  "NO");
-params.append("num_of_item",      String(selectedMonthly.length + selectedExtra.length));
-params.append("cus_name",         member.name);
-params.append("cus_email",        member.email);
-params.append("cus_phone",        member.phone || "");
-params.append("cus_add1",         member.address || "Dhaka");
-params.append("cus_city",         "Dhaka");
-params.append("cus_country",      "Bangladesh");
-params.append("value_a",          req.clerkUserId);
-params.append("value_b",          selectionPayload);
+const BACKEND = process.env.BACKEND_URL;
+
+// Encode non-URL fields that may contain special characters
+const fields = [
+  `store_id=${storeId}`,
+  `store_passwd=${encodeURIComponent(storePass)}`,
+  `total_amount=${totalAmount.toFixed(2)}`,
+  `currency=BDT`,
+  `tran_id=${tranId}`,
+  // URL fields — sent plain, NOT double-encoded
+  `success_url=${BACKEND}/payment/success`,
+  `fail_url=${BACKEND}/payment/failed`,
+  `cancel_url=${BACKEND}/payment/cancel`,
+  `ipn_url=${BACKEND}/api/payments/callback`,
+  `product_name=Society+Maintenance+Dues`,
+  `product_category=Membership`,
+  `product_profile=general`,
+  `shipping_method=NO`,
+  `num_of_item=${selectedMonthly.length + selectedExtra.length}`,
+  // Customer fields — encode because they contain user data
+  `cus_name=${encodeURIComponent(member.name)}`,
+  `cus_email=${encodeURIComponent(member.email)}`,
+  `cus_phone=${encodeURIComponent(member.phone || "")}`,
+  `cus_add1=${encodeURIComponent(member.address || "Dhaka")}`,
+  `cus_city=Dhaka`,
+  `cus_country=Bangladesh`,
+  `value_a=${req.clerkUserId}`,
+  // value_b contains JSON with special chars — must be encoded
+  `value_b=${encodeURIComponent(selectionPayload)}`,
+].join("&");
 
 const sslResponse = await axiosLib.post(
   sslGatewayUrl,
-  params,
+  fields,
   {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     timeout: 15000,
