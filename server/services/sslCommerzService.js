@@ -29,9 +29,10 @@ export const verifySSLCommerzPayment = async ({ valId, tranId }) => {
   const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
   const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
 
-  const validationUrl = process.env.NODE_ENV === "production"
-    ? "https://securepay.sslcommerz.com/validator/api/validationserverAPI.php"
-    : "https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php";
+const isLive = process.env.SSLCOMMERZ_IS_LIVE === "true";
+const validationUrl = isLive
+  ? "https://securepay.sslcommerz.com/validator/api/validationserverAPI.php"
+  : "https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php";
 
   const response = await axiosLib.get(validationUrl, {
     params: {
