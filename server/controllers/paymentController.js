@@ -176,14 +176,7 @@ export const getPaymentAllocations = async (req, res) => {
 //   them without any server-side session or database lookup between steps.
 
 export const createPaymentSession = async (req, res) => {
-  
-  // TEMPORARY debug logs
-  console.log("ENV CHECK:", {
-    storeId:     process.env.SSLCOMMERZ_STORE_ID,
-    storePass:   process.env.SSLCOMMERZ_STORE_PASS,
-    backendUrl:  process.env.BACKEND_URL,
-    frontendUrl: process.env.FRONTEND_URL,
-  });
+
 
   let payment = null; // declare here so catch block can access it
 
@@ -256,37 +249,32 @@ const sslGatewayUrl = isLive
 // WITH this — using URLSearchParams:
 
 const params = new URLSearchParams();
-params.append("store_id",        storeId);
-params.append("store_passwd",    storePass);
-params.append("total_amount",    totalAmount.toFixed(2));
-params.append("currency",        "BDT");
-params.append("tran_id",         tranId);
-params.append("success_url",     `${process.env.BACKEND_URL}/payment/success`);
-params.append("fail_url",        `${process.env.BACKEND_URL}/payment/failed`);
-params.append("cancel_url",      `${process.env.BACKEND_URL}/payment/cancel`);
-params.append("ipn_url",         `${process.env.BACKEND_URL}/api/payments/callback`);
-params.append("product_name",    "Society Maintenance Dues");
-params.append("product_category","Membership");
-params.append("product_profile", "general");
-params.append("shipping_method", "NO");
-params.append("num_of_item",     String(selectedMonthly.length + selectedExtra.length));
-params.append("cus_name",        member.name);
-params.append("cus_email",       member.email);
-params.append("cus_phone",       member.phone || "");
-params.append("cus_add1",        member.address || "Dhaka");
-params.append("cus_city",        "Dhaka");
-params.append("cus_country",     "Bangladesh");
-params.append("value_a",         req.clerkUserId);
-params.append("value_b",         selectionPayload);
-
-// Log what we are actually sending
-console.log("=== SSLCOMMERZ URLSearchParams ===");
-console.log(params.toString());
-console.log("==================================");
+params.append("store_id",         storeId);
+params.append("store_passwd",     storePass);
+params.append("total_amount",     totalAmount.toFixed(2));
+params.append("currency",         "BDT");
+params.append("tran_id",          tranId);
+params.append("success_url",      `${process.env.BACKEND_URL}/payment/success`);
+params.append("fail_url",         `${process.env.BACKEND_URL}/payment/failed`);
+params.append("cancel_url",       `${process.env.BACKEND_URL}/payment/cancel`);
+params.append("ipn_url",          `${process.env.BACKEND_URL}/api/payments/callback`);
+params.append("product_name",     "Society Maintenance Dues");
+params.append("product_category", "Membership");
+params.append("product_profile",  "general");
+params.append("shipping_method",  "NO");
+params.append("num_of_item",      String(selectedMonthly.length + selectedExtra.length));
+params.append("cus_name",         member.name);
+params.append("cus_email",        member.email);
+params.append("cus_phone",        member.phone || "");
+params.append("cus_add1",         member.address || "Dhaka");
+params.append("cus_city",         "Dhaka");
+params.append("cus_country",      "Bangladesh");
+params.append("value_a",          req.clerkUserId);
+params.append("value_b",          selectionPayload);
 
 const sslResponse = await axiosLib.post(
   sslGatewayUrl,
-  params,                    // pass URLSearchParams directly — Axios handles it natively
+  params,
   {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     timeout: 15000,
