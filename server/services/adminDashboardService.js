@@ -64,18 +64,20 @@ export const getCollectionMetrics = async () => {
     Member.distinct("_id"),
   ]);
 
-  // Union the two sets to get every member who owes anything
+  
+ // Build a set of real member ID strings for O(1) lookup
+  const realMemberIds = new Set(allMemberIds.map(String));
+
+  // Union of all members who have unpaid charges —
+  // filtered to only IDs that exist in the Member collection right now.
+  // This excludes orphan charge records from deleted test members.
   const membersWithDuesSet = new Set([
-    ...unpaidMonthlyMembers.map(String),
-    ...unpaidExtraMembers.map(String),
+    ...unpaidMonthlyMembers.map(String).filter(id => realMemberIds.has(id)),
+    ...unpaidExtraMembers.map(String).filter(id => realMemberIds.has(id)),
   ]);
 
-  const allMemberIdStrings = new Set(allMemberIds.map(String));
+ const membersWithDuesCount = membersWithDuesSet.size;
 
-  const membersWithDuesCount = [...membersWithDuesSet].filter(
-    id => allMemberIdStrings.has(id)
-  ).length;
-  
   const totalOutstanding =
     (outstandingMonthlyAgg[0]?.total || 0) +
     (outstandingExtraAgg[0]?.total   || 0);
