@@ -1,29 +1,41 @@
 // client/src/context/AppContext.jsx
 //
-// THE CORE FIX explained:
-//
-// Previous behaviour (causes the 3-URL flash):
-//   Mount → user=null (Clerk not ready) → fetchMemberProfile runs →
-//   sets loadingProfile=false → ProtectedRoute acts → wrong redirects
-//
-// The problem: loadingProfile=false was being set based on user=null,
-// but user=null at mount time does NOT mean "no user" — it means
-// "Clerk hasn't told us yet". These are completely different states.
-//
-// Correct behaviour:
+// THE CORE FIX (isLoaded) — unchanged, still correct:
 //   Mount → loadingProfile=true (stays true until we actually KNOW)
-//   → Clerk finishes (isLoaded=true, user=AdminUser)
-//   → fetchMemberProfile runs → profile arrives → loadingProfile=false
-//   → ProtectedRoute acts once with real data → correct destination, no flash
+//   → Clerk finishes (isLoaded=true) → fetchMemberProfile runs →
+//   profile arrives → loadingProfile=false.
 //
-// The fix: read isLoaded from useAuth() in AppContext.
-// Keep loadingProfile=true for as long as Clerk itself is not ready.
-// Only set loadingProfile=false when we have a definitive answer.
+// ADDITIONAL FIX — navigate/getToken stability:
+//   fetchMemberProfile previously listed `navigate` and `getToken`
+//   directly in its useCallback dependency array. Because AppProvider
+//   re-renders on every route change (it calls useNavigate, which
+//   subscribes to the router), and neither Clerk's getToken nor
+//   React Router's navigate are guaranteed to keep the same function
+//   reference across every render, fetchMemberProfile was being
+//   recreated on every tab switch. That triggered its effect again,
+//   which calls setLoadingProfile(true) — and ProtectedRoute swaps
+//   DashboardLayout out for LoadingScreen the instant that flips true,
+//   which is what caused TopBar/Sidebar to visibly unmount and remount
+//   on every navigation.
+//
+//   Fix: hold the latest navigate/getToken in refs. fetchMemberProfile
+//   reads through the ref, so its own identity only changes when
+//   isLoaded or user actually change — which is the only time it
+//   should ever re-run. Behaviour (session-expiry redirect, retries,
+//   error handling) is completely unchanged — only its re-render
+//   sensitivity is fixed.
+//
+// ADDITIONAL FIX — context value memoization:
+//   The context `value` object was a new object literal on every
+//   render, forcing every consumer of useAppContext() to re-render
+//   on every AppProvider render regardless of whether anything they
+//   actually use changed. Wrapped in useMemo so consumers only
+//   re-render when a value they depend on actually changes.
 
 import axiosInstance from "../utils/axiosInstance.js";
 import {
   createContext, useContext, useState,
-  useEffect, useCallback, useRef,
+  useEffect, useCallback, useRef, useMemo,
 } from "react";
 import { useUser, useAuth } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
@@ -36,24 +48,24 @@ const MAX_RETRIES   = 4;
 const RETRY_BASE_MS = 2000;
 
 export const AppProvider = ({ children }) => {
-  const navigate          = useNavigate();
-  const { user }          = useUser();
-  // WHY we need isLoaded here, not just in App.jsx:
-  // App.jsx uses isLoaded to block its own render — that is correct.
-  // But AppContext also needs it to know whether user=null means
-  // "signed out" or "Clerk not ready yet". Without isLoaded, a
-  // user=null at mount sets loadingProfile=false prematurely.
+  const navigate = useNavigate();
+  const { user }  = useUser();
   const { getToken, isLoaded } = useAuth();
 
   const [memberProfile,  setMemberProfile]  = useState(null);
-  // Starts true — stays true until we have a definitive answer.
-  // "Definitive" means: Clerk is ready AND the profile fetch completed
-  // (or definitively failed after retries).
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isAdmin,        setIsAdmin]        = useState(false);
 
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef(null);
+
+  // Latest navigate/getToken, read through refs so fetchMemberProfile's
+  // identity doesn't change just because these functions got a new
+  // reference on an unrelated re-render (e.g. route navigation).
+  const navigateRef = useRef(navigate);
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
@@ -63,15 +75,10 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const fetchMemberProfile = useCallback(async () => {
-    // CRITICAL GUARD: if Clerk is not ready yet, do nothing.
-    // loadingProfile stays true. We will be called again when
-    // isLoaded becomes true (because isLoaded is in the dependency array).
     if (!isLoaded) {
       return;
     }
 
-    // Clerk is ready and user is null — definitively signed out.
-    // Only NOW is it safe to set loadingProfile=false with no profile.
     if (!user) {
       clearRetryTimer();
       retryCountRef.current = 0;
@@ -81,15 +88,12 @@ export const AppProvider = ({ children }) => {
       return;
     }
 
-    // Clerk is ready and we have a user — fetch their profile
     try {
       setLoadingProfile(true);
 
-      const token = await getToken();
+      const token = await getTokenRef.current();
 
       if (!token) {
-        // getToken() returned null — Clerk in a transient state
-        // Treat as retriable, not a hard failure
         throw new Error("NO_TOKEN");
       }
 
@@ -97,7 +101,6 @@ export const AppProvider = ({ children }) => {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      // Success — reset retry counter
       retryCountRef.current = 0;
       clearRetryTimer();
 
@@ -111,7 +114,6 @@ export const AppProvider = ({ children }) => {
           toast.error(data.message);
         }
       }
-      // Always resolve loading after a definitive server response
       setLoadingProfile(false);
 
     } catch (error) {
@@ -119,8 +121,6 @@ export const AppProvider = ({ children }) => {
       const isNetworkError = !error.response;
       const isNoToken      = error.message === "NO_TOKEN";
 
-      // 404 = user signed in but no profile yet (new user)
-      // This is expected — show /create-profile, do not retry
       if (status === 404) {
         retryCountRef.current = 0;
         clearRetryTimer();
@@ -130,7 +130,6 @@ export const AppProvider = ({ children }) => {
         return;
       }
 
-      // Clerk token invalid or expired
       if (error.response?.data?.errors?.[0]?.code === "authorization_invalid") {
         retryCountRef.current = 0;
         clearRetryTimer();
@@ -138,13 +137,10 @@ export const AppProvider = ({ children }) => {
         setIsAdmin(false);
         setLoadingProfile(false);
         toast.error("Session expired. Please sign in again.");
-        navigate("/sign-in");
+        navigateRef.current("/sign-in");
         return;
       }
 
-      // Network error or no token — backend likely cold-starting on Render.
-      // Retry with exponential backoff.
-      // loadingProfile stays TRUE so the UI keeps showing a loading state.
       if ((isNetworkError || isNoToken) && retryCountRef.current < MAX_RETRIES) {
         retryCountRef.current += 1;
         const delay = RETRY_BASE_MS * Math.pow(2, retryCountRef.current - 1);
@@ -154,14 +150,12 @@ export const AppProvider = ({ children }) => {
           `Retry ${retryCountRef.current}/${MAX_RETRIES} in ${delay / 1000}s`
         );
 
-        // Keep loadingProfile=true — UI stays in loading state during retry
         retryTimerRef.current = setTimeout(() => {
           fetchMemberProfile();
         }, delay);
         return;
       }
 
-      // All retries exhausted or non-retriable server error
       retryCountRef.current = 0;
       clearRetryTimer();
       setMemberProfile(null);
@@ -174,10 +168,10 @@ export const AppProvider = ({ children }) => {
         toast.error("Could not connect to server. Please refresh the page.");
       }
     }
-  // isLoaded is in the dependency array — this is the key addition.
-  // When Clerk finishes loading (isLoaded: false → true), this function
-  // recreates and the useEffect fires again with the real user value.
-  }, [isLoaded, user, getToken, navigate, clearRetryTimer]);
+  // navigate/getToken intentionally excluded — accessed via ref above.
+  // This callback now only changes identity when isLoaded or user
+  // actually change, which is the only time it should re-run.
+  }, [isLoaded, user, clearRetryTimer]);
 
   useEffect(() => {
     clearRetryTimer();
@@ -186,7 +180,9 @@ export const AppProvider = ({ children }) => {
     return () => clearRetryTimer();
   }, [fetchMemberProfile, clearRetryTimer]);
 
-  const value = {
+  // Memoized so consumers of useAppContext() only re-render when a
+  // value they actually use changes — not on every AppProvider render.
+  const value = useMemo(() => ({
     navigate,
     user,
     getToken,
@@ -196,7 +192,7 @@ export const AppProvider = ({ children }) => {
     fetchMemberProfile,
     loadingProfile,
     isAdmin,
-  };
+  }), [navigate, user, getToken, memberProfile, fetchMemberProfile, loadingProfile, isAdmin]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

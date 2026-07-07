@@ -10,6 +10,7 @@ export const normalizePhone = (input) => {
   return phone.replace(/[^0-9]/g, "").replace(/^0+/, "0");
 };
 
+
 export const isValidPhone = (input) => {
   const normalized = normalizePhone(input);
   return /^(013|014|015|016|017|018|019)\d{8}$/.test(normalized);

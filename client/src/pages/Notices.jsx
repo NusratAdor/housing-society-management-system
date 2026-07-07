@@ -1,16 +1,15 @@
 // client/src/pages/Notices.jsx
-// CHANGE: catch block no longer calls toast.error()
-// Same reasoning as Gallery.jsx — backend cold-start causes false errors.
-
+// CHANGE: Added breadcrumb (Home → Notices) for consistent wayfinding.
+// No other changes — all existing features preserved.
 import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import Title from "../components/Title";
 import { motion } from "framer-motion";
 import { useAppContext } from "../context/AppContext";
 import { formatDate } from "../utils/formatDate";
-
 import usePageTitle from "../hooks/usePageTitle";
 import { useTranslation } from "react-i18next";
+import Breadcrumb from "../components/Breadcrumb";
 
 const Notices = () => {
   const { axios } = useAppContext();
@@ -41,9 +40,20 @@ const Notices = () => {
     fetchNotices();
   }, [fetchNotices]);
 
+  // Breadcrumb crumbs for the Notices list page.
+  // Last crumb has no href — it is the current page.
+  const crumbs = [
+    { label: "Home",    href: "/" },
+    { label: t("title")           }, // no href = current page
+  ];
+
   return (
     <div className="w-full bg-white py-20 min-h-screen">
       <div className="max-w-7xl mx-auto px-4 md:px-8">
+
+        {/* Breadcrumb — sits above the page title, mirrors NoticeDetail pattern */}
+        <Breadcrumb crumbs={crumbs} />
+
         <Title
           title="Notices"
           subTitle="Stay updated with the latest community announcements."

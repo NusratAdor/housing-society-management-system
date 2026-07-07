@@ -112,3 +112,40 @@ export const requestAdmin = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+
+
+// GET /api/members/seat
+// Returns the MemberSeat record for the authenticated member.
+// Used by the dashboard to show the correct "Member since" join date.
+// This is the date from physical society records, not the digital signup date.
+
+import MemberSeat from "../models/MemberSeat.js";
+
+export const getMemberSeat = async (req, res) => {
+  try {
+    const member = await findMemberByClerkId(req.clerkUserId);
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    const seat = await MemberSeat.findOne({
+      membershipNo: member.membershipNo,
+    }).select("joinDate membershipNo").lean();
+
+    if (!seat) {
+      // Member exists but seat record not found (pre-seat-system members)
+      // Return success with null joinDate — frontend falls back to createdAt
+      return res.status(200).json({ success: true, joinDate: null });
+    }
+
+    return res.status(200).json({ success: true, joinDate: seat.joinDate });
+  } catch (error) {
+    console.error("getMemberSeat error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};

@@ -1,14 +1,13 @@
 // client/src/components/member/ProfileSection.jsx
 //
-// CHANGE from previous version:
-//   - useTranslation("profile") added.
-//   - All hardcoded strings replaced with t() calls.
-//   - FIELDS array moved inside the component body because field labels
-//     go through t() and must rebuild on language change — same reason
-//     TABS moved inside MemberDashboard in Phase 3.
-//   - toast.success/error messages now use t() keys from profile.json
-//     so the user sees success feedback in their chosen language.
-//   - Zero functional changes: save, requestAdmin, validation, API calls.
+// CHANGE: local normalizePhone() function removed.
+// Now imports normalizePhone from utils/phoneUtils.js — the same
+// shared utility used by the backend phone validation pattern and
+// referenced throughout the codebase. Having a duplicate local copy
+// here meant two places could drift out of sync if the normalization
+// rule ever changed (e.g. handling +880 country code differently).
+//
+// All other functionality identical to previous version.
 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
@@ -16,6 +15,7 @@ import { toast } from "react-hot-toast";
 import { Loader2, User, Shield, ShieldCheck, ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
+import { normalizePhone } from "../../utils/phoneUtils";
 
 export default function ProfileSection({ onActionComplete }) {
   const {
@@ -26,11 +26,8 @@ export default function ProfileSection({ onActionComplete }) {
     getToken,
   } = useAppContext();
 
-  // "profile" namespace — all t() calls resolve against profile.json
   const { t } = useTranslation("profile");
 
-  // FIELDS defined inside the component so t() re-evaluates on language
-  // change and field labels update immediately without a page reload.
   const FIELDS = [
     { label: t("fields.name"),             key: "name",             half: true  },
     { label: t("fields.phone"),            key: "phone",            half: true  },
@@ -163,7 +160,6 @@ export default function ProfileSection({ onActionComplete }) {
       transition={{ duration: 0.25 }}
       className="space-y-6"
     >
-      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="p-2 bg-gray-100 rounded-xl">
           <User className="h-5 w-5 text-gray-500" />
@@ -178,7 +174,6 @@ export default function ProfileSection({ onActionComplete }) {
         </div>
       </div>
 
-      {/* Form card */}
       <div className="bg-white border border-gray-200 rounded-2xl p-6">
         <form onSubmit={handleSave} noValidate>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
@@ -288,9 +283,4 @@ function buildInitialForm(memberProfile, user) {
     plotNumber:       memberProfile?.plotNo           ?? "",
     pendingAdmin:     memberProfile?.pendingAdmin     ?? false,
   };
-}
-
-function normalizePhone(input) {
-  if (!input) return "";
-  return input.replace(/[^0-9]/g, "").replace(/^880/, "").replace(/^0+/, "0");
 }

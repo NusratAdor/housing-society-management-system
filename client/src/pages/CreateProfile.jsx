@@ -12,7 +12,7 @@ const CreateProfile = () => {
   const { getToken, navigate, axios, setMemberProfile, memberProfile, loadingProfile } = useAppContext();
   const { user } = useUser();
 
-  usePageTitle("Create Profile | GOHS");
+  usePageTitle("Create Profile");
 
   const [loading,         setLoading]         = useState(false);
   const [name,            setName]            = useState("");
