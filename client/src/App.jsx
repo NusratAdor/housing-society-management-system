@@ -1,12 +1,15 @@
 // client/src/App.jsx
 //
-// CHANGE: /dashboard excluded from AnimatePresence motion wrapper.
-// The dashboard has its own internal tab animations. Wrapping it in
-// the page-level motion caused a blank frame because the outlet
-// resolution happened after the motion mount animation started.
+// CHANGE (this pass): full Events system wired up:
+//   - /events       -> Events.jsx (public listing, Upcoming/Past)
+//   - /events/:id   -> EventDetail.jsx (public single event page)
+//   - /admin/manage-events -> ManageEvents.jsx (admin CRUD)
+// EventsPreview.jsx (homepage section) now fetches real data from
+// GET /api/events/public instead of using dummy arrays — no change
+// needed here for that, it was already rendered from Home.jsx.
 //
-// The dashboard route now renders DashboardLayout directly outside
-// the motion wrapper. All other routes keep their page transition.
+// Everything else — About Us section, Services section, dashboard/
+// admin shell routing, ProtectedRoute — UNCHANGED.
 
 import React, { useState, useEffect } from "react";
 import { Routes, Route, useLocation, Navigate } from "react-router-dom";
@@ -21,10 +24,27 @@ import Home               from "./pages/Home";
 import Notices            from "./pages/Notices";
 import NoticeDetail       from "./pages/NoticeDetail";
 import Gallery            from "./pages/Gallery";
+import GalleryDetail      from "./pages/GalleryDetail";
 import Contact            from "./pages/Contact";
 import SignIn             from "./pages/SignIn";
 import SignUp             from "./pages/SignUp";
 import CreateProfile      from "./pages/CreateProfile";
+
+// Events
+import Events        from "./pages/Events";
+import EventDetail   from "./pages/EventDetail";
+
+// About Us section
+import AboutSociety          from "./pages/AboutSociety";
+import VisionMission         from "./pages/VisionMission";
+import Achievements          from "./pages/Achievements";
+import CommitteeSection      from "./pages/CommitteeSection";
+import CommitteeMemberDetail from "./pages/CommitteeMemberDetail";
+
+// Services section
+import Services       from "./pages/Services";
+import SwimmingPool   from "./pages/SwimmingPool";
+import MemberSupport  from "./pages/MemberSupport";
 
 import DashboardOverview from "./pages/dashboard/DashboardOverview";
 import DashboardPayment  from "./pages/dashboard/DashboardPayment";
@@ -36,9 +56,13 @@ import Layout             from "./pages/admin/Layout";
 import Dashboard          from "./pages/admin/Dashboard";
 import ManageMembers      from "./pages/admin/ManageMembers";
 import ManageNotices      from "./pages/admin/ManageNotices";
+import ManageEvents       from "./pages/admin/ManageEvents";
 import ManageFAQs         from "./pages/admin/ManageFAQs";
 import ManageGallery      from "./pages/admin/ManageGallery";
+import ManageMemberSeats from "./pages/admin/ManageMemberSeats";
 import ManagePayments     from "./pages/admin/ManagePayments";
+import ManageCommittee    from "./pages/admin/ManageCommittee";
+import ManageAnnouncement from "./pages/admin/ManageAnnouncement";
 import DashboardLayout    from "./layouts/DashboardLayout";
 
 import LoadingScreen      from "./components/LoadingScreen";
@@ -91,8 +115,6 @@ const App = () => {
 
   const needsTopMargin = location.pathname !== "/" && !hideNavbar;
 
-  // Dashboard and admin routes manage their own layout — exclude from
-  // the public page motion wrapper to prevent outlet resolution issues.
   const isShellRoute = isDashboardPath || isAdminPath;
 
   return (
@@ -115,11 +137,8 @@ const App = () => {
       <ScrollRestorer />
       {!hideNavbar && <Navbar />}
 
-      {/* Shell routes (dashboard, admin) render outside the motion wrapper
-          so their nested <Outlet /> resolves without animation interference. */}
       {isShellRoute ? (
         <Routes location={location}>
-          {/* Member dashboard shell */}
           <Route
   path="/dashboard"
   element={
@@ -137,7 +156,6 @@ const App = () => {
   <Route path="*"        element={<Navigate to="overview" replace />} />
           </Route>
 
-          {/* Admin shell */}
           <Route
             path="/admin"
             element={
@@ -146,18 +164,21 @@ const App = () => {
               </ProtectedRoute>
             }
           >
-            <Route index                 element={<Dashboard />} />
-            <Route path="manage-members" element={<ManageMembers />} />
-            <Route path="manage-notices" element={<ManageNotices />} />
-            <Route path="manage-faqs"    element={<ManageFAQs />} />
-            <Route path="manage-gallery" element={<ManageGallery />} />
-            <Route path="payments"       element={<ManagePayments />} />
+            <Route index                  element={<Dashboard />} />
+            <Route path="manage-members"  element={<ManageMembers />} />
+            <Route path="manage-notices"  element={<ManageNotices />} />
+            <Route path="manage-events"   element={<ManageEvents />} />
+            <Route path="manage-faqs"     element={<ManageFAQs />} />
+            <Route path="manage-gallery"  element={<ManageGallery />} />
+            <Route path="manage-seats" element={<ManageMemberSeats />} />
+            <Route path="manage-committee" element={<ManageCommittee />} />
+            <Route path="manage-announcements" element={<ManageAnnouncement />} />
+            <Route path="payments"        element={<ManagePayments />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       ) : (
-        /* Public pages — animated page transitions */
         <div className={`${needsTopMargin ? "mt-[50px]" : ""} min-h-[70vh]`}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -172,10 +193,33 @@ const App = () => {
                 <Route path="/notices"     element={<Notices />} />
                 <Route path="/notices/:id" element={<NoticeDetail />} />
                 <Route path="/gallery"     element={<Gallery />} />
+                <Route path="/gallery/:id" element={<GalleryDetail />} />
                 <Route path="/contact"     element={<Contact />} />
                 <Route path="/sign-in/*"   element={<SignIn />} />
                 <Route path="/sign-up/*"   element={<SignUp />} />
                 <Route path="/create-profile" element={<CreateProfile />} />
+
+                {/* Events */}
+                <Route path="/events"      element={<Events />} />
+                <Route path="/events/:id"  element={<EventDetail />} />
+
+                {/* About Us section */}
+                <Route path="/about-us"                          element={<AboutSociety />} />
+                <Route path="/about-us/vision-mission"           element={<VisionMission />} />
+                <Route path="/about-us/achievements"             element={<Achievements />} />
+                <Route path="/about-us/advisers"                 element={<CommitteeSection category="adviser" />} />
+                <Route path="/about-us/chairman"                 element={<CommitteeSection category="chairman" />} />
+                <Route path="/about-us/general-secretary"        element={<CommitteeSection category="generalSecretary" />} />
+                <Route path="/about-us/former-chairman"          element={<CommitteeSection category="formerChairman" />} />
+                <Route path="/about-us/former-general-secretary" element={<CommitteeSection category="formerGeneralSecretary" />} />
+                <Route path="/about-us/executive-committee"      element={<CommitteeSection category="executiveCommittee" />} />
+                <Route path="/about-us/member/:id"               element={<CommitteeMemberDetail />} />
+
+                {/* Services section */}
+                <Route path="/our-services"                  element={<Services />} />
+                <Route path="/our-services/swimming-pool"    element={<SwimmingPool />} />
+                <Route path="/our-services/member-support"   element={<MemberSupport />} />
+
                 <Route path="*"            element={<Navigate to="/" replace />} />
               </Routes>
             </motion.div>

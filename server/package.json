@@ -13,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "@clerk/express": "^1.7.36",
+    "@supabase/supabase-js": "^2.110.2",
     "axios": "^1.12.2",
     "body-parser": "^2.2.0",
     "cloudinary": "^2.7.0",

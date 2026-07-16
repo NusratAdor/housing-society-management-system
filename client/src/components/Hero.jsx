@@ -1,4 +1,20 @@
 // src/components/Hero.jsx
+//
+// CHANGE (this pass): only "(GOHS)" should be emerald, not the whole
+// heading. Rather than re-splitting the t() call into two translation
+// keys (the exact thing the previous pass avoided, specifically to
+// keep the Bengali translation lookup intact), the single t() call is
+// left exactly as it was — one key, one lookup. The already-translated
+// STRING that comes back is then sliced at "(GOHS)" purely for
+// rendering: text before it and after it render white, the "(GOHS)"
+// substring itself renders emerald-300. If "(GOHS)" isn't found in the
+// translated string for some reason (e.g. a future translation edit
+// removes the parenthetical), it falls back to rendering the whole
+// heading in white rather than throwing — no silent breakage either way.
+//
+// Everything else — auth-aware button logic, subtitle, layout, sizing
+// from the previous pass — UNCHANGED.
+
 import React from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -13,43 +29,54 @@ const Hero = () => {
   const { memberProfile, loadingProfile, isAdmin } = useAppContext();
   const { t } = useTranslation();
 
-  // EXACT SAME LOGIC AS NAVBAR
   const handleMainButtonClick = () => {
     if (isAdmin) return navigate("/admin");
     if (memberProfile) return navigate("/dashboard");
-    if (!user) return openSignIn(); // Show Clerk modal
-    return navigate("/create-profile"); // Logged in, no profile
+    if (!user) return openSignIn();
+    return navigate("/create-profile");
   };
 
-  // EXACT SAME LABEL LOGIC AS NAVBAR
   const mainButtonLabel = isAdmin
     ? t("Admin Panel")
     : memberProfile
     ? t("Dashboard")
     : !user
     ? t("Join or Log In to Get Started")
-    : t("Create Profile"); // ← THIS IS THE KEY FIX
+    : t("Create Profile");
 
-  // White outline only for Dashboard / Admin Panel
   const isWhiteOutlined = isAdmin || memberProfile;
+
+  // Single translation key, unchanged — only the RENDERING of the
+  // returned string is split, at "(GOHS)", so only that part is emerald.
+  const fullHeading = t("Government Officer's Housing Society (GOHS)");
+  const gohsMarker  = "(GOHS)";
+  const markerIndex = fullHeading.indexOf(gohsMarker);
 
   return (
     <div className="relative h-screen w-full">
-      {/* Background Image */}
       <div
         className="absolute inset-0 bg-[url('/src/assets/heroImage6.png')] bg-cover bg-center bg-no-repeat"
         style={{ filter: "brightness(55%)" }}
       ></div>
 
-      {/* Overlay content */}
       <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col h-full px-4 md:px-8 items-center justify-center md:items-start md:justify-center text-center md:text-left">
         <motion.h1
           initial={{ opacity: 0, y: -30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
-          className="font-playfair font-bold md:font-extrabold text-2xl sm:text-4xl md:text-5xl md:text-[56px] md:leading-[56px] max-w-xl mt-4 text-white"
+          className="font-outfit font-bold text-2xl sm:text-3xl md:text-4xl lg:text-[44px] lg:leading-[48px] max-w-xl mt-4 text-white"
         >
-          {t("Government Officer's Housing Society (GOHS)")}
+          {markerIndex === -1 ? (
+            fullHeading
+          ) : (
+            <>
+              {fullHeading.slice(0, markerIndex)}
+              <span className="text-emerald-300">
+                {fullHeading.slice(markerIndex, markerIndex + gohsMarker.length)}
+              </span>
+              {fullHeading.slice(markerIndex + gohsMarker.length)}
+            </>
+          )}
         </motion.h1>
 
         <motion.p
@@ -63,7 +90,6 @@ const Hero = () => {
           )}
         </motion.p>
 
-        {/* HERO BUTTON – PERFECTLY SYNCED WITH NAVBAR */}
         <motion.button
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -84,7 +110,6 @@ const Hero = () => {
         >
           <span>{mainButtonLabel}</span>
 
-          {/* Arrow */}
           <motion.span
             className={`
               flex items-center justify-center size-5 rounded-full

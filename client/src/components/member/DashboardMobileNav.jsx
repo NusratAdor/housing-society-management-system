@@ -1,9 +1,8 @@
 // client/src/components/member/DashboardMobileNav.jsx
 //
-// Extracted from the old MemberDashboard.jsx mobile pill nav.
-// Now sits outside the scrollable <main> in DashboardLayout, so it is
-// structurally fixed rather than relying on `sticky` positioning.
-// Active pill is derived from the URL, same as the desktop sidebar.
+// Active pill now uses the sidebar's navy tokens instead of a hardcoded
+// slate-800, so mobile and desktop navigation share one exact color
+// source — no risk of the two drifting apart if the theme changes later.
 
 import React, { useEffect, useRef } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
@@ -53,7 +52,7 @@ export default function DashboardMobileNav() {
                 text-xs font-semibold whitespace-nowrap flex-shrink-0
                 border transition-all duration-150
                 ${isActive
-                  ? "bg-slate-800 border-slate-800 text-white shadow-sm"
+                  ? "bg-sidebar border-sidebar text-sidebar-foreground shadow-sm"
                   : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
                 }
               `}
@@ -63,7 +62,6 @@ export default function DashboardMobileNav() {
             </NavLink>
           );
         })}
-
         <Link
           to="/gallery"
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full

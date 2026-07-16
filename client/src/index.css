@@ -24,8 +24,19 @@ html[lang="bn"] {
 }
 
 
+/* GLOBAL FONT UPDATE: this class now resolves to bold Outfit instead
+   of the Playfair serif. This is the single point of control for
+   every element still carrying the .font-playfair class anywhere in
+   the app — changing it here updates them all at once, rather than
+   needing to hunt down and edit each component individually. Most
+   components have already migrated away from this class directly
+   (Notices, Gallery, NoticeDetail, GalleryDetail, admin panels), but
+   any that haven't — including Hero.jsx, which this change was
+   requested for — now render consistently with the rest of the site
+   instead of standing out as a leftover serif treatment. */
 .font-playfair{
-  font-family: Playfair !important;
+  font-family: "Outfit", sans-serif !important;
+  font-weight: 700 !important;
 }
 
 @keyframes page-fade {
@@ -106,14 +117,32 @@ html[lang="bn"] {
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0.002 247.839);
-  --sidebar-foreground: oklch(0.13 0.028 261.692);
-  --sidebar-primary: oklch(0.21 0.034 264.665);
-  --sidebar-primary-foreground: oklch(0.985 0.002 247.839);
-  --sidebar-accent: oklch(0.967 0.003 264.542);
-  --sidebar-accent-foreground: oklch(0.21 0.034 264.665);
-  --sidebar-border: oklch(0.928 0.006 264.531);
-  --sidebar-ring: oklch(0.707 0.022 261.325);
+
+
+--dashboard-accent: #15803D;        /* green-700 — buttons, active nav */
+  --dashboard-accent-dark: #14532D;   /* green-900 — stronger elements */
+  --dashboard-accent-soft: #F0FDF4;   /* green-50  — hero gradient, active nav wash */
+  --dashboard-accent-soft-2: #DCFCE7; /* green-100 — hover states */
+  --dashboard-accent-border: #BBF7D0; /* green-200 — subtle borders */
+
+  /* Illustration colors — theme-aware via CSS variables instead of
+     hardcoded hex inside the SVG. Changing the hero's color scheme in
+     future only requires editing these two lines, never the component. */
+  --illustration-primary: #BBF7D0;    /* green-200 */
+  --illustration-secondary: #4ADE80;  /* green-400 */
+
+  /* ── Sidebar tokens — REVISED: light, monochromatic green, replacing
+     the earlier dark navy scheme. Monochromatic schemes read calmer
+     than the earlier navy+gold complementary pairing — see chat for
+     full color-theory reasoning. ── */
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1E293B;
+  --sidebar-primary: var(--dashboard-accent);
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: var(--dashboard-accent-soft);
+  --sidebar-accent-foreground: var(--dashboard-accent);
+  --sidebar-border: #E5E7EB;
+  --sidebar-ring: var(--dashboard-accent);
 }
 
 .dark {

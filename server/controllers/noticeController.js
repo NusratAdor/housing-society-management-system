@@ -1,125 +1,144 @@
 // server/controllers/noticeController.js
-// Handles CRUD for society notices and triggers emails to all members.
 //
-// Key fixes applied:
-//   - Cloudinary upload uses cloudinaryService (upload_stream with buffer)
-//     instead of req.file.path which does not exist with memoryStorage.
-//   - imagePublicId stored so images can be deleted from Cloudinary on
-//     notice deletion or update.
-//   - date stored as Date type, not the string that was passed in.
-//   - Email loop runs after response is sent so admin is not blocked.
-//   - req.auth accessed consistently as an object, not with typeof check.
+// CHANGE (latest): uploadAttachment now captures file.originalname and
+// returns it as attachmentOriginalName, which createNotice/updateNotice
+// save onto the Notice document. This is what NoticeDetail.jsx now
+// displays, instead of deriving a name from attachmentPublicId (which
+// was either a random Cloudinary id or a timestamp-prefixed Supabase
+// path — never meant to be shown to a member).
+//
+// PRIOR CHANGE: attachments split by file type across two storage
+// providers, based on the mimetype of the uploaded file:
+//   - Images (jpg/png/webp)  -> Cloudinary (unchanged from before —
+//     this is what Cloudinary is actually built for: transformation,
+//     optimization, CDN delivery for images)
+//   - PDFs                   -> Supabase Storage (Cloudinary enforces
+//     an account-level restriction on public PDF delivery that caused
+//     the 401 errors; Supabase Storage has no such restriction)
+//
+// Both cases still populate the SAME `attachment` field on the Notice
+// document — the frontend doesn't need to know or care which provider
+// actually served a given file. attachmentType ("image" | "pdf") is
+// what drives frontend rendering, exactly as before.
+//
+// attachmentPublicId now stores different things depending on provider:
+//   - Cloudinary (images): the Cloudinary public_id, as before
+//   - Supabase (PDFs): the storage path within the bucket, needed to
+//     delete the file later
+// This remains an internal implementation detail used only for
+// deletion — it is never read for display anymore (that's now
+// attachmentOriginalName's job).
 
-import Notice          from "../models/Notice.js";
-import Member          from "../models/Member.js";
-import Notification    from "../models/Notification.js";
-import { uploadImage, deleteImage } from "../services/cloudinaryService.js";
+import { v2 as cloudinary } from "cloudinary";
+import { supabase } from "../configs/connectSupabase.js";
+import Notice from "../models/Notice.js";
 
-import { sendNoticeEmail } from "../services/emailService.js";
+const SUPABASE_BUCKET = "notice-attachments";
 
-// ── createNotice ──────────────────────────────────────────────────────────────
+// ─── Cloudinary helpers (images only now) ──────────────────────────────────
 
-export const createNotice = async (req, res) => {
+const uploadImageToCloudinary = (buffer) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "notices", resource_type: "image" },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({ url: result.secure_url, publicId: result.public_id });
+      }
+    );
+    stream.end(buffer);
+  });
+
+const deleteImageFromCloudinary = async (publicId) => {
+  if (!publicId) return;
   try {
-    const { title, date, summary, content } = req.body;
-
-    // WHY req.auth directly (not typeof check):
-    // The original had a comment "Fix: Clerk v5+ → req.auth is a function"
-    // and used typeof req.auth === "function" ? await req.auth() : req.auth.
-    // In @clerk/express v2+ req.auth is always a plain object set by
-    // clerkMiddleware. The function branch is dead code. Removed.
-    const createdBy = req.auth?.userId;
-
-    if (!createdBy) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-    }
-    if (!title || !date || !summary || !content) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
-    }
-
-    let image         = "";
-    let imagePublicId = "";
-
-    if (req.file) {
-      try {
-        // WHY cloudinaryService instead of cloudinary.uploader.upload(req.file.path):
-        // uploadMiddleware uses multer.memoryStorage() — the file is stored in
-        // RAM as req.file.buffer, NOT written to disk. req.file.path does not
-        // exist with memoryStorage. cloudinaryService.uploadImage() uses
-        // cloudinary.uploader.upload_stream() which reads from the buffer
-        // correctly. The original code was silently failing on every image upload.
-        const uploaded = await uploadImage(req.file, "gohs/notices");
-        image         = uploaded.secure_url;
-        imagePublicId = uploaded.public_id;
-      } catch (uploadError) {
-        // Non-fatal: save the notice without an image rather than failing the
-        // whole request. The admin can edit and re-upload.
-        console.error("Cloudinary upload failed:", uploadError.message);
-      }
-    }
-
-    const notice = await Notice.create({
-      title,
-      // WHY new Date(date): Notice.date is now type Date (fixed in the model).
-      // Storing a raw date string bypasses Mongoose type coercion and means
-      // the field cannot be used in date comparisons or sorted correctly.
-      date: new Date(date),
-      summary,
-      content,
-      image,
-      imagePublicId,
-      createdBy,
-    });
-
-    // Broadcast in-app notification — clerkUserId is null which means all
-    // members see it in their notification list (broadcast pattern).
-    await Notification.create({
-      type:      "Notice",
-      content:   `New notice posted: ${title}`,
-      adminOnly: false,
-    });
-
-    // WHY respond before the email loop:
-    // The original sent the HTTP response AFTER looping through all members.
-    // With 100 members and 120ms per email that is 12 seconds of waiting.
-    // The admin sees a spinner for 12 seconds and may think it crashed.
-    // Sending the response first lets the admin see immediate confirmation.
-    // The email loop runs as a background task after res.status(201).json().
-    res.status(201).json({
-      success: true,
-      message: "Notice created. Emails are being sent to all members.",
-      notice,
-    });
-
-    // This code runs after the response is flushed — admin does not wait for it.
-    const members = await Member.find({}).select("email name").lean();
-    for (const member of members) {
-      if (!member.email) continue;
-      try {
-        await sendNoticeEmail(member.email, notice.toObject());
-        // 120ms gap keeps us under Resend's rate limit of 10 emails/second
-        await new Promise((r) => setTimeout(r, 120));
-      } catch (emailError) {
-        // Log failure but continue — one bad email must not stop the rest
-        console.error(`Email failed for ${member.email}:`, emailError.message);
-      }
-    }
-
-  } catch (error) {
-    console.error("createNotice error:", error.message);
-    // Only send error response if we have not already sent the 201
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, message: "Server error" });
-    }
+    await cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+  } catch (err) {
+    console.error("[Notice] Cloudinary delete failed:", err.message);
   }
 };
 
-// ── getNotices ────────────────────────────────────────────────────────────────
+// ─── Supabase helpers (PDFs only) ───────────────────────────────────────────
+
+const uploadPdfToSupabase = async (buffer, originalName) => {
+  // A unique, safe filename — timestamp + sanitized original name avoids
+  // collisions and keeps the original filename recognizable for admins
+  // in the Supabase dashboard. This prefixed path is NEVER used for
+  // display in the UI — see attachmentOriginalName below for that.
+  const safeName = originalName.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+  const path     = `notices/${Date.now()}-${safeName}`;
+
+  const { error } = await supabase.storage
+    .from(SUPABASE_BUCKET)
+    .upload(path, buffer, {
+      contentType: "application/pdf",
+      upsert:      false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+
+  return { url: data.publicUrl, path };
+};
+
+const deletePdfFromSupabase = async (path) => {
+  if (!path) return;
+  try {
+    const { error } = await supabase.storage.from(SUPABASE_BUCKET).remove([path]);
+    if (error) console.error("[Notice] Supabase delete failed:", error.message);
+  } catch (err) {
+    console.error("[Notice] Supabase delete failed:", err.message);
+  }
+};
+
+// ─── unified helpers — pick the right provider based on file type ─────────
+
+const uploadAttachment = async (file) => {
+  const isPdf = file.mimetype === "application/pdf";
+
+  if (isPdf) {
+    const { url, path } = await uploadPdfToSupabase(file.buffer, file.originalname);
+    return {
+      url,
+      publicId:       path,
+      originalName:   file.originalname, // clean name, captured before any prefixing
+      attachmentType: "pdf",
+    };
+  }
+
+  const { url, publicId } = await uploadImageToCloudinary(file.buffer);
+  return {
+    url,
+    publicId,
+    originalName:   file.originalname, // Cloudinary never had this — capture it ourselves
+    attachmentType: "image",
+  };
+};
+
+// Deletes an existing attachment from whichever provider it lives on.
+// attachmentType tells us which — "pdf" means Supabase, anything else
+// (including legacy notices with no attachmentType but an old image)
+// means Cloudinary.
+const deleteAttachment = async (publicId, attachmentType) => {
+  if (!publicId) return;
+  if (attachmentType === "pdf") {
+    await deletePdfFromSupabase(publicId);
+  } else {
+    await deleteImageFromCloudinary(publicId);
+  }
+};
+
+// ─── getNotices ───────────────────────────────────────────────────────────────
 
 export const getNotices = async (req, res) => {
   try {
-    // WHY .lean(): we only serialise to JSON — no need for Mongoose document overhead
-    const notices = await Notice.find().sort({ createdAt: -1 }).lean();
+    const notices = await Notice
+      .find()
+      .sort({ date: -1 })
+      .select("-content")
+      .lean();
+
     return res.status(200).json({ success: true, notices });
   } catch (error) {
     console.error("getNotices error:", error.message);
@@ -127,12 +146,14 @@ export const getNotices = async (req, res) => {
   }
 };
 
-// ── getNoticeById ─────────────────────────────────────────────────────────────
+// ─── getNoticeById ────────────────────────────────────────────────────────────
 
 export const getNoticeById = async (req, res) => {
   try {
     const notice = await Notice.findById(req.params.id).lean();
-    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
+    if (!notice) {
+      return res.status(404).json({ success: false, message: "Notice not found" });
+    }
     return res.status(200).json({ success: true, notice });
   } catch (error) {
     console.error("getNoticeById error:", error.message);
@@ -140,67 +161,121 @@ export const getNoticeById = async (req, res) => {
   }
 };
 
-// ── updateNotice ──────────────────────────────────────────────────────────────
+// ─── createNotice ─────────────────────────────────────────────────────────────
+
+export const createNotice = async (req, res) => {
+  try {
+    const { title, date, summary } = req.body;
+
+    if (!title?.trim()) {
+      return res.status(400).json({ success: false, message: "Title is required" });
+    }
+    if (!date) {
+      return res.status(400).json({ success: false, message: "Date is required" });
+    }
+    if (!summary?.trim()) {
+      return res.status(400).json({ success: false, message: "Summary is required" });
+    }
+
+    let attachment             = "";
+    let attachmentPublicId     = "";
+    let attachmentOriginalName = "";
+    let attachmentType         = "";
+
+    if (req.file) {
+      const result           = await uploadAttachment(req.file);
+      attachment             = result.url;
+      attachmentPublicId     = result.publicId;
+      attachmentOriginalName = result.originalName;
+      attachmentType         = result.attachmentType;
+    }
+
+    const notice = await Notice.create({
+      title:   title.trim(),
+      date:    new Date(date),
+      summary: summary.trim(),
+      content: "",
+      attachment,
+      attachmentPublicId,
+      attachmentOriginalName,
+      attachmentType,
+      createdBy: req.clerkUserId,
+    });
+
+    return res.status(201).json({ success: true, notice });
+  } catch (error) {
+    console.error("createNotice error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── updateNotice ─────────────────────────────────────────────────────────────
 
 export const updateNotice = async (req, res) => {
   try {
-    const { title, date, summary, content } = req.body;
-
-    // WHY req.auth?.userId (not req.auth.userId):
-    // The original used req.auth.userId without optional chaining.
-    // If clerkMiddleware fails to populate req.auth for any reason,
-    // this throws "Cannot read property userId of undefined" and crashes
-    // the entire process instead of returning a clean 401.
-    const createdBy = req.auth?.userId;
-
-    if (!title || !date || !summary || !content) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
+    const notice = await Notice.findById(req.params.id);
+    if (!notice) {
+      return res.status(404).json({ success: false, message: "Notice not found" });
     }
 
-    const notice = await Notice.findById(req.params.id);
-    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
+    const { title, date, summary, removeAttachment } = req.body;
 
-    let { image, imagePublicId } = notice;
+    if (title)   notice.title   = title.trim();
+    if (date)    notice.date    = new Date(date);
+    if (summary) notice.summary = summary.trim();
 
     if (req.file) {
-      // Delete old Cloudinary image before uploading the replacement.
-      // WHY: without this the old image stays on Cloudinary forever,
-      // consuming storage and incurring cost.
-      if (imagePublicId) await deleteImage(imagePublicId);
+      // Delete the existing attachment first — from whichever provider
+      // it's actually on (checks attachmentType, falls back to legacy
+      // imagePublicId which was always Cloudinary).
+      const existingPublicId = notice.attachmentPublicId || notice.imagePublicId;
+      const existingType     = notice.attachmentType || (notice.imagePublicId ? "image" : "");
+      await deleteAttachment(existingPublicId, existingType);
 
-      const uploaded = await uploadImage(req.file, "gohs/notices");
-      image         = uploaded.secure_url;
-      imagePublicId = uploaded.public_id;
+      const result = await uploadAttachment(req.file);
+      notice.attachment             = result.url;
+      notice.attachmentPublicId     = result.publicId;
+      notice.attachmentOriginalName = result.originalName;
+      notice.attachmentType         = result.attachmentType;
+
+      notice.image         = "";
+      notice.imagePublicId = "";
+
+    } else if (removeAttachment === "true") {
+      const existingPublicId = notice.attachmentPublicId || notice.imagePublicId;
+      const existingType     = notice.attachmentType || (notice.imagePublicId ? "image" : "");
+      await deleteAttachment(existingPublicId, existingType);
+
+      notice.attachment             = "";
+      notice.attachmentPublicId     = "";
+      notice.attachmentOriginalName = "";
+      notice.attachmentType         = "";
+      notice.image                  = "";
+      notice.imagePublicId          = "";
     }
 
-    const updatedNotice = await Notice.findByIdAndUpdate(
-      req.params.id,
-      { title, date: new Date(date), summary, content, image, imagePublicId, createdBy },
-      { new: true }
-    );
-
-    return res.status(200).json({ success: true, message: "Notice updated", notice: updatedNotice });
+    await notice.save();
+    return res.status(200).json({ success: true, notice });
   } catch (error) {
     console.error("updateNotice error:", error.message);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-// ── deleteNotice ──────────────────────────────────────────────────────────────
+// ─── deleteNotice ─────────────────────────────────────────────────────────────
 
 export const deleteNotice = async (req, res) => {
   try {
-    const notice = await Notice.findByIdAndDelete(req.params.id);
-    if (!notice) return res.status(404).json({ success: false, message: "Notice not found" });
-
-    // WHY delete from Cloudinary: the original left the image file on
-    // Cloudinary after deleting the MongoDB record. Over time this
-    // accumulates orphan files that cost money and cannot be cleaned
-    // up because the public_id is no longer stored anywhere.
-    if (notice.imagePublicId) {
-      await deleteImage(notice.imagePublicId);
+    const notice = await Notice.findById(req.params.id);
+    if (!notice) {
+      return res.status(404).json({ success: false, message: "Notice not found" });
     }
 
+    const publicId = notice.attachmentPublicId || notice.imagePublicId;
+    const type     = notice.attachmentType || (notice.imagePublicId ? "image" : "");
+    await deleteAttachment(publicId, type);
+
+    await Notice.findByIdAndDelete(req.params.id);
     return res.status(200).json({ success: true, message: "Notice deleted" });
   } catch (error) {
     console.error("deleteNotice error:", error.message);

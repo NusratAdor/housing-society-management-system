@@ -1,12 +1,16 @@
 // client/src/components/member/NotificationBell.jsx
 //
-// FIXED: added useFixedPanel prop.
-// When useFixedPanel=true the dropdown panel uses position:fixed anchored
-// to the top bar bottom (top:56px). This prevents the panel from being
-// clipped by any parent with overflow:hidden — works on all screen sizes.
+// CHANGE (this pass): the bell button's hover background is now
+// context-aware instead of a hardcoded hover:bg-gray-100. Over the
+// transparent/hero navbar the icon is white — a light gray fill behind
+// a white icon effectively erases it (this was the "turns completely
+// white" issue). Now a translucent white wash is used in that context
+// instead, and gray-100 is kept for the scrolled (white navbar, dark
+// icon) case. Passed in via the new `hoverBgClassName` prop, defaulting
+// to the old behavior so nothing breaks if a caller doesn't pass it.
 //
-// Default (useFixedPanel=false) keeps the original absolute positioning
-// for backward compatibility with any other usage.
+// Everything else — useFixedPanel positioning logic, outside-click
+// handling, seen/unread tracking, panel radius/colors — UNCHANGED.
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -14,10 +18,11 @@ import { Bell, X } from "lucide-react";
 import { formatDate } from "../../utils/formatDate";
 
 const NotificationBell = ({
-  notifications  = [],
+  notifications     = [],
   onOpenChange,
-  iconClassName  = "text-gray-600",
-  useFixedPanel  = false,
+  iconClassName      = "text-gray-600",
+  hoverBgClassName   = "hover:bg-gray-100",
+  useFixedPanel      = false,
 }) => {
   const [open,    setOpen]    = useState(false);
   const [seenIds, setSeenIds] = useState(() => new Set());
@@ -30,7 +35,6 @@ const NotificationBell = ({
     [notifications, seenIds]
   );
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e) => {
@@ -45,7 +49,6 @@ const NotificationBell = ({
 
   const handleToggle = () => {
     const next = !open;
-    // For fixed panel: compute right offset from button position
     if (next && useFixedPanel && btnRef.current) {
       const rect  = btnRef.current.getBoundingClientRect();
       const right = window.innerWidth - rect.right;
@@ -62,7 +65,6 @@ const NotificationBell = ({
     }
   };
 
-  // Panel positioning style
   const panelStyle = useFixedPanel
     ? { position: "fixed", top: panelPos.top, right: panelPos.right }
     : {};
@@ -77,8 +79,8 @@ const NotificationBell = ({
         ref={btnRef}
         onClick={handleToggle}
         aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
-        className="relative p-2 rounded-full hover:bg-gray-100
-          transition-colors focus:outline-none"
+        className={`relative p-2 rounded-full ${hoverBgClassName}
+          transition-colors focus:outline-none`}
       >
         <Bell className={`h-5 w-5 ${iconClassName}`} />
         {unreadCount > 0 && (
@@ -101,7 +103,7 @@ const NotificationBell = ({
             transition={{ duration: 0.15 }}
             className={`${panelBaseClass}
               max-h-[28rem] bg-white border border-gray-200
-              rounded-2xl shadow-xl overflow-hidden z-50 flex flex-col`}
+              rounded-lg shadow-xl overflow-hidden z-50 flex flex-col`}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3

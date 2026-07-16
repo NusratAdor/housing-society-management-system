@@ -1,10 +1,47 @@
 // pages/admin/ManageGallery.jsx
+//
+// CHANGE (this pass) — visual modernization only, zero functional
+// changes from the previous multi-image version:
+//   - File input: native browser "Choose Files / No file chosen" text
+//     replaced with the same styled dropzone pattern already used in
+//     ManageNotices.jsx (dashed border, Paperclip icon, hidden real
+//     input underneath a clickable label) — this was the single
+//     biggest "not modern" element per the screenshot.
+//   - Section headers: font-playfair -> font-semibold text-gray-800,
+//     matching ManageNotices.jsx's header treatment exactly (that's
+//     the most relevant existing reference in this codebase, not an
+//     invented new style).
+//   - Card/input/button spacing, border colors brought in line with
+//     ManageNotices.jsx's conventions. Border radius reduced TWICE now
+//     — this pass takes every remaining radius down one more step
+//     (containers rounded-xl -> rounded-lg, inputs/dropzone rounded-lg
+//     -> rounded-md, thumbnails rounded-md -> rounded, list item cards
+//     rounded-lg -> rounded-md) per feedback that it wasn't just the
+//     images that needed a smaller radius — every element on the page
+//     did.
+//   - Add/Update/Cancel/Edit/Delete buttons: switched to shadcn's
+//     size="sm" (slimmer height) plus an explicit rounded-md override,
+//     since the default Button size read as bulky next to the now
+//     much-smaller radii used everywhere else on the page.
+//   - Preview thumbnails and gallery list images: now match the same
+//     small-radius language applied to GalleryCard.jsx and
+//     GalleryDetail.jsx's photo grid — unified across public AND admin
+//     gallery images.
+//   - shadcn Button and AlertDialog components: structurally UNCHANGED
+//     (still the same components), only their size/className props
+//     adjusted as noted above.
+//
+// UNCHANGED (functional): multi-image state (formData.images array),
+// handleImages, removeSelectedImage, handleEdit's existing-image
+// preview population, submit validation, delete flow — identical to
+// the previous version.
+
 import React, { useState, useEffect } from "react";
 import Title from "../../components/Title";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
-import { Trash2, Edit } from "lucide-react";
+import { Trash2, Edit, X, Paperclip, Images } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,9 +66,9 @@ const ManageGallery = () => {
     _id: null,
     title: "",
     description: "",
-    image: null,
+    images: [],
   });
-  const [imagePreview, setImagePreview] = useState("");
+  const [imagePreviews, setImagePreviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
@@ -64,23 +101,36 @@ const ManageGallery = () => {
     setFormData({ ...formData, [name]: value });
   };
 
-  const handleImage = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setFormData({ ...formData, image: file });
-      setImagePreview(URL.createObjectURL(file));
-    }
+  const handleImages = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setFormData((prev) => ({ ...prev, images: files }));
+    setImagePreviews(files.map((f) => URL.createObjectURL(f)));
+  };
+
+  const removeSelectedImage = (index) => {
+    setFormData((prev) => ({
+      ...prev,
+      images: prev.images.filter((_, i) => i !== index),
+    }));
+    setImagePreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!formData._id && formData.images.length === 0) {
+      toast.error("Please select at least one image");
+      return;
+    }
+
     setLoading(true);
     try {
       const token = await getToken();
       const payload = new FormData();
       payload.append("title", formData.title);
       payload.append("description", formData.description);
-      if (formData.image) payload.append("image", formData.image);
+      formData.images.forEach((file) => payload.append("images", file));
 
       let res;
       if (formData._id) {
@@ -100,8 +150,8 @@ const ManageGallery = () => {
       if (res.data.success) {
         toast.success(res.data.message);
         fetchGallery();
-        setFormData({ _id: null, title: "", description: "", image: null });
-        setImagePreview("");
+        setFormData({ _id: null, title: "", description: "", images: [] });
+        setImagePreviews([]);
       }
     } catch (err) {
       toast.error("Error saving item");
@@ -115,9 +165,17 @@ const ManageGallery = () => {
       _id: item._id,
       title: item.title,
       description: item.description,
-      image: null,
+      images: [],
     });
-    setImagePreview(item.image);
+    const existingUrls = item.images?.length
+      ? item.images.map((img) => img.url)
+      : (item.image ? [item.image] : []);
+    setImagePreviews(existingUrls);
+  };
+
+  const cancelEdit = () => {
+    setFormData({ _id: null, title: "", description: "", images: [] });
+    setImagePreviews([]);
   };
 
   const openDelete = (id, title) => {
@@ -146,6 +204,8 @@ const ManageGallery = () => {
     }
   };
 
+  const hasNewSelection = formData.images.length > 0;
+
   // ---------- UI ----------
   return (
     <div className="w-full bg-white">
@@ -153,7 +213,8 @@ const ManageGallery = () => {
 
       {loading && (
         <div className="flex justify-center items-center h-[50vh]">
-          <div className="animate-spin h-8 w-8 text-gray-600" />
+          <div className="animate-spin h-8 w-8 border-2 border-gray-200
+                          border-t-[var(--color-primary)] rounded-full" />
         </div>
       )}
 
@@ -163,53 +224,125 @@ const ManageGallery = () => {
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="bg-white border border-gray-300 rounded-md p-6 shadow-sm"
+            className="bg-white border border-gray-100 rounded-lg p-6 shadow-sm h-fit"
           >
-            <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">
-              {formData._id ? "Edit Item" : "Add New Item"}
+            <h3 className="font-semibold text-gray-800 mb-5">
+              {formData._id ? `Edit — ${formData.title}` : "Add New Item"}
             </h3>
-            <form onSubmit={handleSubmit}>
-              <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Title</label>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Title *
+                </label>
                 <input
                   name="title"
                   value={formData.title}
                   onChange={handleChange}
-                  className="w-full p-2 border rounded-md"
+                  placeholder="Event or album title"
+                  className="w-full px-3 py-2 text-sm border border-gray-200
+                    rounded-md outline-none focus:ring-2
+                    focus:ring-[var(--color-primary)]/20
+                    focus:border-[var(--color-primary)] bg-white"
                   required
                 />
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Description</label>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Description *
+                </label>
                 <textarea
                   name="description"
                   value={formData.description}
                   onChange={handleChange}
                   rows={4}
-                  className="w-full p-2 border rounded-md"
+                  placeholder="Brief description of the event"
+                  className="w-full px-3 py-2 text-sm border border-gray-200
+                    rounded-md outline-none focus:ring-2
+                    focus:ring-[var(--color-primary)]/20
+                    focus:border-[var(--color-primary)] bg-white resize-none"
                   required
                 />
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm text-gray-600 mb-1 font-outfit">Image</label>
-                <input type="file" accept="image/*" onChange={handleImage} className="w-full p-2 border rounded-md" />
-                {imagePreview && <img src={imagePreview} alt="prev" className="mt-2 h-28 rounded-md w-full object-cover" />}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Images
+                  {formData._id && (
+                    <span className="text-gray-400 font-normal ml-1">
+                      — selecting new images replaces all existing ones
+                    </span>
+                  )}
+                </label>
+
+                {/* Preview grid — shown above the dropzone once files
+                    are chosen, or once an item is being edited.        */}
+                {imagePreviews.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {imagePreviews.map((src, i) => (
+                      <div key={i} className="relative group">
+                        <img
+                          src={src}
+                          alt={`preview ${i + 1}`}
+                          className="h-20 w-full object-cover rounded
+                                    border border-gray-200"
+                        />
+                        {hasNewSelection && (
+                          <button
+                            type="button"
+                            onClick={() => removeSelectedImage(i)}
+                            className="absolute -top-1.5 -right-1.5 bg-white
+                                       text-red-500 rounded-full w-5 h-5
+                                       flex items-center justify-center
+                                       shadow-sm border border-gray-200
+                                       hover:bg-red-50 transition-colors"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Styled dropzone — replaces the native file input's
+                    default browser chrome.                             */}
+                <label className="flex items-center gap-3 px-4 py-3
+                  border-2 border-dashed border-gray-200 rounded-md
+                  cursor-pointer hover:border-[var(--color-primary)]
+                  hover:bg-blue-50/30 transition-colors">
+                  <Paperclip className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                  <span className="text-sm text-gray-500">
+                    Click to attach images
+                    <span className="text-gray-400"> — multiple allowed</span>
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleImages}
+                    className="hidden"
+                  />
+                </label>
               </div>
 
-              <div className="flex gap-3">
-                <Button type="submit" disabled={loading}>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  size="sm"
+                  className="rounded-md px-5 font-medium"
+                >
                   {loading ? "Saving…" : formData._id ? "Update" : "Add"}
                 </Button>
                 {formData._id && (
                   <Button
                     variant="outline"
                     type="button"
-                    onClick={() => {
-                      setFormData({ _id: null, title: "", description: "", image: null });
-                      setImagePreview("");
-                    }}
+                    size="sm"
+                    className="rounded-md px-5 font-medium"
+                    onClick={cancelEdit}
                   >
                     Cancel
                   </Button>
@@ -222,9 +355,14 @@ const ManageGallery = () => {
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="lg:col-span-2 bg-white border border-gray-300 rounded-md p-6 shadow-sm"
+            className="lg:col-span-2 bg-white border border-gray-100 rounded-lg p-6 shadow-sm"
           >
-            <h3 className="font-playfair text-lg font-semibold text-gray-800 mb-4">Gallery List</h3>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold text-gray-800">Gallery List</h3>
+              <p className="text-sm text-gray-400">
+                {gallery.length} item{gallery.length !== 1 ? "s" : ""}
+              </p>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {gallery.map((item) => (
@@ -233,23 +371,57 @@ const ManageGallery = () => {
                   layout
                   initial={{ opacity: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="p-4 border border-gray-200 rounded-md hover:border-[var(--color-primary)] transition-all"
+                  className="p-4 border border-gray-100 rounded-md
+                            hover:shadow-sm transition-shadow"
                 >
-                  <img src={item.image} alt={item.title} className="h-32 w-full object-cover rounded-md mb-2" />
-                  <h4 className="font-playfair text-base font-semibold text-gray-800">{item.title}</h4>
-                  <p className="text-gray-600 font-outfit text-sm line-clamp-2">{item.description}</p>
+                  <div className="relative mb-3">
+                    <img
+                      src={item.image}
+                      alt={item.title}
+                      className="h-36 w-full object-cover rounded"
+                    />
+                    {item.images?.length > 1 && (
+                      <span className="absolute top-2 right-2 flex items-center gap-1
+                                       bg-black/60 backdrop-blur-sm text-white
+                                       text-[11px] font-semibold px-2 py-1 rounded-full">
+                        <Images className="h-3 w-3" strokeWidth={2} />
+                        {item.images.length}
+                      </span>
+                    )}
+                  </div>
+
+                  <h4 className="font-outfit font-semibold text-gray-800 text-sm">
+                    {item.title}
+                  </h4>
+                  <p className="text-gray-500 font-outfit text-xs mt-1 line-clamp-2">
+                    {item.description}
+                  </p>
 
                   <div className="flex gap-2 mt-3">
-                    <Button variant="outline" size="sm" onClick={() => handleEdit(item)}>
-                      <Edit className="h-4 w-4 mr-1" /> Edit
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-md"
+                      onClick={() => handleEdit(item)}
+                    >
+                      <Edit className="h-3.5 w-3.5 mr-1" /> Edit
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => openDelete(item._id, item.title)} className="text-red-500">
-                      <Trash2 className="h-4 w-4 mr-1" /> Delete
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openDelete(item._id, item.title)}
+                      className="rounded-md text-red-500 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
                     </Button>
                   </div>
                 </motion.div>
               ))}
-              {gallery.length === 0 && <p className="text-gray-500 col-span-2">No items yet.</p>}
+              {gallery.length === 0 && (
+                <p className="text-gray-400 text-sm col-span-2 py-8 text-center">
+                  No items yet. Add the first one on the left.
+                </p>
+              )}
             </div>
           </motion.div>
         </div>
@@ -261,7 +433,7 @@ const ManageGallery = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Gallery Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete “{deleteTitle}”? This cannot be undone.
+              Are you sure you want to delete "{deleteTitle}"? This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

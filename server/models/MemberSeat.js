@@ -1,54 +1,55 @@
 // server/models/MemberSeat.js
-//
-// A MemberSeat is a pre-registration record created by admin before
-// a member signs up. It acts as an allowlist — only members whose
-// membership number exists here can complete profile creation.
-//
-// joinDate drives backdated due generation: all months from joinDate
-// to the current month are created as MonthlyCharge records when the
-// member first claims this seat.
-//
-// Once claimed, membershipNo and joinDate are locked — they should
-// not be changed because charges have already been generated from them.
-// Admin can still update name, plotNo, designation (display fields only).
 
 import mongoose from "mongoose";
 
 const memberSeatSchema = new mongoose.Schema(
   {
     membershipNo: {
-      type:     String,
-      required: true,
-      unique:   true,
-      trim:     true,
+      type:      String,
+      required:  true,
+      unique:    true,
+      trim:      true,
       uppercase: true,
     },
     name: {
-      type:  String,
+      type:     String,
       required: true,
-      trim:  true,
+      trim:     true,
     },
     plotNo: {
-      type:  String,
-      trim:  true,
+      type:    String,
+      trim:    true,
       default: "",
+      // Multiple plots stored as comma-separated: "Plot-1, Plot-3"
     },
     designation: {
-      type:  String,
-      trim:  true,
+      type:    String,
+      trim:    true,
       default: "",
     },
-    // The month the member officially joined the society.
-    // All MonthlyCharge records will be generated from this date forward.
-    // Admin sets this to the actual physical join date, not the digital signup date.
+
+    // OPTIONAL — physical society join date.
+    // Used only for "Member since" display in the dashboard.
+    // If not available (old members with no records), falls back
+    // to Member.createdAt (the digital signup date).
+    // Does NOT drive any charge calculation — opening balance handles that.
     joinDate: {
-      type:     Date,
-      required: true,
+      type:    Date,
+      default: null,
     },
 
-    // ── Claim tracking ──────────────────────────────────────────────────────
-    // isClaimed flips to true the moment a member completes CreateProfile
-    // with this membershipNo. After that, the seat is locked.
+    // Opening balance from CSV — total amount owed at migration time.
+    // Applied as a single "Opening Balance" MonthlyCharge when the
+    // member first completes their profile, so the existing payment
+    // system works without any changes.
+    // 0 = fully paid up at time of migration.
+    openingBalance: {
+      type:    Number,
+      default: 0,
+      min:     0,
+    },
+
+    // Claim tracking
     isClaimed: {
       type:    Boolean,
       default: false,

@@ -11,6 +11,12 @@ import {
 |--------------------------------------------------------------------------
 | CREATE GALLERY ITEM
 |--------------------------------------------------------------------------
+| CHANGE: now accepts MULTIPLE files (req.files, from upload.array()
+| in the route) instead of a single req.file. All files upload to
+| Cloudinary in parallel via Promise.all. images[0] becomes the legacy
+| image/imagePublicId "cover" fields, so GalleryCard.jsx and any other
+| existing single-image consumers keep working unchanged.
+|--------------------------------------------------------------------------
 */
 
 export const createGalleryItem = async (req, res) => {
@@ -19,22 +25,27 @@ export const createGalleryItem = async (req, res) => {
 
     const createdBy = req.clerkUserId;
 
-    if (!title || !description || !req.file) {
+    if (!title || !description || !req.files || req.files.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "All fields are required",
+        message: "Title, description, and at least one image are required",
       });
     }
 
     /*
     |--------------------------------------------------------------------------
-    | UPLOAD IMAGE
+    | UPLOAD ALL IMAGES (parallel)
     |--------------------------------------------------------------------------
     */
 
-    const uploaded = await uploadImage(
-      req.file,
-      "housing-system/gallery"
+    const uploadedImages = await Promise.all(
+      req.files.map(async (file) => {
+        const uploaded = await uploadImage(file, "housing-system/gallery");
+        return {
+          url: uploaded.secure_url,
+          publicId: uploaded.public_id,
+        };
+      })
     );
 
     /*
@@ -46,8 +57,10 @@ export const createGalleryItem = async (req, res) => {
     const item = await Gallery.create({
       title: title.trim(),
       description: description.trim(),
-      image: uploaded.secure_url,
-      imagePublicId: uploaded.public_id,
+      images: uploadedImages,
+      // Legacy cover fields — mirror the first uploaded image.
+      image: uploadedImages[0].url,
+      imagePublicId: uploadedImages[0].publicId,
       createdBy,
     });
 
@@ -85,6 +98,9 @@ export const createGalleryItem = async (req, res) => {
 |--------------------------------------------------------------------------
 | GET GALLERY ITEMS
 |--------------------------------------------------------------------------
+| UNCHANGED — .select("-__v") now also returns the new images array
+| automatically, no changes needed here.
+|--------------------------------------------------------------------------
 */
 
 export const getGalleryItems = async (req, res) => {
@@ -114,7 +130,56 @@ export const getGalleryItems = async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
+| GET GALLERY ITEM BY ID
+|--------------------------------------------------------------------------
+| NEW — needed for the gallery detail page (mirrors getNoticeById in
+| noticeController.js). Public route, no auth required, same as the
+| list endpoint above.
+|--------------------------------------------------------------------------
+*/
+
+export const getGalleryItemById = async (req, res) => {
+  try {
+    const item = await Gallery.findById(req.params.id).select("-__v");
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Gallery item not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      item,
+    });
+  } catch (error) {
+    console.error(
+      "getGalleryItemById error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
 | UPDATE GALLERY ITEM
+|--------------------------------------------------------------------------
+| CHANGE: if new files are uploaded, the ENTIRE existing image set is
+| deleted from Cloudinary and replaced with the new set — same "new
+| upload replaces everything" convention already used for notice
+| attachments in noticeController.js's updateNotice, so this isn't a
+| new pattern for the codebase. If no new files are sent, existing
+| images are left untouched, same as before.
+|
+| Handles the pre-migration edge case: an old item that only has legacy
+| image/imagePublicId (no images array yet) still gets cleaned up
+| correctly when replaced.
 |--------------------------------------------------------------------------
 */
 
@@ -138,39 +203,42 @@ export const updateGalleryItem = async (req, res) => {
       });
     }
 
-    let image = oldItem.image;
-
-    let imagePublicId = oldItem.imagePublicId;
+    let images = oldItem.images;
 
     /*
     |--------------------------------------------------------------------------
-    | NEW IMAGE UPLOAD
+    | NEW IMAGES UPLOADED — replace the entire set
     |--------------------------------------------------------------------------
     */
 
-    if (req.file) {
+    if (req.files && req.files.length > 0) {
       /*
       |--------------------------------------------------------------------------
-      | DELETE OLD IMAGE
+      | DELETE ALL OLD IMAGES
       |--------------------------------------------------------------------------
       */
 
-      await deleteImage(oldItem.imagePublicId);
+      const oldImages = oldItem.images?.length
+        ? oldItem.images
+        : (oldItem.imagePublicId ? [{ publicId: oldItem.imagePublicId }] : []);
+
+      await Promise.all(oldImages.map((img) => deleteImage(img.publicId)));
 
       /*
       |--------------------------------------------------------------------------
-      | UPLOAD NEW IMAGE
+      | UPLOAD NEW IMAGES
       |--------------------------------------------------------------------------
       */
 
-      const uploaded = await uploadImage(
-        req.file,
-        "housing-system/gallery"
+      images = await Promise.all(
+        req.files.map(async (file) => {
+          const uploaded = await uploadImage(file, "housing-system/gallery");
+          return {
+            url: uploaded.secure_url,
+            publicId: uploaded.public_id,
+          };
+        })
       );
-
-      image = uploaded.secure_url;
-
-      imagePublicId = uploaded.public_id;
     }
 
     /*
@@ -184,8 +252,9 @@ export const updateGalleryItem = async (req, res) => {
       {
         title: title.trim(),
         description: description.trim(),
-        image,
-        imagePublicId,
+        images,
+        image: images[0]?.url || "",
+        imagePublicId: images[0]?.publicId || "",
       },
       {
         new: true,
@@ -215,6 +284,10 @@ export const updateGalleryItem = async (req, res) => {
 |--------------------------------------------------------------------------
 | DELETE GALLERY ITEM
 |--------------------------------------------------------------------------
+| CHANGE: deletes ALL images in the set from Cloudinary, not just one.
+| Falls back to the legacy single image for pre-migration items that
+| don't have an images array yet.
+|--------------------------------------------------------------------------
 */
 
 export const deleteGalleryItem = async (req, res) => {
@@ -230,11 +303,15 @@ export const deleteGalleryItem = async (req, res) => {
 
     /*
     |--------------------------------------------------------------------------
-    | DELETE CLOUDINARY IMAGE
+    | DELETE ALL CLOUDINARY IMAGES
     |--------------------------------------------------------------------------
     */
 
-    await deleteImage(item.imagePublicId);
+    const images = item.images?.length
+      ? item.images
+      : (item.imagePublicId ? [{ publicId: item.imagePublicId }] : []);
+
+    await Promise.all(images.map((img) => deleteImage(img.publicId)));
 
     /*
     |--------------------------------------------------------------------------

@@ -13,22 +13,27 @@ import adminRouter from "./routes/adminRoutes.js";
 import notificationRouter from "./routes/notificationRoutes.js";
 import noticeRouter from "./routes/noticeRoutes.js";
 import connectCloudinary from "./configs/cloudinary.js";
+import connectSupabase from "./configs/connectSupabase.js"; 
 import galleryRoutes from "./routes/galleryRoutes.js";
+import eventRoutes from "./routes/eventRoutes.js";
 import faqRoutes from "./routes/faqRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import committeeRoutes from "./routes/committeeRoutes.js"; // <-- NEW: About Us / committee
+import announcementRoutes from "./routes/announcementRoutes.js"; // <-- NEW: homepage banner
 
 
 import paymentRedirects from "./routes/paymentRedirects.js";
 
 import chargeRoutes from "./routes/chargeRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+
 import reportRoutes from "./routes/reportRoutes.js";
 
 import testRoutes from "./routes/testRoutes.js";
 
 await connectDB();
 connectCloudinary();
-
+connectSupabase(); 
 runDailyJobs();
 
 const app = express();
@@ -82,8 +87,11 @@ app.use("/api/admin", adminRouter);
 app.use("/api/notifications", notificationRouter);
 app.use("/api/notices", noticeRouter);
 app.use("/api/gallery", galleryRoutes);
+app.use("/api/events", eventRoutes);
 app.use("/api/faqs", faqRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/committee", committeeRoutes); // <-- NEW: About Us / committee
+app.use("/api/announcements", announcementRoutes); // <-- NEW: homepage banner
 
 app.use("/api/charges", chargeRoutes);
 app.use("/api/settings", settingsRoutes);

@@ -1,9 +1,19 @@
 // server/controllers/memberController.js
-// Handles member self-service: create profile, get own profile, request admin.
-// Phone normalization imported from shared utility — not duplicated here.
+//
+// CHANGE: when a member claims their seat, if the seat has an
+// openingBalance > 0, a single MonthlyCharge record is created
+// with type "Opening Balance" representing all historical dues.
+// This integrates with the existing payment system — no new models,
+// no new payment flow needed.
 
-import Member from "../models/Member.js";
-import { createOrUpdateMember, findMemberByClerkId, requestAdminAccess } from "../services/memberService.js";
+import Member        from "../models/Member.js";
+import MemberSeat    from "../models/MemberSeat.js";
+import MonthlyCharge from "../models/MonthlyCharge.js";
+import {
+  createOrUpdateMember,
+  findMemberByClerkId,
+  requestAdminAccess,
+} from "../services/memberService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 // ── createMemberProfile ───────────────────────────────────────────────────────
@@ -16,26 +26,42 @@ export const createMemberProfile = async (req, res) => {
     if (!clerkUserId) return res.status(400).json({ success: false, message: "User ID missing" });
     if (!email)       return res.status(400).json({ success: false, message: "Email required" });
 
-    // Validate and normalise phone using shared utility
     if (!isValidPhone(phone)) {
       return res.status(400).json({ success: false, message: "Invalid Bangladeshi phone number" });
     }
     const normalizedPhone = normalizePhone(phone);
 
     const cleanMembership = membershipNo?.trim().toUpperCase();
-    if (!cleanMembership || !/^[A-Za-z0-9-]+$/.test(cleanMembership)) {
-      return res.status(400).json({ success: false, message: "Invalid membership number format" });
+    if (!cleanMembership) {
+      return res.status(400).json({ success: false, message: "Membership number is required" });
     }
 
-    // Block duplicate membership numbers from other users
+    // ── MemberSeat validation ─────────────────────────────────────────────
+    const seat = await MemberSeat.findOne({ membershipNo: cleanMembership });
+
+    if (!seat) {
+      return res.status(400).json({
+        success: false,
+        message: "Membership number not found. Please contact the admin to verify your membership.",
+      });
+    }
+
+    if (seat.isClaimed && seat.claimedByClerkId !== clerkUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "This membership number has already been registered. Contact admin if this is an error.",
+      });
+    }
+
     const existingMembership = await Member.findOne({ membershipNo: cleanMembership });
     if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
       return res.status(400).json({ success: false, message: "Membership number already in use" });
     }
 
-    const existingMember = await findMemberByClerkId(clerkUserId);
+    const existingMember    = await findMemberByClerkId(clerkUserId);
+    const isFirstTimeCreate = !existingMember;
 
-    const memberData = {
+    const member = await createOrUpdateMember(clerkUserId, {
       name:         name?.trim(),
       email:        email.trim().toLowerCase(),
       phone:        normalizedPhone,
@@ -43,15 +69,51 @@ export const createMemberProfile = async (req, res) => {
       designation:  designation?.trim(),
       membershipNo: cleanMembership,
       plotNo:       plotNo?.trim(),
-      // Preserve existing role if updating — never downgrade an admin to member
-      role: existingMember?.role || "member",
-    };
+      role:         existingMember?.role || "member",
+    });
 
-    const member = await createOrUpdateMember(clerkUserId, memberData);
+    // ── Mark seat as claimed ──────────────────────────────────────────────
+    if (!seat.isClaimed) {
+      seat.isClaimed        = true;
+      seat.claimedByClerkId = clerkUserId;
+      seat.claimedAt        = new Date();
+      await seat.save();
+    }
 
-    return res.status(existingMember ? 200 : 201).json({
+    // ── Apply opening balance (first-time registration only) ──────────────
+    // If the CSV import set an openingBalance > 0, create a single
+    // MonthlyCharge record to represent all historical dues.
+    // Using month: 0, year: 0 as a sentinel to identify opening balance
+    // charges distinctly from regular monthly charges.
+    if (isFirstTimeCreate && seat.openingBalance > 0) {
+      try {
+        const alreadyExists = await MonthlyCharge.findOne({
+          member: member._id,
+          label:  "Opening Balance",
+        });
+
+        if (!alreadyExists) {
+          await MonthlyCharge.create({
+            member: member._id,
+            month:  0,           // sentinel — not a real month
+            year:   0,           // sentinel — not a real year
+            amount: seat.openingBalance,
+            status: "Unpaid",
+            label:  "Opening Balance",
+          });
+          console.info(
+            `[MemberSeat] Opening balance ৳${seat.openingBalance} created for ${cleanMembership}`
+          );
+        }
+      } catch (balanceError) {
+        // Non-fatal — log but do not fail registration
+        console.error("[MemberSeat] Opening balance creation failed:", balanceError.message);
+      }
+    }
+
+    return res.status(isFirstTimeCreate ? 201 : 200).json({
       success: true,
-      message: existingMember ? "Profile updated" : "Profile created",
+      message: isFirstTimeCreate ? "Profile created" : "Profile updated",
       member,
     });
   } catch (error) {
@@ -64,21 +126,29 @@ export const createMemberProfile = async (req, res) => {
 
 export const getMemberProfile = async (req, res) => {
   try {
-    const { clerkUserId } = req;
-    if (!clerkUserId) return res.status(400).json({ success: false, message: "User ID missing" });
-
-    // WHY the ADMIN_CLERK_ID fallback was removed:
-    // The original returned a fake hardcoded member object for the env admin.
-    // This fake object had no _id, no Mongoose methods, and no real DB record.
-    // Any downstream code that called .save() or read ._id on it would fail.
-    // The correct approach is that the admin has a real Member document with
-    // role:"admin" — created once by setting it directly in MongoDB Atlas.
-    const member = await findMemberByClerkId(clerkUserId);
+    const member = await findMemberByClerkId(req.clerkUserId);
     if (!member) return res.status(404).json({ success: false, message: "Profile not found" });
-
     return res.status(200).json({ success: true, member });
   } catch (error) {
     console.error("getMemberProfile error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ── getMemberSeat ─────────────────────────────────────────────────────────────
+
+export const getMemberSeat = async (req, res) => {
+  try {
+    const member = await findMemberByClerkId(req.clerkUserId);
+    if (!member) return res.status(404).json({ success: false, message: "Member not found" });
+
+    const seat = await MemberSeat.findOne({ membershipNo: member.membershipNo })
+      .select("joinDate membershipNo openingBalance")
+      .lean();
+
+    return res.status(200).json({ success: true, joinDate: seat?.joinDate ?? null });
+  } catch (error) {
+    console.error("getMemberSeat error:", error.message);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -87,65 +157,11 @@ export const getMemberProfile = async (req, res) => {
 
 export const requestAdmin = async (req, res) => {
   try {
-    const { clerkUserId } = req;
-    if (!clerkUserId) return res.status(400).json({ success: false, message: "User ID missing" });
-
-    const member = await requestAdminAccess(clerkUserId);
+    const member = await requestAdminAccess(req.clerkUserId);
     return res.status(200).json({ success: true, message: "Admin request submitted", member });
   } catch (error) {
-    console.error("requestAdmin error:", error.message);
-
-    // WHY separate status codes:
-    // The original returned 400 for ALL errors including unexpected DB errors.
-    // A DB connection failure is not a bad request — it is a server error.
-    // Known business logic errors (already admin, already pending, not found)
-    // legitimately return 400. Unexpected errors return 500.
-    const isBusinessError = [
-      "Profile not found",
-      "already an admin",
-      "already pending",
-    ].some((msg) => error.message.includes(msg));
-
-    return res.status(isBusinessError ? 400 : 500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-
-
-
-
-
-
-
-// GET /api/members/seat
-// Returns the MemberSeat record for the authenticated member.
-// Used by the dashboard to show the correct "Member since" join date.
-// This is the date from physical society records, not the digital signup date.
-
-import MemberSeat from "../models/MemberSeat.js";
-
-export const getMemberSeat = async (req, res) => {
-  try {
-    const member = await findMemberByClerkId(req.clerkUserId);
-    if (!member) {
-      return res.status(404).json({ success: false, message: "Member not found" });
-    }
-
-    const seat = await MemberSeat.findOne({
-      membershipNo: member.membershipNo,
-    }).select("joinDate membershipNo").lean();
-
-    if (!seat) {
-      // Member exists but seat record not found (pre-seat-system members)
-      // Return success with null joinDate — frontend falls back to createdAt
-      return res.status(200).json({ success: true, joinDate: null });
-    }
-
-    return res.status(200).json({ success: true, joinDate: seat.joinDate });
-  } catch (error) {
-    console.error("getMemberSeat error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    const isBusinessError = ["Profile not found","already an admin","already pending"]
+      .some(msg => error.message.includes(msg));
+    return res.status(isBusinessError ? 400 : 500).json({ success: false, message: error.message });
   }
 };

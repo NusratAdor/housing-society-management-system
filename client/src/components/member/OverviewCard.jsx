@@ -26,7 +26,7 @@ import { motion }        from "framer-motion";
 import {
   AlertCircle, ArrowRight, Bell, CreditCard,
   HelpCircle, ChevronRight, FileText,
-  Activity, Image as ImageIcon, CheckCircle2,
+  Image as ImageIcon, CheckCircle2,
 } from "lucide-react";
 import { Link }          from "react-router-dom";
 import { useAppContext } from "../../context/AppContext";
@@ -52,31 +52,33 @@ const OverviewSkeleton = () => (
 
 // ─── Building SVG ─────────────────────────────────────────────────────────────
 
+// Fill changed from white to a soft slate tone so the illustration is
+// visible as a subtle watermark against the new light hero background.
 const BuildingIllustration = () => (
-  <svg viewBox="0 0 200 160" className="h-full w-auto opacity-[0.15]"
+  <svg viewBox="0 0 200 160" className="h-full w-auto opacity-[0.4]"
     fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="30" y="40" width="80" height="120" rx="2" fill="white" />
-    <polygon points="20,42 110,42 70,10 60,10" fill="white" opacity="0.6" />
+    <rect x="30" y="40" width="80" height="120" rx="2" fill="#CBD5E1" />
+    <polygon points="20,42 110,42 70,10 60,10" fill="#CBD5E1" opacity="0.7" />
     {[40,60,80,96].map((x,i) => (
-      <rect key={`r1${i}`} x={x} y="55" width="12" height="14" rx="1" fill="#0f172a" opacity="0.3" />
+      <rect key={`r1${i}`} x={x} y="55" width="12" height="14" rx="1" fill="#64748B" opacity="0.4" />
     ))}
     {[40,60,80,96].map((x,i) => (
-      <rect key={`r2${i}`} x={x} y="80" width="12" height="14" rx="1" fill="#0f172a" opacity="0.3" />
+      <rect key={`r2${i}`} x={x} y="80" width="12" height="14" rx="1" fill="#64748B" opacity="0.4" />
     ))}
     {[40,60,80,96].map((x,i) => (
-      <rect key={`r3${i}`} x={x} y="105" width="12" height="14" rx="1" fill="#0f172a" opacity="0.3" />
+      <rect key={`r3${i}`} x={x} y="105" width="12" height="14" rx="1" fill="#64748B" opacity="0.4" />
     ))}
-    <rect x="60" y="130" width="20" height="30" rx="2" fill="#0f172a" opacity="0.4" />
-    <rect x="130" y="70" width="50" height="90" rx="2" fill="white" opacity="0.5" />
+    <rect x="60" y="130" width="20" height="30" rx="2" fill="#64748B" opacity="0.5" />
+    <rect x="130" y="70" width="50" height="90" rx="2" fill="#CBD5E1" opacity="0.6" />
     {[138,155].map((x,i) => (
-      <rect key={`s1${i}`} x={x} y="85" width="10" height="12" rx="1" fill="#0f172a" opacity="0.2" />
+      <rect key={`s1${i}`} x={x} y="85" width="10" height="12" rx="1" fill="#64748B" opacity="0.3" />
     ))}
     {[138,155].map((x,i) => (
-      <rect key={`s2${i}`} x={x} y="108" width="10" height="12" rx="1" fill="#0f172a" opacity="0.2" />
+      <rect key={`s2${i}`} x={x} y="108" width="10" height="12" rx="1" fill="#64748B" opacity="0.3" />
     ))}
-    <line x1="0" y1="160" x2="200" y2="160" stroke="white" strokeWidth="2" opacity="0.3" />
-    <circle cx="15" cy="130" r="12" fill="white" opacity="0.25" />
-    <rect x="13" y="140" width="4" height="20" fill="white" opacity="0.2" />
+    <line x1="0" y1="160" x2="200" y2="160" stroke="#94A3B8" strokeWidth="2" opacity="0.4" />
+    <circle cx="15" cy="130" r="12" fill="#CBD5E1" opacity="0.4" />
+    <rect x="13" y="140" width="4" height="20" fill="#CBD5E1" opacity="0.3" />
   </svg>
 );
 
@@ -224,79 +226,114 @@ export default function OverviewCard({
       className="max-w-6xl mx-auto px-4 md:px-6 py-6 space-y-4"
     >
 
-      {/* ── 1. Hero greeting ────────────────────────────────────────── */}
-      <div className="relative rounded-2xl bg-slate-800 overflow-hidden
-        min-h-[160px] md:min-h-[180px]">
-        <div className="absolute right-0 top-0 bottom-0 w-40 md:w-56
-          flex items-end justify-end pointer-events-none select-none">
-          <BuildingIllustration />
-        </div>
+      {/* ── 1. Hero greeting — warm gradient, complements the navy sidebar ── */}
+{/* ── 1. Hero greeting — navy, matches sidebar exactly via bg-sidebar token.
+       Gold appears only as a soft glow + thin top line, not a full wash. ── */}
+{/* ── 1. Hero greeting — soft, soothing light gradient.
+       Sidebar remains the ONLY dark anchor on the page; hero, topbar,
+       and content all stay light so they read as one calm zone rather
+       than competing with the sidebar for "dark and important." ── */}
+<div className="relative rounded-2xl overflow-hidden
+  min-h-[160px] md:min-h-[180px]
+  bg-gradient-to-br from-blue-50 via-slate-50 to-white
+  border border-slate-100">
 
-        <div className="relative z-10 p-5 md:p-7
-          flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+  {/* Thin gold accent line — same motif as the sidebar's top accent bar.
+      This is the one deliberate visual echo tying hero + sidebar
+      together as "the same design system," without matching their
+      full background color. */}
+  <div className="absolute top-0 left-0 right-0 h-[2px]
+    bg-[var(--color-secondary)]" />
 
-          {/* Left */}
-          <div className="flex-1 min-w-0">
-            <p className="text-slate-400 text-sm font-medium mb-1">
-              {getGreeting()}, {firstName}
-            </p>
-            <h1 className="text-white text-xl md:text-2xl font-semibold
-              font-playfair leading-tight mb-1">
-              Welcome back to GOMCS
-            </h1>
-            
-            <div className="mt-3 inline-flex items-center px-3 py-1.5
-              bg-white/10 rounded-full border border-white/10">
-              <span className="text-slate-300 text-xs">
-                {new Date().toLocaleDateString(undefined, {
-                  weekday: "long", day: "numeric",
-                  month: "long", year: "numeric",
-                })}
-              </span>
-            </div>
-          </div>
+  <div className="absolute right-0 top-0 bottom-0 w-40 md:w-56
+    flex items-end justify-end pointer-events-none select-none opacity-[0.35]">
+    <BuildingIllustration />
+  </div>
 
-          {/* Right — member info: ID, Plot, Designation only.
-              "Member since" intentionally omitted — lives in sidebar footer. */}
-          <div className="flex-shrink-0 bg-white/10 backdrop-blur-sm
-            border border-white/15 rounded-xl p-4 min-w-[155px]">
-            <div className="space-y-2.5">
-              <HeroInfoRow
-                label="Member ID"
-                value={memberProfile?.membershipNo ?? "—"}
-                mono
-              />
-              {memberProfile?.plotNo && (
-                <HeroInfoRow label="Plot" value={`Plot ${memberProfile.plotNo}`} />
-              )}
-              {memberProfile?.designation && (
-                <HeroInfoRow label="Designation" value={memberProfile.designation} />
-              )}
-            </div>
-          </div>
-        </div>
+  <div className="relative z-10 p-5 md:p-7
+    flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+
+    {/* Left */}
+    <div className="flex-1 min-w-0">
+      <p className="text-slate-500 text-sm font-medium mb-1">
+        {getGreeting()}, {firstName}
+      </p>
+      <h1 className="text-slate-800 text-xl md:text-2xl font-semibold
+        font-playfair leading-tight mb-1">
+        Welcome back to GOMCS
+      </h1>
+
+      <div className="mt-3 inline-flex items-center px-3 py-1.5
+        bg-white rounded-full border border-slate-200 shadow-sm">
+        <span className="text-slate-600 text-xs">
+          {new Date().toLocaleDateString(undefined, {
+            weekday: "long", day: "numeric",
+            month: "long", year: "numeric",
+          })}
+        </span>
       </div>
+    </div>
+
+    {/* Right — elevated white card via border + shadow, since the
+        background is no longer dark enough to create contrast on
+        its own. Same clean panel you asked for, adapted to a light
+        backdrop. */}
+    <div className="flex-shrink-0 bg-white
+      border border-slate-100 shadow-md rounded-xl p-4 min-w-[155px]">
+      <div className="space-y-2.5">
+        <div>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
+            Member ID
+          </p>
+          <p className="text-xs font-semibold text-gray-800 leading-tight font-mono">
+            {memberProfile?.membershipNo ?? "—"}
+          </p>
+        </div>
+        {memberProfile?.plotNo && (
+          <div>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
+              Plot
+            </p>
+            <p className="text-xs font-semibold text-gray-800 leading-tight">
+              Plot {memberProfile.plotNo}
+            </p>
+          </div>
+        )}
+        {memberProfile?.designation && (
+          <div>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
+              Designation
+            </p>
+            <p className="text-xs font-semibold text-gray-800 leading-tight">
+              {memberProfile.designation}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+</div>
 
       {/* ── 2. Stat strip — 4 cards, all actionable ─────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard
-          label="New Notices"
-          value={loadingNotices ? "—" : String(newNoticesCount)}
-          icon={Bell}
-          iconBg="bg-blue-50"    iconColor="text-blue-600"
-          badgeBg="bg-blue-600"
-          onClick={onGoToNotices}
-          sub="View all →"
-        />
+  label="New Notices"
+  value={loadingNotices ? "—" : String(newNoticesCount)}
+  icon={FileText}
+  iconBg="bg-blue-50"    iconColor="text-blue-600"
+  badgeBg="bg-blue-600"
+  onClick={onGoToNotices}
+  sub="View all →"
+/>
         <StatCard
-          label="Notifications"
-          value={loadingNotifs ? "—" : String(unreadNotifCount)}
-          icon={Activity}
-          iconBg="bg-violet-50"  iconColor="text-violet-600"
-          badgeBg="bg-violet-600"
-          onClick={() => {}}
-          sub="Recent activity"
-        />
+  label="Notifications"
+  value={loadingNotifs ? "—" : String(unreadNotifCount)}
+  icon={Bell}
+  iconBg="bg-violet-50"  iconColor="text-violet-600"
+  badgeBg="bg-violet-600"
+  onClick={() => {}}
+  sub="Recent activity"
+/>
         <StatCard
           label="Payment Status"
           value={isPaid ? "Paid" : "Due"}
@@ -422,12 +459,11 @@ export default function OverviewCard({
           <div className="flex items-center justify-between px-5 py-4
             border-b border-gray-100">
             <div className="flex items-center gap-2">
-              {/* Activity icon — distinct from action bell */}
-              <Activity className="h-4 w-4 text-gray-400" />
-              <h3 className="text-sm font-semibold text-gray-800">
-                Latest Notifications
-              </h3>
-            </div>
+  <Bell className="h-4 w-4 text-gray-400" />
+  <h3 className="text-sm font-semibold text-gray-800">
+    Latest Notifications
+  </h3>
+</div>
           </div>
 
           {loadingNotifs ? (
@@ -476,75 +512,81 @@ export default function OverviewCard({
       </div>
 
       {/* ── 4. Payment overview footer ──────────────────────────────── */}
-      <div className={`rounded-2xl border p-5 ${
-        isPaid ? "bg-white border-gray-200" : "bg-amber-50 border-amber-200"
-      }`}>
-        <div className="flex flex-col sm:flex-row sm:items-center
-          justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className={`p-2.5 rounded-xl flex-shrink-0 ${
-              isPaid ? "bg-emerald-100" : "bg-amber-100"
-            }`}>
-              <CreditCard className={`h-5 w-5 ${
-                isPaid ? "text-emerald-600" : "text-amber-700"
-              }`} />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-0.5">Payment Overview</p>
-              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                {nextDue && (
-                  <div>
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">
-                      Next Due{" "}
-                    </span>
-                    <span className="text-sm font-semibold text-gray-800">
-                      {new Date(nextDue.year, nextDue.month - 1)
-                        .toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-                    </span>
-                  </div>
-                )}
-                <div>
-                  <span className="text-[10px] text-gray-400 uppercase tracking-wide">
-                    Due Amount{" "}
-                  </span>
-                  <span className={`text-sm font-bold font-playfair ${
-                    isPaid ? "text-emerald-600" : "text-amber-700"
-                  }`}>
-                    {isPaid ? "৳0 — All clear!" : `৳${totalDue.toLocaleString()}`}
-                  </span>
-                </div>
-                {lastPayment && (
-                  <div>
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">
-                      Last Payment{" "}
-                    </span>
-                    <span className="text-sm font-semibold text-gray-700">
-                      ৳{lastPayment.amount.toLocaleString()} ·{" "}
-                      {new Date(lastPayment.paidAt).toLocaleDateString("en-GB", {
-                        day: "numeric", month: "short", year: "numeric",
-                      })}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+{/* ── 4. Payment overview footer — neutral surface, status carried by
+       a thin left accent strip + colored number, not a full color wash ── */}
+<div className="relative rounded-2xl border border-gray-200 bg-white p-5 overflow-hidden">
 
-          <button
-            onClick={onGoToPayment}
-            className={`flex-shrink-0 flex items-center gap-2 px-5 py-2.5
-              text-sm font-semibold rounded-xl transition-all duration-150
-              active:scale-95 ${
-              isPaid
-                ? "bg-gray-900 text-white hover:bg-gray-800"
-                : "bg-amber-600 text-white hover:bg-amber-700"
-            }`}
-          >
-            View Payment Details
-            <ArrowRight className="h-4 w-4" />
-          </button>
+  {/* Status accent strip — the only large-scale color signal here */}
+  <div className={`absolute left-0 top-0 bottom-0 w-1 ${
+    isPaid ? "bg-emerald-500" : "bg-amber-600"
+  }`} />
+
+  <div className="flex flex-col sm:flex-row sm:items-center
+    justify-between gap-4 pl-2">
+    <div className="flex items-center gap-4">
+      <div className={`p-2.5 rounded-xl flex-shrink-0 ${
+        isPaid ? "bg-emerald-50" : "bg-amber-50"
+      }`}>
+        <CreditCard className={`h-5 w-5 ${
+          isPaid ? "text-emerald-600" : "text-amber-700"
+        }`} />
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 mb-0.5">Payment Overview</p>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          {nextDue && (
+            <div>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">
+                Next Due{" "}
+              </span>
+              <span className="text-sm font-semibold text-gray-800">
+                {new Date(nextDue.year, nextDue.month - 1)
+                  .toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+              </span>
+            </div>
+          )}
+          <div>
+            <span className="text-[10px] text-gray-400 uppercase tracking-wide">
+              Due Amount{" "}
+            </span>
+            <span className={`text-sm font-bold font-playfair ${
+              isPaid ? "text-emerald-600" : "text-amber-700"
+            }`}>
+              {isPaid ? "৳0 — All clear!" : `৳${totalDue.toLocaleString()}`}
+            </span>
+          </div>
+          {lastPayment && (
+            <div>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">
+                Last Payment{" "}
+              </span>
+              <span className="text-sm font-semibold text-gray-700">
+                ৳{lastPayment.amount.toLocaleString()} ·{" "}
+                {new Date(lastPayment.paidAt).toLocaleDateString("en-GB", {
+                  day: "numeric", month: "short", year: "numeric",
+                })}
+              </span>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+
+    {/* Single consistent brand button — status is already communicated
+        by the accent strip and number above, so the CTA doesn't need
+        to change color too. */}
+    <button
+      onClick={onGoToPayment}
+      className="flex-shrink-0 flex items-center gap-2 px-5 py-2.5
+        text-sm font-semibold rounded-xl transition-all duration-150
+        active:scale-95 bg-[var(--color-primary)] text-white
+        hover:opacity-90"
+    >
+      View Payment Details
+      <ArrowRight className="h-4 w-4" />
+    </button>
+  </div>
+</div>
 
     </motion.div>
   );

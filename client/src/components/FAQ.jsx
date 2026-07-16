@@ -1,16 +1,30 @@
-// client/src/components/FAQSection.jsx
+// client/src/components/FAQ.jsx
 //
-// CHANGE: Animation restored to previous smooth version.
-// The previous version used translate-y + opacity + max-h together.
-// Dropping translate-y removed the upward-slide motion that made it
-// feel smooth — the answer just faded in/out with no directional movement.
-// Restored: opacity-0 → opacity-100, -translate-y-2 → translate-y-0,
-// max-h-0 → max-h-[300px], all with duration-500 ease-in-out.
-// This matches the original FAQSection animation exactly.
+// CHANGE (this pass): heading rebuilt to match the pattern already
+// established by SocietyIntroduction / NoticesPreview / CommunityGallery
+// — pill badge (icon + label) + bold Outfit heading with one emerald-
+// highlighted word + gray-500 subtitle. Previously used the shared
+// <Title/> component, which didn't carry that pattern and stood out as
+// visually inconsistent from the rest of the home page.
+//
+// Also aligned two smaller things with the rest of the site:
+//   - Question text: font-playfair -> font-outfit (font-playfair
+//     currently resolves to Outfit anyway per index.css, so this is
+//     the same fix already applied to Hero.jsx — using the real
+//     Tailwind classes directly instead of the legacy serif class name).
+//   - Chevron color: var(--color-primary) (blue) -> emerald-600, to
+//     match the accent color used everywhere else on the home page.
+//
+// Added the same border-t border-gray-100 section-divider used across
+// every other homepage section (see Home.jsx section boundaries).
+//
+// The accordion open/close animation itself — the max-h/opacity/
+// translate-y transition — is completely UNTOUCHED. Only typography
+// and the heading block changed.
 
 import React, { useState, useEffect, useCallback } from "react";
-import Title from "./Title";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { motion } from "framer-motion";
+import { ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
 import { useAppContext } from "../context/AppContext";
 
 const FAQSkeleton = () => (
@@ -43,57 +57,79 @@ const FAQSection = () => {
   useEffect(() => { fetchPublicFAQs(); }, [fetchPublicFAQs]);
 
   return (
-    <div className="w-full bg-white py-20">
+    <div className="w-full bg-white py-20 border-t border-gray-100">
       <div className="max-w-7xl mx-auto px-4 md:px-8
         flex flex-col items-center text-center">
-        <Title
-          title="Frequently Asked Questions"
-          subTitle="Common questions from our community, answered by our admins."
-        />
+
+        <motion.span
+          initial={{ opacity: 0, y: 10 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5
+                     rounded-full text-xs font-semibold
+                     bg-emerald-50 text-emerald-700
+                     border border-emerald-200 mb-5"
+        >
+          <HelpCircle size={13} strokeWidth={2} />
+          Help Center
+        </motion.span>
+
+        <motion.h2
+          initial={{ opacity: 0, y: 10 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.05 }}
+          className="text-3xl md:text-4xl font-bold text-gray-900 mb-3"
+        >
+          Frequently Asked <span className="text-emerald-600">Questions</span>
+        </motion.h2>
+
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.1 }}
+          className="text-gray-500 text-sm md:text-base max-w-xl mb-12"
+        >
+          Common questions from our community, answered by our admins.
+        </motion.p>
 
         {loading ? (
           <FAQSkeleton />
         ) : faqs.length === 0 ? (
-          <p className="mt-12 text-sm text-gray-400 font-outfit">
+          <p className="text-sm text-gray-400 font-outfit">
             No FAQs published yet.
           </p>
         ) : (
-          <div className="mt-12 w-full max-w-3xl">
+          <div className="w-full max-w-3xl">
             {faqs.map((faq, index) => (
               <div
                 key={faq._id}
-                className="border-b border-gray-200 py-4 cursor-pointer w-full"
+                className="group border-b border-gray-200 py-4 cursor-pointer w-full"
                 onClick={() =>
                   setOpenIndex(openIndex === index ? null : index)
                 }
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="font-playfair text-lg font-medium text-left">
+                  <h3 className="font-outfit text-lg font-semibold text-gray-900 text-left
+                                 transition-colors duration-200 group-hover:text-emerald-600">
                     {faq.question}
                   </h3>
                   {openIndex === index ? (
                     <ChevronUp
-                      className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0"
+                      className="w-5 h-5 text-emerald-600 flex-shrink-0"
                     />
                   ) : (
                     <ChevronDown
-                      className="w-5 h-5 text-[var(--color-primary)] flex-shrink-0"
+                      className="w-5 h-5 text-emerald-600 flex-shrink-0"
                     />
                   )}
                 </div>
 
                 {/*
-                  Animation explanation:
-                  - max-h-0 → max-h-[300px]: controls the height transition.
-                    CSS cannot animate height:auto so max-h is the standard
-                    workaround. 300px gives ample room for any answer text.
-                  - opacity-0 → opacity-100: fades the content in/out.
-                  - -translate-y-2 → translate-y-0: 8px upward slide on open,
-                    downward slide on close. This is the motion that made the
-                    previous version feel smooth and directional.
-                  - overflow-hidden: required so content doesn't spill out
-                    while max-h is still animating toward 0 on close.
-                  - duration-500 ease-in-out: matches original timing exactly.
+                  Animation UNCHANGED — see original file header for the
+                  full explanation of why max-h/opacity/translate-y are
+                  used together. Not touched in this pass.
                 */}
                 <div
                   className={`
