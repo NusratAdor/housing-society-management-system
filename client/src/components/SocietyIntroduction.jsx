@@ -1,31 +1,24 @@
 // client/src/components/SocietyIntroduction.jsx
 //
-// NEW — homepage "welcome" section. Idea taken from the University of
-// Dhaka reference (text + image + read-more), but built distinctly
-// different: text on the LEFT / image on the RIGHT as explicitly
-// requested, gradient "Read More" button matching this site's existing
-// button convention (not a flat solid bar), an "Est. 1998" eyebrow
-// badge instead of a play-button video overlay, and a floating member-
-// count stat card breaking the image's corner instead of a plain
-// static photo. Dummy content — replace with real society history.
+// FIX (this pass): the image was referenced as a literal string path,
+// src="/src/assets/heroImage6.png". That works in Vite's dev server
+// (which serves the whole project folder) but breaks in a production
+// build — Vite only bundles assets it can statically see via an
+// `import` statement; a raw string path isn't one, so the src/ folder
+// (and this file) simply doesn't exist in what gets deployed to
+// Vercel, and the <img> 404s silently.
 //
-// Placed right after Hero in Home.jsx — this section introduces WHO
-// the society is, which belongs before the transactional sections
-// (Notices, Gallery, FAQ) that follow it.
+// Fixed by importing the asset properly so Vite tracks, hashes, and
+// includes it in the production bundle correctly, in both dev and prod.
 //
-// DIVIDER (this pass): removed entirely, per direct request — no wave
-// between this section and NoticesPreview, just a plain straight edge
-// where this section's white background meets NoticesPreview's tint.
-// That also meant dropping the pb-24/overflow-hidden/relative that
-// existed only to make room for the wave's absolutely-positioned SVG —
-// padding is now a plain, even py-20 on both sides instead of the
-// lopsided pt-20/pb-24 split.
+// Everything else — layout, copy, floating stat card, animations —
+// UNCHANGED.
 
 import React from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { ArrowRight, Users, CalendarCheck } from "lucide-react";
-import heroImage6 from "../assets/heroImage6.png";
+import heroImg from "../assets/heroImage6.png";
 
 const SocietyIntroduction = () => {
   return (
@@ -88,7 +81,7 @@ const SocietyIntroduction = () => {
         >
           <div className="rounded-2xl overflow-hidden shadow-xl">
             <img
-              src="/src/assets/heroImage6.png"
+              src={heroImg}
               alt="GOHS community"
               className="w-full h-[380px] md:h-[440px] object-cover"
             />
