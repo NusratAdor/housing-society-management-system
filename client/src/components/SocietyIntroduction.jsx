@@ -25,6 +25,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { ArrowRight, Users, CalendarCheck } from "lucide-react";
+import heroImage6 from "../assets/heroImage6.png";
 
 const SocietyIntroduction = () => {
   return (
