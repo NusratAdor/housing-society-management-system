@@ -48,7 +48,7 @@ const Hero = () => {
 
   // Single translation key, unchanged — only the RENDERING of the
   // returned string is split, at "(GOHS)", so only that part is emerald.
-  const fullHeading = t("Government Officer's Housing Society (GOHS)");
+  const fullHeading = t("Government Officer's Housing Scheme (GOHS)");
   const gohsMarker  = "(GOHS)";
   const markerIndex = fullHeading.indexOf(gohsMarker);
 
@@ -56,7 +56,7 @@ const Hero = () => {
     <div className="relative h-screen w-full">
       <div
         className="absolute inset-0 bg-[url('/src/assets/heroImage6.png')] bg-cover bg-center bg-no-repeat"
-        style={{ filter: "brightness(55%)" }}
+        style={{ filter: "brightness(75%)" }}
       ></div>
 
       <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col h-full px-4 md:px-8 items-center justify-center md:items-start md:justify-center text-center md:text-left">
