@@ -78,7 +78,7 @@ const Hero = () => {
   return (
     <div className="relative h-screen w-full overflow-hidden">
       <div
-        className="absolute inset-0 bg-[url('/src/assets/heroImage7.png')] bg-cover bg-center bg-no-repeat"
+        className="absolute inset-0 bg-[url('/src/assets/heroImage8.png')] bg-cover bg-center bg-no-repeat"
         style={{ filter: "brightness(70%)" }}
       ></div>
 
