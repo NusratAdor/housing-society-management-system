@@ -2,6 +2,9 @@
 //
 // CHANGE: removed "Member Portal" text — redundant next to logo.
 // Logo + society abbreviation only. Clean, professional.
+// CHANGE: logo now links to the public home page ("/") instead of
+// "/dashboard" — clicking the logo should always take you back to
+// the main site, not just refresh the current dashboard view.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { Link }           from "react-router-dom";
@@ -39,10 +42,10 @@ export default function DashboardTopBar() {
       bg-white border-b border-gray-200 shadow-sm
       flex items-center justify-between px-4 md:px-6">
 
-      {/* Logo only — no redundant text labels */}
-      <Link to="/dashboard" className="flex items-center gap-2.5 flex-shrink-0">
+      {/* Logo only — no redundant text labels. Links to the public
+          home page, not back into the dashboard. */}
+      <Link to="/" className="flex items-center gap-2.5 flex-shrink-0">
         <img src={assets.logoScrolled} alt="GOMCS" className="h-8 w-auto" />
-        
       </Link>
 
       {/* Controls */}
