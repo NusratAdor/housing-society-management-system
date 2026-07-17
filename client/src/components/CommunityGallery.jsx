@@ -74,7 +74,7 @@ const CommunityGallery = () => {
   );
 
   return (
-    <div className="w-full bg-white py-20">
+    <div className="w-full py-20" style={{ backgroundColor: "#F3FBF8" }}>
       <div className="max-w-7xl mx-auto px-4 md:px-8">
 
         {/* Heading — matches NoticesPreview.jsx's pattern exactly:
