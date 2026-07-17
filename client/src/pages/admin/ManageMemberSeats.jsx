@@ -8,6 +8,16 @@
 //      joinDate, dueAmount)
 //   3. Uploads the CSV — system validates and shows per-row results
 //   4. Import is an upsert — safe to re-upload corrected files
+//
+// FIX (this pass): removed a stale client-side check in handleSave that
+// required form.joinDate to be non-empty before saving. joinDate has been
+// optional on the backend (MemberSeat model + memberSeatController) since
+// an earlier pass — it only drives the "Member since" display and falls
+// back to Member.createdAt when absent. This stale guard silently blocked
+// saving ANY edit (even just a name change) on seats with no joinDate,
+// throwing "Join date is required" even though the field is genuinely
+// optional. The "Join Date *" label is also updated to "Join Date —
+// optional" so the UI stops implying it's mandatory.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { toast }   from "react-hot-toast";
@@ -107,7 +117,10 @@ export default function ManageMemberSeats() {
     e.preventDefault();
     if (!form.membershipNo.trim()) { toast.error("Membership number is required"); return; }
     if (!form.name.trim())         { toast.error("Name is required");              return; }
-    if (!form.joinDate)            { toast.error("Join date is required");         return; }
+    // joinDate is optional — no validation here. It only drives the
+    // "Member since" display; Member.createdAt is the fallback when absent.
+    // (Previously this threw "Join date is required" and blocked saving
+    // ANY edit on a seat with no joinDate, even unrelated field changes.)
 
     setSaving(true);
     try {
@@ -517,7 +530,8 @@ export default function ManageMemberSeats() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Join Date *
+                  Join Date
+                  <span className="text-gray-400 font-normal ml-1">— optional</span>
                 </label>
                 <input
                   type="date"
