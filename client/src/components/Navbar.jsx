@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import LanguageToggle from "./LanguageToggle";
 import NotificationBell from "./member/NotificationBell";
+import AnnouncementBar from "./AnnouncementBar";
 
 const dropdownVariants = {
   hidden: { opacity: 0, y: -6 },
@@ -200,10 +201,15 @@ const Navbar = () => {
     <>
       <nav className={`fixed top-0 left-0 w-full z-[70] transition-all duration-500 ${
         isScrolled
-          ? "bg-white shadow-md backdrop-blur-md py-3 md:py-4"
-          : "bg-transparent py-4 md:py-6"
+          ? "bg-white shadow-md backdrop-blur-md"
+          : "bg-transparent"
       }`}>
-        <div className="w-full max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8">
+               <AnnouncementBar />
+
+        <div className={`w-full max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 transition-all duration-500 ${
+          isScrolled ? "py-3 md:py-4" : "py-4 md:py-6"
+        }`}>
+
 
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <img
