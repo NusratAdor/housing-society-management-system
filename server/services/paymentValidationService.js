@@ -7,6 +7,8 @@
 //   3. Members paying charges that belong to other members
 //   4. Members paying charges that are already paid
 //   5. Empty payment attempts
+//   6. Members paying a partial amount on a charge that doesn't allow it,
+//      or a partial amount that is invalid or exceeds the outstanding balance
 //
 // Why validation lives in a service and not the controller:
 //   The IPN callback (Step 7) also needs to re-validate before allocating.
@@ -24,10 +26,14 @@ import ExtraCharge   from "../models/ExtraCharge.js";
 //   memberId           — MongoDB _id of the requesting member
 //   selectedMonthlyIds — array of MonthlyCharge _id strings the member wants to pay
 //   selectedExtraIds   — array of ExtraCharge _id strings the member wants to pay
+//   partialAmounts     — { [extraChargeId]: amountBeingPaidNow } — optional,
+//                        only meaningful for charges with partialPaymentAllowed
 //
 // Returns:
-//   { totalAmount, selectedMonthly, selectedExtra }
+//   { totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts }
 //   totalAmount is computed from DB records — the frontend amount is NEVER trusted
+//   extraChargeAmounts maps each selected extra charge id -> the exact amount
+//   being collected for it right now (full amount unless a valid partial was given)
 //
 // Throws descriptive errors for every invalid case.
 // The controller converts these to 400 responses.
@@ -36,6 +42,7 @@ export const validatePaymentSelection = async ({
   memberId,
   selectedMonthlyIds = [],
   selectedExtraIds   = [],
+  partialAmounts     = {},
 }) => {
   // ── Guard: at least one charge must be selected ──────────────────────────
   if (selectedMonthlyIds.length === 0 && selectedExtraIds.length === 0) {
@@ -142,12 +149,46 @@ export const validatePaymentSelection = async ({
     }
   }
 
+  // ── Resolve the actual amount being collected per extra charge ───────────
+  // Full amount by default — identical to today's behavior. Only charges
+  // explicitly flagged partialPaymentAllowed may use a lower amount, and
+  // only if the member actually selected that charge.
+  const partialKeys = Object.keys(partialAmounts);
+  for (const key of partialKeys) {
+    if (!selectedExtraIds.map(String).includes(String(key))) {
+      throw new Error("Partial amount provided for a charge that was not selected");
+    }
+  }
+
+  const extraChargeAmounts = {};
+  for (const charge of selectedExtra) {
+    const cid = String(charge._id);
+    if (Object.prototype.hasOwnProperty.call(partialAmounts, cid)) {
+      if (!charge.partialPaymentAllowed) {
+        throw new Error(`"${charge.label}" does not support partial payment`);
+      }
+      const requested = Number(partialAmounts[cid]);
+      if (!Number.isFinite(requested) || requested <= 0) {
+        throw new Error(`Invalid partial payment amount for "${charge.label}"`);
+      }
+      if (requested > charge.amount) {
+        throw new Error(
+          `Partial payment for "${charge.label}" cannot exceed the outstanding ৳${charge.amount}`
+        );
+      }
+      extraChargeAmounts[cid] = Math.round(requested);
+    } else {
+      extraChargeAmounts[cid] = charge.amount;
+    }
+  }
+
   // ── Compute verified total from database records ──────────────────────────
-  // The frontend sends charge IDs — we look up the actual amounts from the DB.
-  // The frontend NEVER sends an amount — this prevents any amount manipulation.
+  // The frontend sends charge IDs (and, for partial charges, an amount) — we
+  // verify and clamp everything against the DB. The frontend total is NEVER
+  // trusted, and no amount can ever exceed the true outstanding balance.
   const totalAmount =
     selectedMonthly.reduce((sum, c) => sum + c.amount, 0) +
-    selectedExtra.reduce((sum, c) => sum + c.amount, 0);
+    Object.values(extraChargeAmounts).reduce((sum, amt) => sum + amt, 0);
 
   if (totalAmount < 1) {
     throw new Error("Computed payment amount must be at least 1 BDT");
@@ -157,5 +198,6 @@ export const validatePaymentSelection = async ({
     totalAmount,
     selectedMonthly,
     selectedExtra,
+    extraChargeAmounts,
   };
 };

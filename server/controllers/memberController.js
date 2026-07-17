@@ -1,14 +1,15 @@
 // server/controllers/memberController.js
 //
 // CHANGE: when a member claims their seat, if the seat has an
-// openingBalance > 0, a single MonthlyCharge record is created
-// with type "Opening Balance" representing all historical dues.
-// This integrates with the existing payment system — no new models,
-// no new payment flow needed.
+// openingBalance > 0, a single ExtraCharge record is created
+// representing all historical dues carried over from before the
+// digital system. This is NOT a MonthlyCharge — opening balance isn't
+// tied to a calendar month, so it belongs on ExtraCharge, which already
+// supports labels, a free-text purpose, and (now) partial payment.
 
 import Member        from "../models/Member.js";
 import MemberSeat    from "../models/MemberSeat.js";
-import MonthlyCharge from "../models/MonthlyCharge.js";
+import ExtraCharge   from "../models/ExtraCharge.js";
 import {
   createOrUpdateMember,
   findMemberByClerkId,
@@ -82,24 +83,27 @@ export const createMemberProfile = async (req, res) => {
 
     // ── Apply opening balance (first-time registration only) ──────────────
     // If the CSV import set an openingBalance > 0, create a single
-    // MonthlyCharge record to represent all historical dues.
-    // Using month: 0, year: 0 as a sentinel to identify opening balance
-    // charges distinctly from regular monthly charges.
+    // ExtraCharge record to represent all historical dues. Scoped by
+    // `label: "Opening Balance"` (not partialPaymentAllowed) so this check
+    // stays specific to this charge type even if ExtraCharge is later used
+    // for other partial-payment-eligible charges.
     if (isFirstTimeCreate && seat.openingBalance > 0) {
       try {
-        const alreadyExists = await MonthlyCharge.findOne({
+        const alreadyExists = await ExtraCharge.findOne({
           member: member._id,
           label:  "Opening Balance",
         });
 
         if (!alreadyExists) {
-          await MonthlyCharge.create({
-            member: member._id,
-            month:  0,           // sentinel — not a real month
-            year:   0,           // sentinel — not a real year
-            amount: seat.openingBalance,
-            status: "Unpaid",
-            label:  "Opening Balance",
+          await ExtraCharge.create({
+            member:                member._id,
+            label:                 "Opening Balance",
+            purpose:               "Dues carried over from before joining the digital system",
+            amount:                seat.openingBalance,
+            originalAmount:        seat.openingBalance,
+            partialPaymentAllowed: true,
+            status:                "Unpaid",
+            createdBy:             "SYSTEM",
           });
           console.info(
             `[MemberSeat] Opening balance ৳${seat.openingBalance} created for ${cleanMembership}`

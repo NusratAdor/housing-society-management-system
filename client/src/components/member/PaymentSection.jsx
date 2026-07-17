@@ -1,15 +1,16 @@
 // client/src/components/member/PaymentSection.jsx
 //
 // CHANGE from previous version:
-//   - useTranslation("payment") added.
-//   - All hardcoded strings replaced with t() calls.
-//   - Manual plural ternaries ("month" / "months") replaced with
-//     i18next count-based plural keys (payment_one / payment_other).
-//   - ExportControl receives t as a prop — it never renders independently
-//     so it doesn't need its own useTranslation() call.
-//   - Zero functional changes: ExportControl fixed-position dropdown,
-//     FIFO month selection, extra charge checkboxes, pay flow, receipt
-//     download — all identical to previous version.
+//   - Added a dedicated Opening Balance card (rendered only when
+//     breakdown.openingBalanceCharge exists) with an editable
+//     "amount to pay now" input, since that charge supports partial payment.
+//   - selectedExtraTotal now uses the chosen partial amount for the
+//     Opening Balance charge instead of its full outstanding amount.
+//   - handlePay now sends partialAmounts to /api/payments/create when the
+//     Opening Balance charge is selected.
+//   - Everything else — i18next usage, ExportControl, FIFO month selection,
+//     regular extra charge checkboxes, pay flow, receipt download — is
+//     unchanged.
 
 import React, {
   useState, useEffect, useCallback, useMemo, useRef,
@@ -248,15 +249,16 @@ export default function PaymentSection({ onPaymentSuccess }) {
   // "payment" namespace — all t() calls resolve against payment.json
   const { t } = useTranslation("payment");
 
-  const [breakdown,          setBreakdown]          = useState(null);
-  const [history,            setHistory]            = useState([]);
-  const [selectedMonthlyIds, setSelectedMonthlyIds] = useState([]);
-  const [selectedExtraIds,   setSelectedExtraIds]   = useState([]);
-  const [loadingData,        setLoadingData]        = useState(true);
-  const [loadingHistory,     setLoadingHistory]     = useState(false);
-  const [paying,             setPaying]             = useState(false);
-  const [historyOpen,        setHistoryOpen]        = useState(false);
-  const [expandedPayment,    setExpandedPayment]    = useState(null);
+  const [breakdown,            setBreakdown]            = useState(null);
+  const [history,              setHistory]              = useState([]);
+  const [selectedMonthlyIds,   setSelectedMonthlyIds]   = useState([]);
+  const [selectedExtraIds,     setSelectedExtraIds]     = useState([]);
+  const [openingBalanceAmount, setOpeningBalanceAmount] = useState(0);
+  const [loadingData,          setLoadingData]          = useState(true);
+  const [loadingHistory,       setLoadingHistory]       = useState(false);
+  const [paying,               setPaying]               = useState(false);
+  const [historyOpen,          setHistoryOpen]          = useState(false);
+  const [expandedPayment,      setExpandedPayment]      = useState(null);
 
   const fetchBreakdown = useCallback(async () => {
     try {
@@ -268,6 +270,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
         setBreakdown(data);
         setSelectedMonthlyIds([]);
         setSelectedExtraIds([]);
+        setOpeningBalanceAmount(data.openingBalanceCharge?.amount ?? 0);
       }
     } catch {
       toast.error("Failed to load payment data");
@@ -367,12 +370,22 @@ export default function PaymentSection({ onPaymentSuccess }) {
       .reduce((sum, c) => sum + c.amount, 0);
   }, [breakdown, selectedMonthlyIds]);
 
+  // Opening Balance is NOT in breakdown.unpaidExtraCharges (the dashboard
+  // service splits it out) so it's added on separately here, using the
+  // member-chosen partial amount rather than the full outstanding balance.
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
-    return breakdown.unpaidExtraCharges
+    const regularExtraTotal = breakdown.unpaidExtraCharges
       .filter(c => selectedExtraIds.includes(String(c._id)))
       .reduce((sum, c) => sum + c.amount, 0);
-  }, [breakdown, selectedExtraIds]);
+
+    const openingBalanceId = breakdown.openingBalanceCharge
+      ? String(breakdown.openingBalanceCharge._id)
+      : null;
+    const openingBalanceSelected = openingBalanceId && selectedExtraIds.includes(openingBalanceId);
+
+    return regularExtraTotal + (openingBalanceSelected ? openingBalanceAmount : 0);
+  }, [breakdown, selectedExtraIds, openingBalanceAmount]);
 
   const selectedTotal = selectedMonthlyTotal + selectedExtraTotal;
   const hasSelection  = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
@@ -385,9 +398,18 @@ export default function PaymentSection({ onPaymentSuccess }) {
     setPaying(true);
     try {
       const token = await getToken();
+
+      const openingBalanceId = breakdown?.openingBalanceCharge
+        ? String(breakdown.openingBalanceCharge._id)
+        : null;
+      const partialAmounts = {};
+      if (openingBalanceId && selectedExtraIds.includes(openingBalanceId)) {
+        partialAmounts[openingBalanceId] = openingBalanceAmount;
+      }
+
       const { data } = await axios.post(
         "/api/payments/create",
-        { selectedMonthlyIds, selectedExtraIds },
+        { selectedMonthlyIds, selectedExtraIds, partialAmounts },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success && data.url) {
@@ -610,6 +632,63 @@ export default function PaymentSection({ onPaymentSuccess }) {
           }
         </div>
       </div>
+
+      {/* ── Opening Balance card ─────────────────────────────────────────
+          Rendered only when the member has an unpaid Opening Balance
+          charge. Placed after the 12-month strip, before the monthly
+          dues selector, since it's neither a calendar month nor a
+          regular extra charge. */}
+      {!loadingData && breakdown?.openingBalanceCharge && (
+        <div className="border border-indigo-200 rounded-2xl overflow-hidden bg-indigo-50/40">
+          <div className="px-5 py-4 flex items-center gap-3">
+            <div className="p-1.5 bg-indigo-100 rounded-lg">
+              <Wallet className="h-4 w-4 text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-indigo-900">Opening Balance</p>
+              <p className="text-xs text-indigo-600">
+                Carried over from before joining the digital system — stays here until fully cleared
+              </p>
+            </div>
+            <span className="ml-auto text-sm font-bold text-indigo-700">
+              ৳{breakdown.openingBalanceCharge.amount.toLocaleString()}
+            </span>
+          </div>
+
+          <div className="px-5 pb-5 flex items-center gap-3 flex-wrap">
+            <label className="text-xs text-gray-500">Amount to pay now</label>
+            <span className="text-sm text-gray-500">৳</span>
+            <input
+              type="number"
+              min={1}
+              max={breakdown.openingBalanceCharge.amount}
+              value={openingBalanceAmount}
+              onChange={e => {
+                const val = Math.min(
+                  Math.max(1, Number(e.target.value) || 0),
+                  breakdown.openingBalanceCharge.amount
+                );
+                setOpeningBalanceAmount(val);
+              }}
+              className="w-32 p-2 border border-gray-200 rounded-lg text-sm
+                focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <button
+              onClick={() => handleExtraToggle(String(breakdown.openingBalanceCharge._id))}
+              className={`ml-auto px-3 py-1.5 text-xs font-semibold rounded-lg border
+                transition-colors ${
+                  selectedExtraIds.includes(String(breakdown.openingBalanceCharge._id))
+                    ? "bg-indigo-600 border-indigo-600 text-white"
+                    : "border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                }`}
+            >
+              {selectedExtraIds.includes(String(breakdown.openingBalanceCharge._id))
+                ? "Selected"
+                : "Select to pay"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Monthly dues selector ──────────────────────────────────────── */}
       <div className="border border-gray-200 rounded-2xl overflow-hidden">

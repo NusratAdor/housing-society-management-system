@@ -7,7 +7,8 @@
 //   Either ALL of these happen together, or NONE of them do:
 //     - Payment status → "completed"
 //     - Each MonthlyCharge status → "Paid"
-//     - Each ExtraCharge status  → "Paid"
+//     - Each ExtraCharge status  → "Paid" (or its amount reduced, for a
+//       partial payment on a partialPaymentAllowed charge)
 //     - PaymentAllocation record created per charge
 //     - Receipt number assigned to payment
 //
@@ -64,6 +65,12 @@ const generateReceiptNumber = async (session) => {
 //   paymentId          — MongoDB _id of the Payment record (status must be "pending")
 //   selectedMonthlyIds — array of MonthlyCharge _id strings to mark as Paid
 //   selectedExtraIds   — array of ExtraCharge _id strings to mark as Paid
+//                        (or partially paid down, if partialPaymentAllowed)
+//   extraChargeAmounts — { [extraChargeId]: amountBeingPaidNow } — optional.
+//                        Defaults to the full charge.amount for any id not
+//                        present here, which is identical to pre-existing
+//                        behavior for every charge that isn't partial-payment
+//                        enabled.
 //
 // Returns:
 //   { receiptNumber, allocations }
@@ -76,6 +83,7 @@ export const allocatePayment = async ({
   paymentId,
   selectedMonthlyIds,
   selectedExtraIds,
+  extraChargeAmounts = {},
 }) => {
   const paymentObjectId = new mongoose.Types.ObjectId(paymentId);
   const now             = new Date();
@@ -143,6 +151,9 @@ export const allocatePayment = async ({
     }
 
     // ── Step 3: Allocate extra charges ────────────────────────────────────
+    // For a normal (non-partial) charge, payAmount always equals
+    // charge.amount, so this takes the exact same "full payment" branch
+    // as before — zero behavior change for every existing charge type.
     for (const id of selectedExtraIds) {
       const chargeId = new mongoose.Types.ObjectId(id);
       const charge   = await ExtraCharge.findById(chargeId).session(session);
@@ -157,19 +168,39 @@ export const allocatePayment = async ({
         );
       }
 
-      // Mark the charge as Paid
-      charge.status           = "Paid";
-      charge.paidAt           = now;
-      charge.clearedByPayment = paymentObjectId;
+      // Defaults to the full charge amount — identical to existing behavior
+      // for every charge that isn't partial-payment-enabled.
+      const payAmount = Object.prototype.hasOwnProperty.call(extraChargeAmounts, id)
+        ? Number(extraChargeAmounts[id])
+        : charge.amount;
+
+      if (!Number.isFinite(payAmount) || payAmount <= 0 || payAmount > charge.amount) {
+        throw new Error(`Invalid payment amount for ExtraCharge ${id}`);
+      }
+
+      if (payAmount === charge.amount) {
+        // Full payment — exactly what happens today
+        charge.status           = "Paid";
+        charge.paidAt           = now;
+        charge.clearedByPayment = paymentObjectId;
+      } else {
+        if (!charge.partialPaymentAllowed) {
+          throw new Error(`ExtraCharge ${id} does not support partial payment`);
+        }
+        // Reduce the outstanding balance; stays "Unpaid" until fully cleared
+        charge.amount -= payAmount;
+      }
+
       await charge.save({ session });
 
-      // Build the allocation record
+      // Build the allocation record — records the actual amount collected,
+      // not the (possibly now-reduced) charge total
       allocationDocs.push({
         payment:     paymentObjectId,
         member:      charge.member,
         chargeType:  "extra",
         chargeId:    chargeId,
-        amount:      charge.amount,
+        amount:      payAmount,
         allocatedAt: now,
       });
     }

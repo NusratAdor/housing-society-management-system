@@ -32,22 +32,31 @@ export const getMemberFullDashboardData = async (memberId) => {
   // ── All queries in parallel ───────────────────────────────────────────────
   const [
     unpaidMonthlyCharges,
-    unpaidExtraCharges,
+    unpaidExtraChargesRaw,
     last12Months,
     lastCompletedPayment,
     currentFee,
     pendingPayment,
   ] = await Promise.all([
 
-    // Unpaid monthly charges in FIFO order — oldest month first
-    // This is the order the payment UI presents months for selection
+    // Unpaid monthly charges in FIFO order — oldest month first.
+    // Guarded against legacy sentinel records (month:0/year:0) from the
+    // old opening-balance-as-MonthlyCharge approach — even if a test/legacy
+    // record like that still exists for some member, it can never surface
+    // here as "Next Due" or leak into totalMonthlyDue.
     MonthlyCharge
-      .find({ member: memberObjectId, status: "Unpaid" })
+      .find({
+        member: memberObjectId,
+        status: "Unpaid",
+        month:  { $gte: 1, $lte: 12 },
+        year:   { $gte: 2000 },
+      })
       .sort({ year: 1, month: 1 })
       .lean(),
 
     // Unpaid extra charges — oldest first
-    // Each has label + purpose so member knows exactly what they owe
+    // Each has label + purpose so member knows exactly what they owe.
+    // This includes the Opening Balance charge too — it's split out below.
     ExtraCharge
       .find({ member: memberObjectId, status: "Unpaid" })
       .sort({ createdAt: 1 })
@@ -56,8 +65,13 @@ export const getMemberFullDashboardData = async (memberId) => {
     // Last 12 monthly charges for the history strip
     // Most recent first so the strip renders latest on left
     // Includes both Paid and Unpaid — the strip shows the full picture
+    // Same sentinel guard as above.
     MonthlyCharge
-      .find({ member: memberObjectId })
+      .find({
+        member: memberObjectId,
+        month:  { $gte: 1, $lte: 12 },
+        year:   { $gte: 2000 },
+      })
       .sort({ year: -1, month: -1 })
       .limit(12)
       .lean(),
@@ -83,18 +97,23 @@ export const getMemberFullDashboardData = async (memberId) => {
       .lean(),
   ]);
 
+  // Opening Balance is identified by partialPaymentAllowed — not by label
+  // string — so it can never be silently miscategorised even if the
+  // display label is edited later. It gets its own section, separate
+  // from both "Monthly dues" and "Additional charges".
+  const openingBalanceCharge = unpaidExtraChargesRaw.find(c => c.partialPaymentAllowed) || null;
+  const unpaidExtraCharges   = unpaidExtraChargesRaw.filter(c => !c.partialPaymentAllowed);
+
   // ── Compute financial summary from records ────────────────────────────────
-  const totalMonthlyDue = unpaidMonthlyCharges.reduce(
-    (sum, c) => sum + c.amount, 0
-  );
-  const totalExtraDue = unpaidExtraCharges.reduce(
-    (sum, c) => sum + c.amount, 0
-  );
-  const totalDue     = totalMonthlyDue + totalExtraDue;
+  const totalMonthlyDue        = unpaidMonthlyCharges.reduce((sum, c) => sum + c.amount, 0);
+  const totalExtraDue          = unpaidExtraCharges.reduce((sum, c) => sum + c.amount, 0);
+  const totalOpeningBalanceDue = openingBalanceCharge ? openingBalanceCharge.amount : 0;
+
+  const totalDue = totalMonthlyDue + totalExtraDue + totalOpeningBalanceDue;
   // Status is derived from records — admin cannot override
   const paymentStatus = totalDue === 0 ? "Paid" : "Due";
 
-  // Next due month — oldest unpaid monthly charge
+  // Next due month — oldest unpaid monthly charge (never a sentinel now)
   const nextDueMonth = unpaidMonthlyCharges.length > 0
     ? {
         month:  unpaidMonthlyCharges[0].month,
@@ -110,6 +129,7 @@ export const getMemberFullDashboardData = async (memberId) => {
     totalDue,
     totalMonthlyDue,
     totalExtraDue,
+    totalOpeningBalanceDue,
     paymentStatus,
     nextDueMonth,
 
@@ -134,6 +154,7 @@ export const getMemberFullDashboardData = async (memberId) => {
     // Payment selection data — charge IDs and amounts for the UI
     unpaidMonthlyCharges,
     unpaidExtraCharges,
+    openingBalanceCharge,
 
     // History strip — 12 months of paid/unpaid indicators
     last12Months,
@@ -146,6 +167,9 @@ export const getMemberFullDashboardData = async (memberId) => {
 //
 // Each payment row can be expanded to show what it covered —
 // this enrichment joins Payment → PaymentAllocation → Charge documents.
+//
+// UNCHANGED — this already worked correctly and isn't involved in the
+// opening-balance fix. Left exactly as it was.
 
 export const getMemberTransactionHistory = async (memberId, limit = 24) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);

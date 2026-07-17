@@ -6,6 +6,12 @@
 // Step 7 adds: paymentCallback, approvePayment, rejectPayment
 //
 // This file grows across steps — all payment controller code lives here.
+//
+// CHANGE (this pass): partialAmounts is now accepted from the client,
+// validated in validatePaymentSelection, carried through SSLCommerz in
+// value_b as extraChargeAmounts, and passed to allocatePayment in the IPN
+// callback. This is what lets the Opening Balance charge be paid down in
+// installments instead of requiring one lump sum.
 
 import mongoose     from "mongoose";
 import Member       from "../models/Member.js";
@@ -161,12 +167,15 @@ export const getPaymentAllocations = async (req, res) => {
 // Request body:
 //   selectedMonthlyIds  (Array<string>) — MonthlyCharge _ids to pay
 //   selectedExtraIds    (Array<string>) — ExtraCharge _ids to pay
+//   partialAmounts      (Object)        — { [extraChargeId]: amountBeingPaidNow },
+//                                          only meaningful for charges with
+//                                          partialPaymentAllowed (e.g. Opening Balance)
 //
 // Flow:
-//   1. Validate selection (FIFO, ownership, unpaid status)
+//   1. Validate selection (FIFO, ownership, unpaid status, partial amounts)
 //   2. Compute verified total from DB records
 //   3. Create pending Payment record
-//   4. Open SSLCommerz session with charge IDs in value_b
+//   4. Open SSLCommerz session with charge IDs (+ per-charge amounts) in value_b
 //   5. Return gateway URL to frontend
 //
 // Why we store charge IDs in SSLCommerz value_b:
@@ -181,7 +190,7 @@ export const createPaymentSession = async (req, res) => {
   let payment = null; // declare here so catch block can access it
 
   try {
-    const { selectedMonthlyIds = [], selectedExtraIds = [] } = req.body;
+    const { selectedMonthlyIds = [], selectedExtraIds = [], partialAmounts = {} } = req.body;
 
     if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
       return res.status(400).json({
@@ -204,6 +213,7 @@ export const createPaymentSession = async (req, res) => {
         memberId: member._id,
         selectedMonthlyIds,
         selectedExtraIds,
+        partialAmounts,
       });
     } catch (validationError) {
       return res.status(400).json({
@@ -212,7 +222,7 @@ export const createPaymentSession = async (req, res) => {
       });
     }
 
-    const { totalAmount, selectedMonthly, selectedExtra } = validationResult;
+    const { totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts } = validationResult;
 
     const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
     const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
@@ -240,6 +250,7 @@ export const createPaymentSession = async (req, res) => {
     paymentId:          String(payment._id),
     selectedMonthlyIds: selectedMonthly.map(c => String(c._id)),
     selectedExtraIds:   selectedExtra.map(c => String(c._id)),
+    extraChargeAmounts,   // carries exact per-charge amounts through SSLCommerz
   })
 ).toString("base64");
 
@@ -426,6 +437,7 @@ try {
       paymentId:          storedPaymentId,
       selectedMonthlyIds: monthlyIds = [],
       selectedExtraIds:   extraIds   = [],
+      extraChargeAmounts  = {},
     } = selectionData;
 
     // Cross-check: the payment ID in value_b must match the payment we found
@@ -445,9 +457,10 @@ try {
 
     // ── Atomically allocate the payment ───────────────────────────────────
     const { receiptNumber } = await allocatePayment({
-      paymentId:         payment._id,
+      paymentId:          payment._id,
       selectedMonthlyIds: monthlyIds,
       selectedExtraIds:   extraIds,
+      extraChargeAmounts,
     });
 
     console.info(

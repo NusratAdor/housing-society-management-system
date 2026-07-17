@@ -2,6 +2,9 @@
 //
 // Admin-initiated one-off charges assigned to one or more members.
 // Examples: generator repair, festival donation, security upgrade.
+// Also used for the system-generated Opening Balance charge (see
+// memberController.js), which is the only charge type that currently
+// sets partialPaymentAllowed: true.
 //
 // When admin creates a charge targeting 50 members, 50 ExtraCharge
 // documents are created — one per member. This design means:
@@ -42,10 +45,31 @@ const extraChargeSchema = new mongoose.Schema(
       maxlength: 1000,
     },
 
+    // Current outstanding amount. For a partial-payment-enabled charge,
+    // this is REDUCED by each partial payment (see allocationService.js)
+    // rather than being locked forever — unlike originalAmount below.
     amount: {
       type:     Number,
       required: true,
       min:      [1, "Charge amount must be at least 1 BDT"],
+    },
+
+    // Locked at creation time, never changes. Lets the UI show
+    // "৳2,000 paid of ৳4,800" even after `amount` is reduced by partial
+    // payments. undefined/null for every charge that isn't partial-payment
+    // enabled — identical to their current behavior.
+    originalAmount: {
+      type: Number,
+    },
+
+    // true only for charges that support paying less than the full
+    // balance (currently: the Opening Balance charge). Everything else
+    // (generator repair, festival donation, etc.) must be paid in full,
+    // exactly as today. Defaults to false so every existing charge and
+    // every existing full-payment flow behaves identically.
+    partialPaymentAllowed: {
+      type:    Boolean,
+      default: false,
     },
 
     // Optional payment deadline for this charge
