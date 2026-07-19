@@ -13,7 +13,7 @@
 //     - Receipt number assigned to payment
 //
 //   If the server crashes mid-allocation, the transaction rolls back.
-//   The payment stays "pending" and can be processed again safely.
+//   The payment stays "verified" and can be confirmed again safely.
 //   Partial states (some charges paid, some not) are impossible.
 //
 // Why MongoDB transactions are required here:
@@ -26,6 +26,15 @@
 //   - MongoDB Atlas: always has a replica set. Works out of the box.
 //   - Local development: run `mongod --replSet rs0` or use Docker.
 //   - Without replica set: transactions throw an error. Use Atlas for dev.
+//
+// CHANGE (this pass): allocatePayment is now called ONLY from
+// approvePayment() (adminPaymentController.js), on a payment that has
+// already passed the gateway-verification stage — never directly from
+// the IPN callback anymore. The precondition guard below now reflects
+// that actual calling contract: it requires status "verified" instead
+// of the old "pending" — a "pending" payment hasn't been confirmed by
+// the gateway yet and must never be allocated regardless of who calls
+// this function.
 
 import mongoose          from "mongoose";
 import MonthlyCharge     from "../models/MonthlyCharge.js";
@@ -59,10 +68,12 @@ const generateReceiptNumber = async (session) => {
 };
 
 // ─── allocatePayment ──────────────────────────────────────────────────────────
-// Atomically allocates a completed payment to the specified charges.
+// Atomically allocates a gateway-verified payment to the specified charges.
 //
 // Parameters:
-//   paymentId          — MongoDB _id of the Payment record (status must be "pending")
+//   paymentId          — MongoDB _id of the Payment record (status must be
+//                        "verified" — i.e. gateway-confirmed, awaiting
+//                        admin allocation)
 //   selectedMonthlyIds — array of MonthlyCharge _id strings to mark as Paid
 //   selectedExtraIds   — array of ExtraCharge _id strings to mark as Paid
 //                        (or partially paid down, if partialPaymentAllowed)
@@ -76,8 +87,8 @@ const generateReceiptNumber = async (session) => {
 //   { receiptNumber, allocations }
 //
 // This function is called from:
-//   - paymentCallback() after SSLCommerz IPN confirmation (automatic)
-//   - approvePayment() when admin manually approves (Step 7b, admin flow)
+//   - approvePayment() in adminPaymentController.js, when an admin
+//     confirms a gateway-verified payment. This is the ONLY caller.
 
 export const allocatePayment = async ({
   paymentId,
@@ -96,7 +107,8 @@ export const allocatePayment = async ({
 
     // ── Step 1: Lock and verify the payment record ────────────────────────
     // Re-fetch inside the transaction with the session to get a write lock.
-    // Check status again — it could have been processed by a duplicate callback.
+    // Check status again — protects against a double-click or a duplicate
+    // admin confirmation request racing this one.
     const payment = await Payment.findById(paymentObjectId).session(session);
 
     if (!payment) {
@@ -104,15 +116,15 @@ export const allocatePayment = async ({
     }
 
     if (payment.status === "completed") {
-      // Idempotent: already processed (duplicate IPN callback).
+      // Idempotent: already processed (e.g. a duplicate confirm click).
       // Commit without doing anything — return existing receipt number.
       await session.commitTransaction();
       return { receiptNumber: payment.receiptNumber, allocations: [] };
     }
 
-    if (payment.status !== "pending") {
+    if (payment.status !== "verified") {
       throw new Error(
-        `Payment ${paymentId} has status "${payment.status}" — only pending payments can be allocated`
+        `Payment ${paymentId} has status "${payment.status}" — only gateway-verified payments can be allocated`
       );
     }
 
