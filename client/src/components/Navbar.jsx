@@ -314,7 +314,7 @@ const Navbar = () => {
             ) : (
               <button
                 onClick={() => navigate("/sign-in")}
-                className={`${btnBase} text-sm rounded-md px-6 py-2.5`}
+                className={`${btnBase} text-sm rounded-md px-6 py-2`}
               >
                 {t("signIn")}
               </button>

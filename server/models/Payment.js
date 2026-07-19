@@ -9,10 +9,19 @@
 //   Payment     = money received (credit side)
 //   Allocation  = charge cleared (debit side reconciled)
 //
-// Why separation matters:
-//   A payment of 1200 might clear Jan(500) + Feb(500) + Generator(200).
-//   Without PaymentAllocation, you cannot reconstruct this audit trail.
-//   With it, every cent is traceable to an exact charge.
+// CHANGE (this pass) — two-step confirmation:
+//   Gateway confirmation ("verified") and dues being marked Paid
+//   ("completed") are now two distinct events, not one. This is a
+//   deliberate reconciliation control: an admin must explicitly confirm
+//   a gateway-verified payment before it affects a member's dues or
+//   triggers a notification/email. See paymentController.paymentCallback
+//   (sets "verified") and adminPaymentController.approvePayment (sets
+//   "completed" and performs the actual allocation).
+//
+//   pendingMonthlyIds / pendingExtraIds / pendingExtraAmounts capture the
+//   exact charge selection confirmed by the gateway at IPN time, so
+//   approvePayment can later replay it into allocatePayment() without
+//   any re-derivation or ambiguity about what was actually paid for.
 
 import mongoose from "mongoose";
 
@@ -41,12 +50,16 @@ const paymentSchema = new mongoose.Schema(
     },
 
     // "pending"   → initiated, awaiting gateway confirmation
-    // "completed" → confirmed by IPN callback + SSLCommerz validation API
+    // "verified"  → gateway (IPN + validation API) confirmed money was
+    //               received — dues NOT yet marked Paid, member NOT yet
+    //               notified. Awaiting admin confirmation.
+    // "completed" → admin confirmed. Dues marked Paid, receipt issued,
+    //               member notified — via approvePayment.
     // "failed"    → gateway reported failure
-    // "rejected"  → admin manually rejected with a reason
+    // "rejected"  → admin manually rejected (from "pending" or "verified")
     status: {
       type:    String,
-      enum:    ["pending", "completed", "failed", "rejected"],
+      enum:    ["pending", "verified", "completed", "failed", "rejected"],
       default: "pending",
     },
 
@@ -65,16 +78,46 @@ const paymentSchema = new mongoose.Schema(
       type: String,
     },
 
-    // Human-readable receipt number generated after payment completes
+    // Human-readable receipt number generated once payment is CONFIRMED
+    // by an admin (status → "completed").
     // Format: RCP-YYYY-NNNNNN (e.g. RCP-2025-000123)
-    // Unique, sparse — null until payment completes
+    // Unique, sparse — null until confirmed.
     receiptNumber: {
       type:   String,
       unique: true,
-      sparse: true, // allows multiple null values (pending payments)
+      sparse: true,
     },
 
     paidAt: {
+      type: Date,
+    },
+
+    // Set when the gateway confirms the payment (status → "verified")
+    verifiedAt: {
+      type: Date,
+    },
+
+    // The charge selection confirmed by the gateway at IPN time.
+    // Stored here (not re-derived) so admin confirmation allocates
+    // exactly what was actually paid for.
+    pendingMonthlyIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref:  "MonthlyCharge",
+    }],
+    pendingExtraIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref:  "ExtraCharge",
+    }],
+    pendingExtraAmounts: {
+      type:    mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
+    // Clerk userId of the admin who confirmed this payment (status → "completed")
+    confirmedBy: {
+      type: String,
+    },
+    confirmedAt: {
       type: Date,
     },
 
@@ -102,8 +145,8 @@ const paymentSchema = new mongoose.Schema(
 // Common query: all payments for a member by status
 paymentSchema.index({ member: 1, status: 1 });
 
-
-// Admin pending payments queue
+// Admin queues — pending gateway sessions, and verified-awaiting-confirmation
 paymentSchema.index({ status: 1, createdAt: -1 });
+paymentSchema.index({ status: 1, verifiedAt: -1 });
 
 export default mongoose.model("Payment", paymentSchema);

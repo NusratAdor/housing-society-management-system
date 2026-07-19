@@ -1,15 +1,16 @@
-// client/src/pages/admin/tabs/PendingPayments.jsx
-// Lists payments with status "pending" awaiting admin review.
-// Polls every 60 seconds so the badge count stays current.
-// Admin can reject with a mandatory reason.
-// Approval is handled automatically by SSLCommerz IPN —
-// admin rejection is for edge cases (dispute, fraud, etc.)
+// client/src/pages/admin/tabs/VerifiedPayments.jsx
+//
+// The primary actionable payment queue: gateway-confirmed payments
+// awaiting admin review. Confirming here is the ONLY action that marks
+// a member's dues as paid, generates a receipt, and sends the
+// notification/email — deliberately, so nothing affects a member's
+// account without an admin explicitly reviewing it first.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
-import { CheckCircle2, XCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
-import { Button }       from "@/components/ui/button";
+import { CheckCircle2, XCircle, ShieldCheck, Loader2, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription,
@@ -17,27 +18,23 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAppContext } from "../../../context/AppContext";
 
-const MONTH_NAMES = [
-  "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-export default function PendingPayments({ onCountChange }) {
+export default function VerifiedPayments({ onCountChange }) {
   const { axios, getToken } = useAppContext();
 
-  const [payments,        setPayments]        = useState([]);
-  const [loading,         setLoading]         = useState(true);
-  const [refreshing,      setRefreshing]      = useState(false);
-  const [rejectDialog,    setRejectDialog]    = useState(null); // { paymentId, memberName }
-  const [rejectReason,    setRejectReason]    = useState("");
-  const [rejecting,       setRejecting]       = useState(false);
+  const [payments,     setPayments]     = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [confirming,   setConfirming]   = useState(null); // paymentId
+  const [rejectDialog, setRejectDialog] = useState(null); // { paymentId, memberName, amount }
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting,    setRejecting]    = useState(false);
 
-  const fetchPending = useCallback(async (silent = false) => {
+  const fetchVerified = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else         setRefreshing(true);
     try {
       const token = await getToken();
-      const { data } = await axios.get("/api/payments/pending", {
+      const { data } = await axios.get("/api/payments/verified", {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (data.success) {
@@ -45,7 +42,7 @@ export default function PendingPayments({ onCountChange }) {
         onCountChange?.(data.payments.length);
       }
     } catch {
-      if (!silent) toast.error("Failed to load pending payments");
+      if (!silent) toast.error("Failed to load verified payments");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -53,10 +50,33 @@ export default function PendingPayments({ onCountChange }) {
   }, [axios, getToken, onCountChange]);
 
   useEffect(() => {
-    fetchPending(false);
-    const interval = setInterval(() => fetchPending(true), 60_000);
+    fetchVerified(false);
+    const interval = setInterval(() => fetchVerified(true), 30_000);
     return () => clearInterval(interval);
-  }, [fetchPending]);
+  }, [fetchVerified]);
+
+  const handleConfirm = async (payment) => {
+    setConfirming(payment._id);
+    try {
+      const token = await getToken();
+      const { data } = await axios.put(
+        `/api/payments/${payment._id}/confirm`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (data.success) {
+        setPayments(prev => prev.filter(p => p._id !== payment._id));
+        onCountChange?.(payments.length - 1);
+        toast.success(data.message || "Payment confirmed");
+      } else {
+        toast.error(data.message || "Failed to confirm payment");
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.message || "Error confirming payment");
+    } finally {
+      setConfirming(null);
+    }
+  };
 
   const openReject = (payment) => {
     setRejectDialog({
@@ -107,21 +127,20 @@ export default function PendingPayments({ onCountChange }) {
 
   return (
     <div className="mt-6">
-      {/* Header row */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="font-playfair text-base font-semibold text-gray-800">
-            Pending Payments
+            Verified Payments
           </h3>
           <p className="text-xs text-gray-400 mt-0.5">
-            {payments.length} payment{payments.length !== 1 ? "s" : ""} awaiting
-            gateway confirmation
+            {payments.length} payment{payments.length !== 1 ? "s" : ""} confirmed by
+            the gateway, awaiting your review
           </p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchPending(true)}
+          onClick={() => fetchVerified(true)}
           disabled={refreshing}
           className="gap-1.5"
         >
@@ -130,22 +149,21 @@ export default function PendingPayments({ onCountChange }) {
         </Button>
       </div>
 
-   {/* Info banner */}
-      <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200
-        rounded-xl mb-4 text-sm text-blue-700">
-        <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5 text-blue-500" />
+      <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200
+        rounded-xl mb-4 text-sm text-emerald-700">
+        <ShieldCheck className="h-4 w-4 flex-shrink-0 mt-0.5 text-emerald-600" />
         <p>
-          These are payment sessions still awaiting a response from the gateway.
-          They normally move to the <strong>Verified Payments</strong> tab within
-          moments. Use Reject only for a session that appears permanently stuck.
+          The payment gateway has confirmed these transactions. Confirming here
+          marks the member's dues as paid, issues a receipt, and notifies them.
+          Nothing is applied to a member's account until you confirm.
         </p>
       </div>
 
       {payments.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-gray-200" />
-          <p className="font-medium">No pending payments</p>
-          <p className="text-sm mt-1">All payments are up to date</p>
+          <p className="font-medium">Nothing awaiting confirmation</p>
+          <p className="text-sm mt-1">All verified payments have been reviewed</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -158,7 +176,7 @@ export default function PendingPayments({ onCountChange }) {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 className="flex items-center justify-between p-4 border
-                  border-amber-200 rounded-xl bg-amber-50/40 gap-4"
+                  border-emerald-200 rounded-xl bg-emerald-50/40 gap-4"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -170,30 +188,44 @@ export default function PendingPayments({ onCountChange }) {
                     </span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    ৳{payment.amount.toLocaleString()} ·{" "}
-                    {new Date(payment.createdAt).toLocaleString("en-GB")}
+                    ৳{payment.amount.toLocaleString()} · verified{" "}
+                    {new Date(payment.verifiedAt).toLocaleString("en-GB")}
                   </p>
                   <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate">
                     {payment.transactionId}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openReject(payment)}
-                  className="text-red-600 border-red-200 hover:bg-red-50
-                    hover:border-red-400 flex-shrink-0 gap-1.5"
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                  Reject
-                </Button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openReject(payment)}
+                    disabled={confirming === payment._id}
+                    className="text-red-600 border-red-200 hover:bg-red-50
+                      hover:border-red-400 gap-1.5"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleConfirm(payment)}
+                    disabled={confirming === payment._id}
+                    className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"
+                  >
+                    {confirming === payment._id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <CheckCircle2 className="h-3.5 w-3.5" />
+                    }
+                    Confirm
+                  </Button>
+                </div>
               </motion.div>
             ))}
           </AnimatePresence>
         </div>
       )}
 
-      {/* Reject dialog */}
       <AlertDialog
         open={!!rejectDialog}
         onOpenChange={open => { if (!open) setRejectDialog(null); }}

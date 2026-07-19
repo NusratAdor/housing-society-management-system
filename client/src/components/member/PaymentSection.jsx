@@ -302,8 +302,8 @@ export default function PaymentSection({ onPaymentSuccess }) {
     const status = params.get("payment_status");
     if (!status) return;
     window.history.replaceState({}, "", window.location.pathname);
-    if (status === "VALID") {
-      toast.success("Payment successful! Your account has been updated.");
+     if (status === "VALID") {
+      toast.success("Payment received! Awaiting confirmation from admin.");
       fetchBreakdown();
       onPaymentSuccess?.();
     } else if (status === "FAILED") {
@@ -592,6 +592,26 @@ export default function PaymentSection({ onPaymentSuccess }) {
           </div>
         </div>
       )}
+
+
+      {!loadingData && breakdown?.awaitingConfirmationPayment && (
+  <div className="flex items-start gap-3 p-4 bg-blue-50 border
+    border-blue-200 rounded-xl">
+    <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+    <div className="text-sm">
+      <p className="font-semibold text-blue-800">
+        Payment received — awaiting confirmation
+      </p>
+      <p className="text-blue-600 text-xs mt-0.5">
+        We've received your payment of ৳{breakdown.awaitingConfirmationPayment.amount.toLocaleString()}.
+        It will be reflected in your dues once confirmed by the admin.
+      </p>
+    </div>
+  </div>
+)}
+
+
+
 
       {/* ── 12-month history strip ─────────────────────────────────────── */}
       <div>

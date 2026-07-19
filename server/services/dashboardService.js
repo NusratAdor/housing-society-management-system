@@ -37,6 +37,7 @@ export const getMemberFullDashboardData = async (memberId) => {
     lastCompletedPayment,
     currentFee,
     pendingPayment,
+    awaitingConfirmationPayment,
   ] = await Promise.all([
 
     // Unpaid monthly charges in FIFO order — oldest month first.
@@ -95,6 +96,12 @@ export const getMemberFullDashboardData = async (memberId) => {
       .sort({ createdAt: -1 })
       .select("_id amount createdAt transactionId")
       .lean(),
+
+      Payment
+      .findOne({ member: memberObjectId, status: "verified" })
+      .sort({ verifiedAt: -1 })
+      .select("_id amount verifiedAt transactionId")
+      .lean(),
   ]);
 
   // Opening Balance is identified by partialPaymentAllowed — not by label
@@ -148,6 +155,15 @@ export const getMemberFullDashboardData = async (memberId) => {
           paymentId:  String(pendingPayment._id),
           amount:     pendingPayment.amount,
           createdAt:  pendingPayment.createdAt,
+        }
+      : null,
+
+
+      awaitingConfirmationPayment: awaitingConfirmationPayment
+      ? {
+          paymentId:  String(awaitingConfirmationPayment._id),
+          amount:     awaitingConfirmationPayment.amount,
+          verifiedAt: awaitingConfirmationPayment.verifiedAt,
         }
       : null,
 
