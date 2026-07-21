@@ -68,6 +68,12 @@ export default function VerifiedPayments({ onCountChange }) {
         setPayments(prev => prev.filter(p => p._id !== payment._id));
         onCountChange?.(payments.length - 1);
         toast.success(data.message || "Payment confirmed");
+        if (!data.emailSent) {
+          toast(
+            "Confirmation email could not be sent — you may want to notify the member directly.",
+            { icon: "⚠️", duration: 6000 }
+          );
+        }
       } else {
         toast.error(data.message || "Failed to confirm payment");
       }
