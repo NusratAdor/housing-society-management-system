@@ -1,13 +1,16 @@
 // client/src/components/member/PaymentSection.jsx
 //
 // CHANGE from previous version:
-//   - Added a dedicated Opening Balance card (rendered only when
-//     breakdown.openingBalanceCharge exists) with an editable
-//     "amount to pay now" input, since that charge supports partial payment.
-//   - selectedExtraTotal now uses the chosen partial amount for the
-//     Opening Balance charge instead of its full outstanding amount.
-//   - handlePay now sends partialAmounts to /api/payments/create when the
-//     Opening Balance charge is selected.
+//   - Opening Balance amount input now uses a separate raw-text state
+//     (openingBalanceInput) that the user can type into freely — including
+//     clearing it or typing an out-of-range value mid-edit. Clamping to
+//     [1, fullAmount] now happens only on blur, not on every keystroke.
+//     Previously, clamping on every onChange meant the value snapped back
+//     to 1 the instant the field became empty (e.g. while selecting all
+//     and retyping), making it impossible to type a fresh number like 300
+//     without it becoming "1300" first. openingBalanceAmount (the numeric
+//     state actually used in selectedExtraTotal/handlePay) only updates
+//     once a valid, clamped value is committed on blur.
 //   - Everything else — i18next usage, ExportControl, FIFO month selection,
 //     regular extra charge checkboxes, pay flow, receipt download — is
 //     unchanged.
@@ -26,9 +29,6 @@ import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
 
 // ─── Static lookups ───────────────────────────────────────────────────────────
-// MONTH_NAMES is still needed for the "This payment covered" breakdown rows
-// where we receive {month: 3, year: 2025} and need to show a name.
-// We use Intl here too so it respects the active language automatically.
 const monthName = (month, format = "long") =>
   new Date(2000, month - 1).toLocaleDateString(undefined, { month: format });
 
@@ -68,7 +68,6 @@ const StatusBadge = ({ status }) => (
 );
 
 // ─── ExportControl ────────────────────────────────────────────────────────────
-// Receives t as a prop — parent already called useTranslation("payment").
 
 const ExportControl = ({ t }) => {
   const { getToken } = useAppContext();
@@ -246,7 +245,6 @@ const ExportControl = ({ t }) => {
 export default function PaymentSection({ onPaymentSuccess }) {
   const { axios, getToken } = useAppContext();
 
-  // "payment" namespace — all t() calls resolve against payment.json
   const { t } = useTranslation("payment");
 
   const [breakdown,            setBreakdown]            = useState(null);
@@ -254,6 +252,13 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const [selectedMonthlyIds,   setSelectedMonthlyIds]   = useState([]);
   const [selectedExtraIds,     setSelectedExtraIds]     = useState([]);
   const [openingBalanceAmount, setOpeningBalanceAmount] = useState(0);
+  // Raw text the user is typing into the Opening Balance amount input.
+  // Kept separate from openingBalanceAmount (the numeric, clamped value
+  // actually used in calculations) so the field can be freely edited —
+  // including a momentarily empty or out-of-range value — without being
+  // fought on every keystroke. Clamping happens on blur, in the input's
+  // onBlur handler below.
+  const [openingBalanceInput,  setOpeningBalanceInput]  = useState("0");
   const [loadingData,          setLoadingData]          = useState(true);
   const [loadingHistory,       setLoadingHistory]       = useState(false);
   const [paying,               setPaying]               = useState(false);
@@ -270,7 +275,9 @@ export default function PaymentSection({ onPaymentSuccess }) {
         setBreakdown(data);
         setSelectedMonthlyIds([]);
         setSelectedExtraIds([]);
-        setOpeningBalanceAmount(data.openingBalanceCharge?.amount ?? 0);
+        const openingAmt = data.openingBalanceCharge?.amount ?? 0;
+        setOpeningBalanceAmount(openingAmt);
+        setOpeningBalanceInput(String(openingAmt));
       }
     } catch {
       toast.error("Failed to load payment data");
@@ -370,9 +377,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
       .reduce((sum, c) => sum + c.amount, 0);
   }, [breakdown, selectedMonthlyIds]);
 
-  // Opening Balance is NOT in breakdown.unpaidExtraCharges (the dashboard
-  // service splits it out) so it's added on separately here, using the
-  // member-chosen partial amount rather than the full outstanding balance.
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
     const regularExtraTotal = breakdown.unpaidExtraCharges
@@ -438,7 +442,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const unpaidMonthCount = unpaidMonthly.length;
   const remainingAfterSelection = totalDue - selectedTotal;
 
-  // ── Description sentence — uses i18next pluralization, not ternaries ──────
   const dueDescription = (() => {
     const mc = unpaidMonthCount;
     const ec = unpaidExtra.length;
@@ -593,25 +596,21 @@ export default function PaymentSection({ onPaymentSuccess }) {
         </div>
       )}
 
-
       {!loadingData && breakdown?.awaitingConfirmationPayment && (
-  <div className="flex items-start gap-3 p-4 bg-blue-50 border
-    border-blue-200 rounded-xl">
-    <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
-    <div className="text-sm">
-      <p className="font-semibold text-blue-800">
-        Payment received — awaiting confirmation
-      </p>
-      <p className="text-blue-600 text-xs mt-0.5">
-        We've received your payment of ৳{breakdown.awaitingConfirmationPayment.amount.toLocaleString()}.
-        It will be reflected in your dues once confirmed by the admin.
-      </p>
-    </div>
-  </div>
-)}
-
-
-
+        <div className="flex items-start gap-3 p-4 bg-blue-50 border
+          border-blue-200 rounded-xl">
+          <Info className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-semibold text-blue-800">
+              Payment received — awaiting confirmation
+            </p>
+            <p className="text-blue-600 text-xs mt-0.5">
+              We've received your payment of ৳{breakdown.awaitingConfirmationPayment.amount.toLocaleString()}.
+              It will be reflected in your dues once confirmed by the admin.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── 12-month history strip ─────────────────────────────────────── */}
       <div>
@@ -682,13 +681,22 @@ export default function PaymentSection({ onPaymentSuccess }) {
               type="number"
               min={1}
               max={breakdown.openingBalanceCharge.amount}
-              value={openingBalanceAmount}
+              value={openingBalanceInput}
               onChange={e => {
-                const val = Math.min(
-                  Math.max(1, Number(e.target.value) || 0),
+                // Allow free typing — including a temporarily empty
+                // field or a value outside bounds — so the user isn't
+                // fighting the input while editing. Clamping/validation
+                // happens on blur instead of on every keystroke.
+                setOpeningBalanceInput(e.target.value);
+              }}
+              onBlur={() => {
+                const parsed = Number(openingBalanceInput);
+                const clamped = Math.min(
+                  Math.max(1, Number.isFinite(parsed) ? parsed : 1),
                   breakdown.openingBalanceCharge.amount
                 );
-                setOpeningBalanceAmount(val);
+                setOpeningBalanceInput(String(clamped));
+                setOpeningBalanceAmount(clamped);
               }}
               className="w-32 p-2 border border-gray-200 rounded-lg text-sm
                 focus:outline-none focus:ring-2 focus:ring-indigo-300"
@@ -845,10 +853,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
                       accent-amber-500 cursor-pointer flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    {/* charge.label and charge.purpose come from MongoDB —
-                        these are database-authored strings that i18next
-                        cannot translate. They will be handled in Phase 4
-                        of the backend migration (Bn fields + localize.js). */}
                     <p className="text-sm font-semibold text-gray-800">
                       {charge.label}
                     </p>
@@ -988,7 +992,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
             }
           </button>
 
-          {/* t passed as prop — ExportControl does not need its own hook */}
           <ExportControl t={t} />
         </div>
 
