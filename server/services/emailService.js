@@ -1,17 +1,45 @@
 // server/services/emailService.js
 //
 // Single email provider: Resend.
+// Every outbound email in the system goes through this file.
+// Nothing else sends email — nodemailer is removed entirely.
 //
-// CHANGE (this pass): sendPaymentConfirmationEmail now accepts optional
-// advanceAmount / creditBalance params. When advanceAmount > 0, the
-// receipt shows a "Added to Credit Balance" / "Your Credit Balance"
-// section alongside the normal breakdown — since one payment can now be
-// partly charges, partly credit, this replaced the earlier separate
-// sendAdvancePaymentConfirmationEmail function entirely.
+// Public API:
+//   sendPaymentConfirmationEmail({ to, name, amount, receiptNumber,
+//                                  paidAt, allocations, remainingDue })
+//   sendDueReminderEmail({ to, name, totalDue, totalMonthlyDue,
+//                          totalExtraDue, unpaidMonths, unpaidCharges })
+//   sendNoticeEmail(to, notice)
+//
+// All functions return a Promise.
+// Callers that are non-critical (confirmation, reminder) use .catch()
+// or try/catch so email failure never breaks the payment flow.
+//
+// CHANGE (this pass): sendPaymentConfirmationEmail now takes `allocations`
+// (the PaymentAllocation records from allocatePayment()) instead of raw
+// monthlyIds/extraIds. This fixes a real bug: for a partial payment on a
+// partialPaymentAllowed charge, re-querying the charge document's current
+// `amount` field after allocation returns the REMAINING balance, not what
+// was actually paid in this transaction — which showed the wrong number
+// on the receipt. Allocation records always hold the exact amount
+// attributed to that charge in that specific payment, so they're the
+// correct source of truth for a receipt breakdown.
+//
+// Also added `remainingDue` — the member's total outstanding balance
+// AFTER this payment. This lets the email say "fully cleared" only when
+// that's actually true, and show a clear remaining-balance line
+// otherwise, instead of always claiming "dues are cleared."
+//
+// Internal architecture:
+//   sendEmail()     — single Resend API call, throws on error
+//   emailLayout()   — shared HTML wrapper for all emails
+//   Each public function builds its own bodyContent and calls sendEmail()
 
 import { Resend }        from "resend";
 import MonthlyCharge     from "../models/MonthlyCharge.js";
 import ExtraCharge       from "../models/ExtraCharge.js";
+
+// ─── Config ───────────────────────────────────────────────────────────────────
 
 const resend      = new Resend(process.env.RESEND_API_KEY);
 const FROM        = process.env.FROM_EMAIL
@@ -24,12 +52,22 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
 const fmt = (n) => Number(n).toLocaleString();
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString("en-GB", {
     day: "numeric", month: "long", year: "numeric",
   });
 
+/**
+ * Core send function. All public functions call this.
+ * Skips silently if RESEND_API_KEY is not configured (dev without email).
+ * Throws on Resend API errors so callers can decide how to handle
+ * (e.g. approvePayment catches this and reports emailSent: false, rather
+ * than letting a failed email block a payment confirmation that has
+ * already succeeded).
+ */
 const sendEmail = async ({ to, subject, html }) => {
   if (!process.env.RESEND_API_KEY) {
     console.info(`[Email] RESEND_API_KEY not set — skipped email to ${to}`);
@@ -50,6 +88,11 @@ const sendEmail = async ({ to, subject, html }) => {
   return result;
 };
 
+/**
+ * Shared HTML layout wrapper.
+ * All emails use this so they have a consistent branded appearance.
+ * Inline styles only — email clients strip external/head CSS.
+ */
 const emailLayout = ({ title, preheader, bodyContent }) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -109,6 +152,8 @@ const emailLayout = ({ title, preheader, bodyContent }) => `
 </html>
 `;
 
+// ─── Row builders (reused across email types) ─────────────────────────────────
+
 const chargeRow = ({ description, subtext, amount, isBold = false }) => `
   <tr>
     <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;
@@ -139,19 +184,24 @@ const totalRow = ({ label, amount, color = "#065f46" }) => `
   </tr>
 `;
 
+// ─── Public functions ─────────────────────────────────────────────────────────
+
 /**
  * sendPaymentConfirmationEmail
  * Sent after an admin confirms a gateway-verified payment.
  *
- * @param {Array}  allocations   — PaymentAllocation records for the
- *                                 charges portion of this payment
- * @param {number} remainingDue  — member's total outstanding balance
- *                                 across their account AFTER this payment
- * @param {number} [advanceAmount] — the portion of this payment banked as
- *                                   credit (0 for an ordinary payment)
- * @param {number} [creditBalance] — member's total unapplied credit AFTER
- *                                    this payment, only meaningful when
- *                                    advanceAmount > 0
+ * @param {Array} allocations   — PaymentAllocation records returned by
+ *                                allocatePayment(): [{ chargeType, chargeId, amount }]
+ *                                `amount` here is the exact amount attributed
+ *                                to that charge in THIS payment — always
+ *                                correct, unlike re-reading the charge's
+ *                                current `amount` field, which can be a
+ *                                post-payment remaining balance for a
+ *                                partial-payment charge.
+ * @param {number} remainingDue — member's total outstanding balance across
+ *                                their whole account AFTER this payment.
+ *                                Drives whether the email says "fully
+ *                                cleared" or shows a remaining-balance line.
  *
  * Called from: adminPaymentController.approvePayment — the only call site.
  */
@@ -161,10 +211,8 @@ export const sendPaymentConfirmationEmail = async ({
   amount,
   receiptNumber,
   paidAt,
-  allocations   = [],
-  remainingDue  = 0,
-  advanceAmount = 0,
-  creditBalance = 0,
+  allocations  = [],
+  remainingDue = 0,
 }) => {
   const monthlyAllocations = allocations.filter(a => a.chargeType === "monthly");
   const extraAllocations   = allocations.filter(a => a.chargeType === "extra");
@@ -172,6 +220,9 @@ export const sendPaymentConfirmationEmail = async ({
   const monthlyChargeIds = monthlyAllocations.map(a => a.chargeId);
   const extraChargeIds   = extraAllocations.map(a => a.chargeId);
 
+  // Only fetch descriptive metadata (month/year, label/purpose) here —
+  // never the charge's `amount` field, which is not reliable for what
+  // was paid in THIS transaction once partial payments are involved.
   const [monthlyMeta, extraMeta] = await Promise.all([
     monthlyChargeIds.length > 0
       ? MonthlyCharge.find({ _id: { $in: monthlyChargeIds } }).select("month year").lean()
@@ -201,7 +252,7 @@ export const sendPaymentConfirmationEmail = async ({
 
   const hasBreakdown = monthlyRowsBuilt.length > 0 || extraRowsBuilt.length > 0;
 
-  const breakdownRows = hasBreakdown ? [
+  const breakdownRows = [
     ...monthlyRowsBuilt.map(m =>
       chargeRow({
         description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
@@ -215,8 +266,8 @@ export const sendPaymentConfirmationEmail = async ({
         amount:      c.amount,
       })
     ),
-    totalRow({ label: "Total Applied to Dues", amount: amount - advanceAmount }),
-  ].join("") : "";
+    totalRow({ label: "Total Paid", amount }),
+  ].join("");
 
   const isFullyCleared = remainingDue <= 0;
 
@@ -235,33 +286,6 @@ export const sendPaymentConfirmationEmail = async ({
         <td style="padding:14px 20px;text-align:right;font-size:16px;
                    font-weight:800;color:#b45309;white-space:nowrap;">
           ৳${fmt(remainingDue)}
-        </td>
-      </tr>
-    </table>
-  ` : "";
-
-  const creditBlock = advanceAmount > 0 ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #bbf7d0;border-radius:10px;
-                  overflow:hidden;margin-bottom:24px;background:#f0fdf4;">
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;color:#065f46;
-                   border-bottom:1px solid #bbf7d0;">
-          Added to Credit Balance
-        </td>
-        <td style="padding:12px 20px;text-align:right;font-size:14px;
-                   font-weight:700;color:#059669;white-space:nowrap;
-                   border-bottom:1px solid #bbf7d0;">
-          ৳${fmt(advanceAmount)}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;font-weight:600;color:#065f46;">
-          Your Credit Balance
-        </td>
-        <td style="padding:12px 20px;text-align:right;font-size:16px;
-                   font-weight:800;color:#059669;white-space:nowrap;">
-          ৳${fmt(creditBalance)}
         </td>
       </tr>
     </table>
@@ -339,7 +363,6 @@ export const sendPaymentConfirmationEmail = async ({
       </table>
     ` : ""}
 
-    ${creditBlock}
     ${remainingBalanceBlock}
 
     <div style="text-align:center;margin-top:8px;">
@@ -363,8 +386,122 @@ export const sendPaymentConfirmationEmail = async ({
   });
 };
 
+
 /**
- * sendDueReminderEmail — UNCHANGED
+ * sendAdvancePaymentConfirmationEmail
+ * Sent after an admin confirms a gateway-verified advance/credit-deposit
+ * payment. Distinct from sendPaymentConfirmationEmail because this money
+ * isn't clearing any specific charge yet — it's becoming available
+ * credit, automatically applied to future dues as they're created.
+ *
+ * Called from: adminPaymentController.approvePayment (credit-deposit branch)
+ */
+export const sendAdvancePaymentConfirmationEmail = async ({
+  to,
+  name,
+  amount,
+  receiptNumber,
+  paidAt,
+  creditBalance,
+}) => {
+  const bodyContent = `
+    <div style="text-align:center;margin-bottom:28px;">
+      <div style="display:inline-block;background:#dcfce7;border-radius:50%;
+                  width:64px;height:64px;line-height:64px;font-size:32px;">
+        ✅
+      </div>
+      <p style="margin:12px 0 0;font-size:22px;font-weight:700;color:#064e3b;">
+        Advance Payment Received
+      </p>
+      <p style="margin:4px 0 0;font-size:14px;color:#059669;">
+        Thank you for paying ahead
+      </p>
+    </div>
+
+    <p style="font-size:15px;color:#374151;margin:0 0 20px;">
+      Dear <strong>${name}</strong>,
+    </p>
+    <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.7;">
+      We have received your advance payment of
+      <strong style="color:#111827;">৳${fmt(amount)}</strong>
+      on ${fmtDate(paidAt)}. This amount will be automatically applied to
+      your upcoming monthly maintenance dues as they become due —
+      no further action is required from you until it is used up.
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="background:#f8fafc;border:1px solid #e2e8f0;
+                  border-radius:10px;margin-bottom:24px;">
+      <tr>
+        <td style="padding:12px 20px;font-size:13px;color:#64748b;
+                   border-bottom:1px solid #e2e8f0;">
+          Receipt Number
+        </td>
+        <td style="padding:12px 20px;font-size:14px;font-weight:700;
+                   font-family:monospace;color:#1e293b;text-align:right;
+                   border-bottom:1px solid #e2e8f0;">
+          ${receiptNumber}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:12px 20px;font-size:13px;color:#64748b;">
+          Payment Date
+        </td>
+        <td style="padding:12px 20px;font-size:14px;color:#1e293b;
+                   text-align:right;">
+          ${fmtDate(paidAt)}
+        </td>
+      </tr>
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="border:1px solid #bbf7d0;border-radius:10px;
+                  overflow:hidden;margin-bottom:28px;background:#f0fdf4;">
+      <tr>
+        <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#065f46;">
+          Your Credit Balance
+        </td>
+        <td style="padding:14px 20px;text-align:right;font-size:16px;
+                   font-weight:800;color:#059669;white-space:nowrap;">
+          ৳${fmt(creditBalance)}
+        </td>
+      </tr>
+    </table>
+
+    <div style="text-align:center;margin-top:8px;">
+      <a href="${FRONTEND}/dashboard"
+         style="display:inline-block;background:#064e3b;color:#ffffff;
+                padding:14px 36px;border-radius:8px;font-size:14px;
+                font-weight:600;text-decoration:none;letter-spacing:0.2px;">
+        View Dashboard
+      </a>
+    </div>
+  `;
+
+  return sendEmail({
+    to,
+    subject: `Advance Payment Received — Receipt ${receiptNumber}`,
+    html: emailLayout({
+      title:      "Advance Payment Received",
+      preheader:  `৳${fmt(amount)} added to your credit balance · Receipt ${receiptNumber}`,
+      bodyContent,
+    }),
+  });
+};
+
+
+
+
+
+
+
+/**
+ * sendDueReminderEmail
+ * Sent 7 days before month-end to members with outstanding dues.
+ * Called from the daily cron job (server/jobs/paymentJobs.js).
+ * UNCHANGED — this email's amounts already come from live unpaid charge
+ * queries, not from post-payment mutated fields, so it doesn't have the
+ * bug described above.
  */
 export const sendDueReminderEmail = async ({
   to,
@@ -486,7 +623,9 @@ export const sendDueReminderEmail = async ({
 };
 
 /**
- * sendNoticeEmail — UNCHANGED
+ * sendNoticeEmail
+ * Sent to all members when admin publishes a notice.
+ * UNCHANGED.
  */
 export const sendNoticeEmail = async (to, notice) => {
   const { title, date, summary, content, image } = notice;
