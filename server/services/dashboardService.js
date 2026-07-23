@@ -8,6 +8,13 @@
 //   - Data is consistent — all from the same point in time
 //   - Easier to cache at the API layer if needed in the future
 //   - Backend can optimise all queries together with Promise.all
+//
+// CHANGE (this pass): added creditBalance — the member's unapplied
+// advance-payment credit, computed via creditService.getMemberCreditBalance
+// (never stored, always derived from completed credit-deposit Payments
+// minus PaymentAllocation records against them). Surfaced so
+// PaymentSection.jsx can show "Credit: ৳X" and gate the Advance Payment
+// card correctly.
 
 import mongoose          from "mongoose";
 import Member            from "../models/Member.js";
@@ -16,6 +23,7 @@ import ExtraCharge       from "../models/ExtraCharge.js";
 import Payment           from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
 import { getCurrentFee } from "./feeService.js";
+import { getMemberCreditBalance } from "./creditService.js";
 
 // ─── getMemberFullDashboardData ───────────────────────────────────────────────
 // Returns everything the member PaymentSection needs in one call.
@@ -38,6 +46,7 @@ export const getMemberFullDashboardData = async (memberId) => {
     currentFee,
     pendingPayment,
     awaitingConfirmationPayment,
+    creditBalance,
   ] = await Promise.all([
 
     // Unpaid monthly charges in FIFO order — oldest month first.
@@ -97,11 +106,19 @@ export const getMemberFullDashboardData = async (memberId) => {
       .select("_id amount createdAt transactionId")
       .lean(),
 
-      Payment
+    // Any payment the gateway has confirmed but an admin hasn't reviewed
+    // yet — surfaced so the member sees "received, awaiting confirmation"
+    // rather than the payment silently vanishing from their view.
+    Payment
       .findOne({ member: memberObjectId, status: "verified" })
       .sort({ verifiedAt: -1 })
       .select("_id amount verifiedAt transactionId")
       .lean(),
+
+    // Unapplied advance-payment credit — see creditService.js. Always
+    // computed, never stored, so it can never drift out of sync with the
+    // underlying Payment/PaymentAllocation records.
+    getMemberCreditBalance(memberId),
   ]);
 
   // Opening Balance is identified by partialPaymentAllowed — not by label
@@ -158,14 +175,18 @@ export const getMemberFullDashboardData = async (memberId) => {
         }
       : null,
 
-
-      awaitingConfirmationPayment: awaitingConfirmationPayment
+    // Gateway-verified, awaiting admin confirmation
+    awaitingConfirmationPayment: awaitingConfirmationPayment
       ? {
           paymentId:  String(awaitingConfirmationPayment._id),
           amount:     awaitingConfirmationPayment.amount,
           verifiedAt: awaitingConfirmationPayment.verifiedAt,
         }
       : null,
+
+    // Advance-payment credit balance — drives the "Pay in Advance" card
+    // and the "Credit: ৳X" display in PaymentSection.jsx
+    creditBalance,
 
     // Payment selection data — charge IDs and amounts for the UI
     unpaidMonthlyCharges,
@@ -185,7 +206,10 @@ export const getMemberFullDashboardData = async (memberId) => {
 // this enrichment joins Payment → PaymentAllocation → Charge documents.
 //
 // UNCHANGED — this already worked correctly and isn't involved in the
-// opening-balance fix. Left exactly as it was.
+// opening-balance or advance-payment changes. An advance payment's
+// PaymentAllocation records (created later, whenever credit is applied to
+// a new MonthlyCharge) already join back to the original deposit Payment
+// here exactly like any other allocation — no special-casing needed.
 
 export const getMemberTransactionHistory = async (memberId, limit = 24) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);

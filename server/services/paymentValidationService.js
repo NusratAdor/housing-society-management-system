@@ -6,47 +6,40 @@
 //   2. Members paying months out of order (skipping older dues)
 //   3. Members paying charges that belong to other members
 //   4. Members paying charges that are already paid
-//   5. Empty payment attempts
+//   5. Empty payment attempts (unless offset by a valid advance amount)
 //   6. Members paying a partial amount on a charge that doesn't allow it,
 //      or a partial amount that is invalid or exceeds the outstanding balance
+//   7. A negative or invalid advance-payment amount
 //
-// Why validation lives in a service and not the controller:
-//   The IPN callback (Step 7) also needs to re-validate before allocating.
-//   One validation function, two callers — no duplication and no divergence.
+// CHANGE (this pass): a member may now optionally add an advanceAmount
+// alongside (or instead of) a charge selection — e.g. pay this month's
+// due plus extra to bank as credit for a future month, in one payment.
+// There is no longer a "must have zero current dues" restriction — the
+// charges portion and the advance portion are simply two independent
+// numbers that sum to the total charged.
 
 import mongoose      from "mongoose";
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import ExtraCharge   from "../models/ExtraCharge.js";
-
-// ─── validatePaymentSelection ─────────────────────────────────────────────────
-// Validates that the member's charge selection is correct and computes
-// the verified total amount from the database.
-//
-// Parameters:
-//   memberId           — MongoDB _id of the requesting member
-//   selectedMonthlyIds — array of MonthlyCharge _id strings the member wants to pay
-//   selectedExtraIds   — array of ExtraCharge _id strings the member wants to pay
-//   partialAmounts     — { [extraChargeId]: amountBeingPaidNow } — optional,
-//                        only meaningful for charges with partialPaymentAllowed
-//
-// Returns:
-//   { totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts }
-//   totalAmount is computed from DB records — the frontend amount is NEVER trusted
-//   extraChargeAmounts maps each selected extra charge id -> the exact amount
-//   being collected for it right now (full amount unless a valid partial was given)
-//
-// Throws descriptive errors for every invalid case.
-// The controller converts these to 400 responses.
 
 export const validatePaymentSelection = async ({
   memberId,
   selectedMonthlyIds = [],
   selectedExtraIds   = [],
   partialAmounts     = {},
+  advanceAmount      = 0,
 }) => {
-  // ── Guard: at least one charge must be selected ──────────────────────────
-  if (selectedMonthlyIds.length === 0 && selectedExtraIds.length === 0) {
-    throw new Error("Select at least one charge to pay");
+  const advanceAmt = Number(advanceAmount) || 0;
+
+  if (advanceAmt < 0) {
+    throw new Error("Advance amount cannot be negative");
+  }
+
+  const hasChargeSelection = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
+
+  // ── Guard: must select at least one charge, or add a valid advance ───────
+  if (!hasChargeSelection && advanceAmt <= 0) {
+    throw new Error("Select at least one charge to pay, or enter an amount to pay in advance");
   }
 
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
@@ -55,34 +48,17 @@ export const validatePaymentSelection = async ({
   let selectedMonthly = [];
 
   if (selectedMonthlyIds.length > 0) {
-    // Step 1: Fetch ALL unpaid monthly charges for this member in FIFO order
-    // We need the full unpaid list to verify FIFO compliance
     const allUnpaidMonthly = await MonthlyCharge
       .find({ member: memberObjectId, status: "Unpaid" })
-      .sort({ year: 1, month: 1 }) // oldest first — the required payment order
+      .sort({ year: 1, month: 1 })
       .lean();
 
-    // Step 2: Verify selection count does not exceed available unpaid charges
     if (selectedMonthlyIds.length > allUnpaidMonthly.length) {
       throw new Error(
         `You selected ${selectedMonthlyIds.length} months but only ${allUnpaidMonthly.length} are unpaid`
       );
     }
 
-    // Step 3: FIFO enforcement
-    // The selected IDs must exactly match the FIRST N charges in the unpaid list.
-    // This prevents paying March without paying January and February.
-    //
-    // Example: unpaid = [Jan, Feb, Mar, Apr]
-    //   ✅ selecting [Jan]           → matches first 1
-    //   ✅ selecting [Jan, Feb]      → matches first 2
-    //   ✅ selecting [Jan, Feb, Mar] → matches first 3
-    //   ❌ selecting [Feb]           → does not match first 1 (Jan is first)
-    //   ❌ selecting [Jan, Mar]      → does not match first 2 (Feb is second)
-    //   ❌ selecting [Feb, Mar]      → does not match first 2
-    //
-    // We convert selected IDs to a Set for O(1) lookup, then verify
-    // that exactly the first N unpaid charges are selected (no more, no less).
     const selectedSet = new Set(selectedMonthlyIds.map(String));
 
     for (let i = 0; i < selectedMonthlyIds.length; i++) {
@@ -104,8 +80,6 @@ export const validatePaymentSelection = async ({
       }
     }
 
-    // Step 4: Verify no selected ID is outside the first N unpaid charges
-    // (catches the case where someone sends IDs from the middle of the list)
     const validIds = new Set(
       allUnpaidMonthly.slice(0, selectedMonthlyIds.length).map(c => String(c._id))
     );
@@ -117,7 +91,6 @@ export const validatePaymentSelection = async ({
       }
     }
 
-    // Step 5: Get the actual charge documents with their locked amounts
     selectedMonthly = allUnpaidMonthly.slice(0, selectedMonthlyIds.length);
   }
 
@@ -125,10 +98,6 @@ export const validatePaymentSelection = async ({
   let selectedExtra = [];
 
   if (selectedExtraIds.length > 0) {
-    // Fetch extra charges matching ALL of these criteria simultaneously:
-    //   - ID is in the selected list
-    //   - belongs to this member (security: prevent paying other members' charges)
-    //   - status is "Unpaid" (prevent double-payment)
     selectedExtra = await ExtraCharge
       .find({
         _id:    { $in: selectedExtraIds.map(id => new mongoose.Types.ObjectId(id)) },
@@ -137,7 +106,6 @@ export const validatePaymentSelection = async ({
       })
       .lean();
 
-    // If counts don't match, some charges were invalid
     if (selectedExtra.length !== selectedExtraIds.length) {
       const foundIds   = new Set(selectedExtra.map(c => String(c._id)));
       const missingIds = selectedExtraIds.filter(id => !foundIds.has(String(id)));
@@ -150,9 +118,6 @@ export const validatePaymentSelection = async ({
   }
 
   // ── Resolve the actual amount being collected per extra charge ───────────
-  // Full amount by default — identical to today's behavior. Only charges
-  // explicitly flagged partialPaymentAllowed may use a lower amount, and
-  // only if the member actually selected that charge.
   const partialKeys = Object.keys(partialAmounts);
   for (const key of partialKeys) {
     if (!selectedExtraIds.map(String).includes(String(key))) {
@@ -183,12 +148,10 @@ export const validatePaymentSelection = async ({
   }
 
   // ── Compute verified total from database records ──────────────────────────
-  // The frontend sends charge IDs (and, for partial charges, an amount) — we
-  // verify and clamp everything against the DB. The frontend total is NEVER
-  // trusted, and no amount can ever exceed the true outstanding balance.
   const totalAmount =
     selectedMonthly.reduce((sum, c) => sum + c.amount, 0) +
-    Object.values(extraChargeAmounts).reduce((sum, amt) => sum + amt, 0);
+    Object.values(extraChargeAmounts).reduce((sum, amt) => sum + amt, 0) +
+    advanceAmt;
 
   if (totalAmount < 1) {
     throw new Error("Computed payment amount must be at least 1 BDT");
@@ -199,5 +162,6 @@ export const validatePaymentSelection = async ({
     selectedMonthly,
     selectedExtra,
     extraChargeAmounts,
+    advanceAmount: advanceAmt,
   };
 };

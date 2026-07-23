@@ -1,19 +1,18 @@
 // client/src/components/member/PaymentSection.jsx
 //
 // CHANGE from previous version:
-//   - Opening Balance amount input now uses a separate raw-text state
-//     (openingBalanceInput) that the user can type into freely — including
-//     clearing it or typing an out-of-range value mid-edit. Clamping to
-//     [1, fullAmount] now happens only on blur, not on every keystroke.
-//     Previously, clamping on every onChange meant the value snapped back
-//     to 1 the instant the field became empty (e.g. while selecting all
-//     and retyping), making it impossible to type a fresh number like 300
-//     without it becoming "1300" first. openingBalanceAmount (the numeric
-//     state actually used in selectedExtraTotal/handlePay) only updates
-//     once a valid, clamped value is committed on blur.
-//   - Everything else — i18next usage, ExportControl, FIFO month selection,
-//     regular extra charge checkboxes, pay flow, receipt download — is
-//     unchanged.
+//   - Removed the earlier isPaid-gated separate "Pay in Advance" card.
+//     Advance payment is now folded into the normal Pay Now flow: an
+//     always-available "Add extra for future dues (optional)" field lets
+//     a member top up any payment with a credit amount, whether or not
+//     they currently have other dues selected or outstanding at all.
+//   - The Pay Now section is no longer hidden when the member is fully
+//     paid up — it stays available purely for advance payment in that case.
+//   - Added a standalone "Credit Balance" banner, shown whenever the
+//     member has unapplied credit, regardless of their current due status.
+//   - Everything else — Opening Balance card, i18next usage, ExportControl,
+//     FIFO month selection, regular extra charge checkboxes, receipt
+//     download — is unchanged.
 
 import React, {
   useState, useEffect, useCallback, useMemo, useRef,
@@ -28,11 +27,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
 
-// ─── Static lookups ───────────────────────────────────────────────────────────
 const monthName = (month, format = "long") =>
   new Date(2000, month - 1).toLocaleDateString(undefined, { month: format });
-
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
 
 const Skeleton = ({ className }) => (
   <div className={`animate-pulse bg-gray-100 rounded ${className}`} />
@@ -51,8 +47,6 @@ const SummaryCardSkeleton = () => (
   </div>
 );
 
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
-
 const STATUS_STYLES = {
   completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
   pending:   "bg-amber-50  text-amber-700   border-amber-200",
@@ -66,8 +60,6 @@ const StatusBadge = ({ status }) => (
     {status.charAt(0).toUpperCase() + status.slice(1)}
   </span>
 );
-
-// ─── ExportControl ────────────────────────────────────────────────────────────
 
 const ExportControl = ({ t }) => {
   const { getToken } = useAppContext();
@@ -240,8 +232,6 @@ const ExportControl = ({ t }) => {
   );
 };
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 export default function PaymentSection({ onPaymentSuccess }) {
   const { axios, getToken } = useAppContext();
 
@@ -252,13 +242,11 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const [selectedMonthlyIds,   setSelectedMonthlyIds]   = useState([]);
   const [selectedExtraIds,     setSelectedExtraIds]     = useState([]);
   const [openingBalanceAmount, setOpeningBalanceAmount] = useState(0);
-  // Raw text the user is typing into the Opening Balance amount input.
-  // Kept separate from openingBalanceAmount (the numeric, clamped value
-  // actually used in calculations) so the field can be freely edited —
-  // including a momentarily empty or out-of-range value — without being
-  // fought on every keystroke. Clamping happens on blur, in the input's
-  // onBlur handler below.
   const [openingBalanceInput,  setOpeningBalanceInput]  = useState("0");
+  // Optional "top up with extra credit" amount — can be combined with a
+  // charge selection, or sent alone with nothing else selected.
+  const [extraAdvanceInput,    setExtraAdvanceInput]    = useState("0");
+  const [extraAdvanceAmount,   setExtraAdvanceAmount]   = useState(0);
   const [loadingData,          setLoadingData]          = useState(true);
   const [loadingHistory,       setLoadingHistory]       = useState(false);
   const [paying,               setPaying]               = useState(false);
@@ -278,6 +266,8 @@ export default function PaymentSection({ onPaymentSuccess }) {
         const openingAmt = data.openingBalanceCharge?.amount ?? 0;
         setOpeningBalanceAmount(openingAmt);
         setOpeningBalanceInput(String(openingAmt));
+        setExtraAdvanceInput("0");
+        setExtraAdvanceAmount(0);
       }
     } catch {
       toast.error("Failed to load payment data");
@@ -391,12 +381,21 @@ export default function PaymentSection({ onPaymentSuccess }) {
     return regularExtraTotal + (openingBalanceSelected ? openingBalanceAmount : 0);
   }, [breakdown, selectedExtraIds, openingBalanceAmount]);
 
-  const selectedTotal = selectedMonthlyTotal + selectedExtraTotal;
-  const hasSelection  = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
+  // Portion that actually clears existing dues — used to compute how
+  // much of totalDue remains, independent of any advance top-up.
+  const chargesSelectedTotal = selectedMonthlyTotal + selectedExtraTotal;
+
+  // Grand total actually charged to the gateway this transaction.
+  const selectedTotal = chargesSelectedTotal + extraAdvanceAmount;
+
+  const hasSelection =
+    selectedMonthlyIds.length > 0 ||
+    selectedExtraIds.length   > 0 ||
+    extraAdvanceAmount        > 0;
 
   const handlePay = async () => {
     if (!hasSelection) {
-      toast.error("Select at least one charge to pay");
+      toast.error("Select at least one charge, or add an amount to pay in advance");
       return;
     }
     setPaying(true);
@@ -413,7 +412,12 @@ export default function PaymentSection({ onPaymentSuccess }) {
 
       const { data } = await axios.post(
         "/api/payments/create",
-        { selectedMonthlyIds, selectedExtraIds, partialAmounts },
+        {
+          selectedMonthlyIds,
+          selectedExtraIds,
+          partialAmounts,
+          advanceAmount: extraAdvanceAmount,
+        },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success && data.url) {
@@ -439,8 +443,9 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const lastPayment      = breakdown?.lastPayment          ?? null;
   const nextDueMonth     = breakdown?.nextDueMonth         ?? null;
   const pendingPayment   = breakdown?.pendingPayment       ?? null;
+  const creditBalance    = breakdown?.creditBalance        ?? 0;
   const unpaidMonthCount = unpaidMonthly.length;
-  const remainingAfterSelection = totalDue - selectedTotal;
+  const remainingAfterSelection = totalDue - chargesSelectedTotal;
 
   const dueDescription = (() => {
     const mc = unpaidMonthCount;
@@ -514,7 +519,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
             </div>
           </div>
 
-          {/* Breakdown strip */}
           <div className="grid grid-cols-2 divide-x divide-gray-100 border-t border-gray-100">
             <div className="p-3.5 text-center">
               <p className="text-[10px] text-gray-400 uppercase tracking-wide">
@@ -534,7 +538,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
             </div>
           </div>
 
-          {/* Metadata footer */}
           {(nextDueMonth || lastPayment) && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-4 py-3
               border-t border-gray-100 bg-gray-50/60">
@@ -575,6 +578,24 @@ export default function PaymentSection({ onPaymentSuccess }) {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Credit balance banner — shown whenever the member has
+          unapplied advance-payment credit, regardless of current due
+          status. Independent of everything else. ──────────────────── */}
+      {!loadingData && creditBalance > 0 && (
+        <div className="flex items-center gap-3 p-4 bg-emerald-50 border
+          border-emerald-200 rounded-xl">
+          <Wallet className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+          <div className="text-sm">
+            <p className="font-semibold text-emerald-800">
+              Credit Balance: ৳{creditBalance.toLocaleString()}
+            </p>
+            <p className="text-emerald-600 text-xs mt-0.5">
+              This will be automatically applied to your upcoming monthly dues.
+            </p>
+          </div>
         </div>
       )}
 
@@ -652,11 +673,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
         </div>
       </div>
 
-      {/* ── Opening Balance card ─────────────────────────────────────────
-          Rendered only when the member has an unpaid Opening Balance
-          charge. Placed after the 12-month strip, before the monthly
-          dues selector, since it's neither a calendar month nor a
-          regular extra charge. */}
+      {/* ── Opening Balance card ─────────────────────────────────────── */}
       {!loadingData && breakdown?.openingBalanceCharge && (
         <div className="border border-indigo-200 rounded-2xl overflow-hidden bg-indigo-50/40">
           <div className="px-5 py-4 flex items-center gap-3">
@@ -682,13 +699,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
               min={1}
               max={breakdown.openingBalanceCharge.amount}
               value={openingBalanceInput}
-              onChange={e => {
-                // Allow free typing — including a temporarily empty
-                // field or a value outside bounds — so the user isn't
-                // fighting the input while editing. Clamping/validation
-                // happens on blur instead of on every keystroke.
-                setOpeningBalanceInput(e.target.value);
-              }}
+              onChange={e => setOpeningBalanceInput(e.target.value)}
               onBlur={() => {
                 const parsed = Number(openingBalanceInput);
                 const clamped = Math.min(
@@ -884,79 +895,104 @@ export default function PaymentSection({ onPaymentSuccess }) {
         </div>
       )}
 
-      {/* ── Pay now ───────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {!loadingData && !isPaid && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className={`rounded-2xl border p-5 transition-all duration-200
-              ${hasSelection
-                ? "border-[var(--color-primary)] bg-blue-50"
-                : "border-gray-200 bg-gray-50"
-              }`}
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide">
-                  {hasSelection
-                    ? t("pay.totalSelected")
-                    : t("pay.selectAbove")
-                  }
-                </p>
-                <p className={`text-3xl font-bold font-playfair leading-none mt-1
-                  ${hasSelection ? "text-gray-900" : "text-gray-300"}`}>
-                  {hasSelection ? `৳${selectedTotal.toLocaleString()}` : "—"}
-                </p>
+      {/* ── Pay now — always available, whether or not there are current
+          dues, so a member can add an advance-payment top-up at any
+          time. ───────────────────────────────────────────────────────── */}
+      {!loadingData && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`rounded-2xl border p-5 transition-all duration-200
+            ${hasSelection
+              ? "border-[var(--color-primary)] bg-blue-50"
+              : "border-gray-200 bg-gray-50"
+            }`}
+        >
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <label className="text-xs text-gray-500">
+              Add extra for future dues (optional)
+            </label>
+            <span className="text-sm text-gray-500">৳</span>
+            <input
+              type="number"
+              min={0}
+              value={extraAdvanceInput}
+              onChange={e => setExtraAdvanceInput(e.target.value)}
+              onBlur={() => {
+                const parsed = Number(extraAdvanceInput);
+                const clamped = Math.max(0, Number.isFinite(parsed) ? parsed : 0);
+                setExtraAdvanceInput(String(clamped));
+                setExtraAdvanceAmount(clamped);
+              }}
+              className="w-28 p-1.5 border border-gray-200 rounded-lg text-xs
+                focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            />
+          </div>
 
-                {hasSelection && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {selectedMonthlyIds.length > 0 && (
-                      <p className="text-xs text-gray-500">
-                        {t("pay.monthLine", {
-                          count:  selectedMonthlyIds.length,
-                          amount: selectedMonthlyTotal.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                    {selectedExtraIds.length > 0 && (
-                      <p className="text-xs text-gray-500">
-                        {t("pay.extraLine", {
-                          count:  selectedExtraIds.length,
-                          amount: selectedExtraTotal.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                    {remainingAfterSelection > 0 && (
-                      <p className="text-xs text-orange-500 font-medium">
-                        {t("pay.remaining", {
-                          amount: remainingAfterSelection.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={handlePay}
-                disabled={!hasSelection || paying}
-                className="flex items-center gap-2 px-6 py-3
-                  bg-[var(--color-primary)] text-white text-sm font-semibold
-                  rounded-xl shadow-sm hover:bg-blue-700 active:scale-95
-                  transition-all disabled:opacity-40 disabled:cursor-not-allowed
-                  disabled:active:scale-100 flex-shrink-0"
-              >
-                {paying
-                  ? <><Loader2 className="animate-spin h-4 w-4" /> {t("pay.processing")}</>
-                  : <><CreditCard className="h-4 w-4" /> {t("pay.payNow")}</>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                {hasSelection
+                  ? t("pay.totalSelected")
+                  : t("pay.selectAbove")
                 }
-              </button>
+              </p>
+              <p className={`text-3xl font-bold font-playfair leading-none mt-1
+                ${hasSelection ? "text-gray-900" : "text-gray-300"}`}>
+                {hasSelection ? `৳${selectedTotal.toLocaleString()}` : "—"}
+              </p>
+
+              {hasSelection && (
+                <div className="mt-1.5 space-y-0.5">
+                  {selectedMonthlyIds.length > 0 && (
+                    <p className="text-xs text-gray-500">
+                      {t("pay.monthLine", {
+                        count:  selectedMonthlyIds.length,
+                        amount: selectedMonthlyTotal.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                  {selectedExtraIds.length > 0 && (
+                    <p className="text-xs text-gray-500">
+                      {t("pay.extraLine", {
+                        count:  selectedExtraIds.length,
+                        amount: selectedExtraTotal.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                  {extraAdvanceAmount > 0 && (
+                    <p className="text-xs text-emerald-600">
+                      + ৳{extraAdvanceAmount.toLocaleString()} banked as credit for future dues
+                    </p>
+                  )}
+                  {remainingAfterSelection > 0 && (
+                    <p className="text-xs text-orange-500 font-medium">
+                      {t("pay.remaining", {
+                        amount: remainingAfterSelection.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+            <button
+              onClick={handlePay}
+              disabled={!hasSelection || paying}
+              className="flex items-center gap-2 px-6 py-3
+                bg-[var(--color-primary)] text-white text-sm font-semibold
+                rounded-xl shadow-sm hover:bg-blue-700 active:scale-95
+                transition-all disabled:opacity-40 disabled:cursor-not-allowed
+                disabled:active:scale-100 flex-shrink-0"
+            >
+              {paying
+                ? <><Loader2 className="animate-spin h-4 w-4" /> {t("pay.processing")}</>
+                : <><CreditCard className="h-4 w-4" /> {t("pay.payNow")}</>
+              }
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Transaction history + export ──────────────────────────────── */}
       <div className="border border-gray-200 rounded-2xl">

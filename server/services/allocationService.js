@@ -56,7 +56,7 @@ import PaymentAllocation from "../models/PaymentAllocation.js";
 // schema catches this — one will fail and retry.
 // At 500 members this is not a realistic concern.
 
-const generateReceiptNumber = async (session) => {
+export const generateReceiptNumber = async (session) => {
   const year  = new Date().getFullYear();
   const count = await Payment.countDocuments(
     { status: "completed" },

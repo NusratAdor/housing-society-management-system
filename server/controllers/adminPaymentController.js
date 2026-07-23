@@ -3,12 +3,15 @@
 // approvePayment is the ONLY place a payment ever actually clears dues,
 // generates a receipt, and notifies/emails the member.
 //
-// CHANGE (this pass): approvePayment now computes the member's remaining
-// due AFTER allocation and passes both `allocations` (the exact
-// PaymentAllocation records) and `remainingDue` into
-// sendPaymentConfirmationEmail — fixing a receipt-accuracy bug where
-// partial payments showed the wrong per-line amount and always claimed
-// dues were "cleared" even when they weren't.
+// CHANGE (this pass): allocatePayment now handles the charges portion of
+// EVERY payment uniformly — including a pure-advance payment, where
+// pendingMonthlyIds/pendingExtraIds are simply empty arrays (allocatePayment
+// already handles empty selections correctly, creating zero
+// PaymentAllocation records and just marking the payment completed). If
+// payment.advanceAmount > 0, that amount becomes available credit purely
+// by virtue of sitting on the now-"completed" Payment document — no
+// separate deposit-recording step needed. The admin is shown, and the
+// member is emailed, the resulting credit balance when relevant.
 
 import Payment         from "../models/Payment.js";
 import Member          from "../models/Member.js";
@@ -18,6 +21,7 @@ import { createMonthlyChargesForMonth } from "../services/chargeService.js";
 import { allocatePayment } from "../services/allocationService.js";
 import { sendPaymentConfirmationEmail } from "../services/emailService.js";
 import { getMemberDueSummary } from "../services/paymentService.js";
+import { getMemberCreditBalance } from "../services/creditService.js";
 
 export const triggerMonthlyDue = async (req, res) => {
   if (process.env.DISABLE_MANUAL_TRIGGERS === "true") {
@@ -127,10 +131,10 @@ export const approvePayment = async (req, res) => {
       }
 
       try {
-        // What's left on the member's account AFTER this payment —
-        // drives whether the email honestly says "fully cleared" or
-        // shows the actual remaining balance.
-        const dueSummary = await getMemberDueSummary(payment.member);
+        const dueSummary   = await getMemberDueSummary(payment.member);
+        const creditBalance = payment.advanceAmount > 0
+          ? await getMemberCreditBalance(payment.member)
+          : 0;
 
         await sendPaymentConfirmationEmail({
           to:            member.email,
@@ -140,6 +144,8 @@ export const approvePayment = async (req, res) => {
           paidAt:        payment.paidAt || new Date(),
           allocations,
           remainingDue:  dueSummary.totalDue,
+          advanceAmount: payment.advanceAmount,
+          creditBalance,
         });
         emailSent = true;
       } catch (emailErr) {
@@ -148,7 +154,7 @@ export const approvePayment = async (req, res) => {
     }
 
     writeAuditLog({
-      action:      "PAYMENT_CONFIRMED",
+      action:      "PAYMENT_APPROVED",
       performedBy: req.clerkUserId,
       targetId:    payment._id,
       description: `Admin confirmed payment of ৳${payment.amount} (${payment.transactionId}). Receipt: ${receiptNumber}`,
@@ -157,6 +163,7 @@ export const approvePayment = async (req, res) => {
         transactionId: payment.transactionId,
         amount:        payment.amount,
         memberId:      String(payment.member),
+        advanceAmount: payment.advanceAmount,
         emailSent,
       },
     });
