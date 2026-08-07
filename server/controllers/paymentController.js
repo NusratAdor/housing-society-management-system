@@ -159,54 +159,37 @@ export const createPaymentSession = async (req, res) => {
       advanceAmount,       // NEW — presence of this signals an advance-payment request
     } = req.body;
 
-    const isAdvancePayment = advanceAmount !== undefined && advanceAmount !== null;
+    if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
+  return res.status(400).json({
+    success: false,
+    message: "selectedMonthlyIds and selectedExtraIds must be arrays",
+  });
+}
 
-    if (!isAdvancePayment) {
-      if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
-        return res.status(400).json({
-          success: false,
-          message: "selectedMonthlyIds and selectedExtraIds must be arrays",
-        });
-      }
-    }
+const advanceAmt = Number(advanceAmount) || 0;
+if (advanceAmt < 0) {
+  return res.status(400).json({
+    success: false,
+    message: "Advance amount cannot be negative",
+  });
+}
 
-    const member = await Member
-      .findOne({ clerkUserId: req.clerkUserId })
-      .lean();
-
-    if (!member) {
-      return res.status(404).json({ success: false, message: "Member not found" });
-    }
-
-    let totalAmount, selectedMonthly = [], selectedExtra = [], extraChargeAmounts = {};
-
-    if (isAdvancePayment) {
-      try {
-        const dueSummary = await getMemberDueSummary(member._id);
-        const validated  = validateAdvancePaymentRequest({
-          advanceAmount,
-          currentTotalDue: dueSummary.totalDue,
-        });
-        totalAmount = validated.amount;
-      } catch (validationError) {
-        return res.status(400).json({ success: false, message: validationError.message });
-      }
-    } else {
-      try {
-        const validationResult = await validatePaymentSelection({
-          memberId: member._id,
-          selectedMonthlyIds,
-          selectedExtraIds,
-          partialAmounts,
-        });
-        totalAmount         = validationResult.totalAmount;
-        selectedMonthly      = validationResult.selectedMonthly;
-        selectedExtra        = validationResult.selectedExtra;
-        extraChargeAmounts   = validationResult.extraChargeAmounts;
-      } catch (validationError) {
-        return res.status(400).json({ success: false, message: validationError.message });
-      }
-    }
+let totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts;
+try {
+  const validationResult = await validatePaymentSelection({
+    memberId: member._id,
+    selectedMonthlyIds,
+    selectedExtraIds,
+    partialAmounts,
+    advanceAmount: advanceAmt,
+  });
+  totalAmount        = validationResult.totalAmount;
+  selectedMonthly     = validationResult.selectedMonthly;
+  selectedExtra       = validationResult.selectedExtra;
+  extraChargeAmounts  = validationResult.extraChargeAmounts;
+} catch (validationError) {
+  return res.status(400).json({ success: false, message: validationError.message });
+}
 
     const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
     const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
@@ -220,14 +203,14 @@ export const createPaymentSession = async (req, res) => {
 
     const tranId = `TX-${Date.now()}-${String(member._id).slice(-6)}`;
 
-    payment = await Payment.create({
-      member:          member._id,
-      amount:          totalAmount,
-      transactionId:   tranId,
-      status:          "pending",
-      gateway:         "sslcommerz",
-      isCreditDeposit: isAdvancePayment,
-    });
+   payment = await Payment.create({
+  member:        member._id,
+  amount:        totalAmount,
+  advanceAmount: advanceAmt,
+  transactionId: tranId,
+  status:        "pending",
+  gateway:       "sslcommerz",
+});
 
     const selectionPayload = Buffer.from(
       JSON.stringify({
