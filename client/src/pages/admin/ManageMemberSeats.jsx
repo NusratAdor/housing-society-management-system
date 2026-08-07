@@ -1,23 +1,8 @@
 // client/src/pages/admin/ManageMemberSeats.jsx
 //
-// Admin interface for MemberSeat records — manual CRUD + CSV bulk import.
-//
-// CSV import flow:
-//   1. Admin downloads the sample CSV template
-//   2. Fills in member data (membershipNo, name, plotNo, designation,
-//      joinDate, dueAmount)
-//   3. Uploads the CSV — system validates and shows per-row results
-//   4. Import is an upsert — safe to re-upload corrected files
-//
-// FIX (this pass): removed a stale client-side check in handleSave that
-// required form.joinDate to be non-empty before saving. joinDate has been
-// optional on the backend (MemberSeat model + memberSeatController) since
-// an earlier pass — it only drives the "Member since" display and falls
-// back to Member.createdAt when absent. This stale guard silently blocked
-// saving ANY edit (even just a name change) on seats with no joinDate,
-// throwing "Join date is required" even though the field is genuinely
-// optional. The "Join Date *" label is also updated to "Join Date —
-// optional" so the UI stops implying it's mandatory.
+// CHANGE (this pass): openingBalance/dueAmount column and table display
+// replaced with paidThroughMonth ("YYYY-MM"). Manual form gains a plain
+// month-input field; table shows it as a formatted label when present.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { toast }   from "react-hot-toast";
@@ -30,20 +15,29 @@ import { useAppContext } from "../../context/AppContext";
 import usePageTitle      from "../../hooks/usePageTitle";
 
 const EMPTY_FORM = {
-  membershipNo: "",
-  name:         "",
-  plotNo:       "",
-  designation:  "",
-  joinDate:     "",
+  membershipNo:     "",
+  name:             "",
+  plotNo:           "",
+  designation:      "",
+  joinDate:         "",
+  paidThroughMonth: "",
 };
 
 // Sample CSV content for download
-const SAMPLE_CSV = `membershipNo,name,plotNo,dueAmount
-1234,Md. Kamal Hossain,"Plot-1, Plot-3",4800
-5443,Nasrin Begum,Plot-7,1600
-3245,Abdul Karim,Plot-12,0
-7821,Fatema Khanam,"Plot-2, Plot-5",3200
-4432,Mohammad Rafiqul Islam,Plot-9,800`;
+const SAMPLE_CSV = `membershipNo,name,plotNo,paidThroughMonth
+1234,Md. Kamal Hossain,"Plot-1, Plot-3",2026-03
+5443,Nasrin Begum,Plot-7,
+3245,Abdul Karim,Plot-12,2025-12
+7821,Fatema Khanam,"Plot-2, Plot-5",2026-01
+4432,Mohammad Rafiqul Islam,Plot-9,`;
+
+const monthLabel = (yyyyMm) => {
+  if (!yyyyMm) return null;
+  const [year, month] = yyyyMm.split("-").map(Number);
+  return new Date(year, month - 1).toLocaleDateString(undefined, {
+    month: "short", year: "numeric",
+  });
+};
 
 export default function ManageMemberSeats() {
   const { axios, getToken } = useAppContext();
@@ -95,13 +89,14 @@ export default function ManageMemberSeats() {
   const openEdit = (seat) => {
     setEditingSeat(seat);
     setForm({
-      membershipNo: seat.membershipNo,
-      name:         seat.name,
-      plotNo:       seat.plotNo || "",
-      designation:  seat.designation || "",
-      joinDate:     seat.joinDate
+      membershipNo:     seat.membershipNo,
+      name:             seat.name,
+      plotNo:           seat.plotNo || "",
+      designation:      seat.designation || "",
+      joinDate:         seat.joinDate
         ? new Date(seat.joinDate).toISOString().slice(0, 10)
         : "",
+      paidThroughMonth: seat.paidThroughMonth || "",
     });
     setShowForm(true);
     setShowImport(false);
@@ -117,10 +112,6 @@ export default function ManageMemberSeats() {
     e.preventDefault();
     if (!form.membershipNo.trim()) { toast.error("Membership number is required"); return; }
     if (!form.name.trim())         { toast.error("Name is required");              return; }
-    // joinDate is optional — no validation here. It only drives the
-    // "Member since" display; Member.createdAt is the fallback when absent.
-    // (Previously this threw "Join date is required" and blocked saving
-    // ANY edit on a seat with no joinDate, even unrelated field changes.)
 
     setSaving(true);
     try {
@@ -217,7 +208,7 @@ export default function ManageMemberSeats() {
 
       if (data.success) {
         toast.success(data.message);
-        await fetchSeats(); // refresh the seat list
+        await fetchSeats();
       } else {
         toast.error(data.message);
       }
@@ -314,13 +305,13 @@ export default function ManageMemberSeats() {
           <div className="bg-white rounded-xl border border-blue-100 p-4 mb-4">
             <p className="text-xs font-semibold text-gray-600 mb-2">Required CSV columns:</p>
             <div className="flex flex-wrap gap-2">
-              {["membershipNo", "name", "plotNo", "dueAmount"].map(col => (
+              {["membershipNo", "name", "plotNo"].map(col => (
                 <span key={col} className="px-2 py-1 bg-blue-100 text-blue-700
                   text-[11px] font-mono rounded-lg">
                   {col}
                 </span>
               ))}
-              {["designation", "joinDate"].map(col => (
+              {["designation", "joinDate", "paidThroughMonth"].map(col => (
                 <span key={col} className="px-2 py-1 bg-gray-100 text-gray-500
                   text-[11px] font-mono rounded-lg">
                   {col} (optional)
@@ -328,10 +319,11 @@ export default function ManageMemberSeats() {
               ))}
             </div>
             <p className="text-[11px] text-gray-400 mt-2">
-              Required: membershipNo, name, plotNo, dueAmount &nbsp;·&nbsp;
-              Optional: designation, joinDate &nbsp;·&nbsp;
+              Required: membershipNo, name, plotNo &nbsp;·&nbsp;
+              Optional: designation, joinDate, paidThroughMonth &nbsp;·&nbsp;
               Multiple plots: "Plot-1, Plot-3" (with quotes) &nbsp;·&nbsp;
-              dueAmount: total opening balance in taka (0 if fully paid)
+              paidThroughMonth: last month already settled outside the system,
+              format YYYY-MM (e.g. 2026-03) — leave blank if none
             </p>
           </div>
 
@@ -451,7 +443,7 @@ export default function ManageMemberSeats() {
             <div className="flex items-center gap-2 mb-4 px-3 py-2
               bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
               <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              Claimed seat — membership number and join date are locked.
+              Claimed seat — membership number, join date, and paid-through month are locked.
             </div>
           )}
 
@@ -531,7 +523,6 @@ export default function ManageMemberSeats() {
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
                   Join Date
-                  <span className="text-gray-400 font-normal ml-1">— optional</span>
                 </label>
                 <input
                   type="date"
@@ -539,6 +530,29 @@ export default function ManageMemberSeats() {
                   onChange={e => setForm(f => ({ ...f, joinDate: e.target.value }))}
                   readOnly={!!editingSeat?.isClaimed}
                   max={new Date().toISOString().slice(0, 10)}
+                  className={`w-full px-3 py-2 text-sm border rounded-xl outline-none
+                    focus:ring-2 focus:ring-[var(--color-primary)]/20
+                    focus:border-[var(--color-primary)]
+                    ${editingSeat?.isClaimed
+                      ? "bg-gray-100 border-gray-200 text-gray-400 cursor-default"
+                      : "bg-white border-gray-200"
+                    }`}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Paid Through Month
+                  <span className="text-gray-400 font-normal ml-1">
+                    — last month already settled outside the system
+                  </span>
+                </label>
+                <input
+                  type="month"
+                  value={form.paidThroughMonth}
+                  onChange={e => setForm(f => ({ ...f, paidThroughMonth: e.target.value }))}
+                  readOnly={!!editingSeat?.isClaimed}
+                  max={new Date().toISOString().slice(0, 7)}
                   className={`w-full px-3 py-2 text-sm border rounded-xl outline-none
                     focus:ring-2 focus:ring-[var(--color-primary)]/20
                     focus:border-[var(--color-primary)]
@@ -605,7 +619,7 @@ export default function ManageMemberSeats() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left min-w-[700px]">
+          <table className="w-full text-sm text-left min-w-[760px]">
             <thead className="text-xs uppercase text-gray-400 bg-gray-50
               border-b border-gray-100">
               <tr>
@@ -613,7 +627,7 @@ export default function ManageMemberSeats() {
                 <th className="px-4 py-3 font-semibold">Name</th>
                 <th className="px-4 py-3 font-semibold">Plot(s)</th>
                 <th className="px-4 py-3 font-semibold">Join Date</th>
-                <th className="px-4 py-3 font-semibold">Opening Balance</th>
+                <th className="px-4 py-3 font-semibold">Paid Through</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Actions</th>
               </tr>
@@ -637,12 +651,12 @@ export default function ManageMemberSeats() {
                     }
                   </td>
                   <td className="px-4 py-3">
-                    {seat.openingBalance > 0 ? (
-                      <span className="text-amber-600 font-semibold text-xs">
-                        ৳{seat.openingBalance.toLocaleString()}
+                    {seat.paidThroughMonth ? (
+                      <span className="text-emerald-600 font-semibold text-xs">
+                        {monthLabel(seat.paidThroughMonth)}
                       </span>
                     ) : (
-                      <span className="text-emerald-600 text-xs">Paid up</span>
+                      <span className="text-gray-400 text-xs">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3">

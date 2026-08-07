@@ -1,4 +1,20 @@
 // server/models/MemberSeat.js
+//
+// Admin pre-registers membership numbers before a member can sign up.
+//
+// CHANGE (this pass): openingBalance removed entirely. Replaced with
+// paidThroughMonth — a single "YYYY-MM" string marking the last month
+// the member had already settled dues for, outside the digital system.
+// At registration, memberSeatService.generateBackdatedCharges() uses this
+// to create real, individually-dated MonthlyCharge records from the
+// following month through the current month — catching the member up to
+// present with correctly fee-locked charges, rather than a single lump
+// "opening balance" figure. Left blank, no backdated charges are created
+// at all — the member simply starts fresh from their registration month.
+//
+// Any one-off amount owed outside of monthly dues (e.g. a specific past
+// incident) is added after registration via the existing custom-charges
+// admin feature (ExtraCharge) — unchanged.
 
 import mongoose from "mongoose";
 
@@ -11,60 +27,67 @@ const memberSeatSchema = new mongoose.Schema(
       trim:      true,
       uppercase: true,
     },
+
     name: {
       type:     String,
       required: true,
       trim:     true,
     },
+
+    // Comma-separated for members with multiple plots — e.g. "Plot-1, Plot-3"
     plotNo: {
       type:    String,
-      trim:    true,
       default: "",
-      // Multiple plots stored as comma-separated: "Plot-1, Plot-3"
-    },
-    designation: {
-      type:    String,
       trim:    true,
-      default: "",
     },
 
-    // OPTIONAL — physical society join date.
-    // Used only for "Member since" display in the dashboard.
-    // If not available (old members with no records), falls back
-    // to Member.createdAt (the digital signup date).
-    // Does NOT drive any charge calculation — opening balance handles that.
+    designation: {
+      type:    String,
+      default: "",
+      trim:    true,
+    },
+
+    // Optional — only drives "Member since" display. Falls back to
+    // Member.createdAt (digital signup date) when not provided.
     joinDate: {
       type:    Date,
       default: null,
     },
 
-    // Opening balance from CSV — total amount owed at migration time.
-    // Applied as a single "Opening Balance" MonthlyCharge when the
-    // member first completes their profile, so the existing payment
-    // system works without any changes.
-    // 0 = fully paid up at time of migration.
-    openingBalance: {
-      type:    Number,
-      default: 0,
-      min:     0,
+    // Optional — "YYYY-MM" (e.g. "2026-03"). Last month the member had
+    // already settled dues for, outside the digital system. Consumed
+    // once at seat-claim time by memberSeatService.generateBackdatedCharges;
+    // not used afterward.
+    paidThroughMonth: {
+      type:    String,
+      default: null,
+      trim:    true,
+      validate: {
+        validator: (v) => v === null || /^\d{4}-(0[1-9]|1[0-2])$/.test(v),
+        message:   "paidThroughMonth must be in YYYY-MM format",
+      },
     },
 
-    // Claim tracking
     isClaimed: {
       type:    Boolean,
       default: false,
-      index:   true,
     },
+
     claimedByClerkId: {
       type:    String,
       default: null,
     },
+
     claimedAt: {
-      type:    Date,
-      default: null,
+      type: Date,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
+
+memberSeatSchema.index({ membershipNo: 1 }, { unique: true });
+memberSeatSchema.index({ isClaimed: 1 });
 
 export default mongoose.model("MemberSeat", memberSeatSchema);

@@ -1,20 +1,21 @@
 // server/controllers/memberController.js
 //
-// CHANGE: when a member claims their seat, if the seat has an
-// openingBalance > 0, a single ExtraCharge record is created
-// representing all historical dues carried over from before the
-// digital system. This is NOT a MonthlyCharge — opening balance isn't
-// tied to a calendar month, so it belongs on ExtraCharge, which already
-// supports labels, a free-text purpose, and (now) partial payment.
+// CHANGE (this pass): the old "Opening Balance as a partially-payable
+// ExtraCharge" block is removed entirely. When a member claims a seat
+// with a paidThroughMonth set, memberSeatService.generateBackdatedCharges
+// creates real, correctly-dated MonthlyCharge records catching them up to
+// the present month — no lump-sum figure, no partial-payment concept
+// needed. Any one-off amount owed outside monthly dues is added
+// afterward via the existing custom-charges admin feature, unchanged.
 
 import Member        from "../models/Member.js";
 import MemberSeat    from "../models/MemberSeat.js";
-import ExtraCharge   from "../models/ExtraCharge.js";
 import {
   createOrUpdateMember,
   findMemberByClerkId,
   requestAdminAccess,
 } from "../services/memberService.js";
+import { generateBackdatedCharges } from "../services/memberSeatService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 // ── createMemberProfile ───────────────────────────────────────────────────────
@@ -81,37 +82,24 @@ export const createMemberProfile = async (req, res) => {
       await seat.save();
     }
 
-    // ── Apply opening balance (first-time registration only) ──────────────
-    // If the CSV import set an openingBalance > 0, create a single
-    // ExtraCharge record to represent all historical dues. Scoped by
-    // `label: "Opening Balance"` (not partialPaymentAllowed) so this check
-    // stays specific to this charge type even if ExtraCharge is later used
-    // for other partial-payment-eligible charges.
-    if (isFirstTimeCreate && seat.openingBalance > 0) {
+    // ── Backfill historical monthly dues (first-time registration only) ──
+    // If the seat has a paidThroughMonth set, catch the member up with
+    // real, individually-dated MonthlyCharge records from the following
+    // month through the current month. No-op if paidThroughMonth is unset.
+    if (isFirstTimeCreate) {
       try {
-        const alreadyExists = await ExtraCharge.findOne({
-          member: member._id,
-          label:  "Opening Balance",
+        const result = await generateBackdatedCharges({
+          memberId:         member._id,
+          paidThroughMonth: seat.paidThroughMonth,
         });
-
-        if (!alreadyExists) {
-          await ExtraCharge.create({
-            member:                member._id,
-            label:                 "Opening Balance",
-            purpose:               "Dues carried over from before joining the digital system",
-            amount:                seat.openingBalance,
-            originalAmount:        seat.openingBalance,
-            partialPaymentAllowed: true,
-            status:                "Unpaid",
-            createdBy:             "SYSTEM",
-          });
+        if (result.created > 0) {
           console.info(
-            `[MemberSeat] Opening balance ৳${seat.openingBalance} created for ${cleanMembership}`
+            `[MemberSeat] Backfilled ${result.created} month(s) of dues for ${cleanMembership}`
           );
         }
-      } catch (balanceError) {
+      } catch (backfillError) {
         // Non-fatal — log but do not fail registration
-        console.error("[MemberSeat] Opening balance creation failed:", balanceError.message);
+        console.error("[MemberSeat] Backdated charge creation failed:", backfillError.message);
       }
     }
 
@@ -147,7 +135,7 @@ export const getMemberSeat = async (req, res) => {
     if (!member) return res.status(404).json({ success: false, message: "Member not found" });
 
     const seat = await MemberSeat.findOne({ membershipNo: member.membershipNo })
-      .select("joinDate membershipNo openingBalance")
+      .select("joinDate membershipNo")
       .lean();
 
     return res.status(200).json({ success: true, joinDate: seat?.joinDate ?? null });

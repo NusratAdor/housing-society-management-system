@@ -1,12 +1,13 @@
 // server/controllers/memberSeatController.js
 //
-// joinDate is now OPTIONAL in both manual form and CSV import.
-// Opening balance covers all historical dues as a single charge.
-// joinDate only drives the "Member since" display — if unavailable,
-// the dashboard falls back to Member.createdAt (digital signup date).
+// CHANGE (this pass): dueAmount/openingBalance column replaced with
+// paidThroughMonth ("YYYY-MM" — e.g. "2026-03"). joinDate remains
+// optional, drives "Member since" display only. paidThroughMonth is
+// consumed once at seat-claim time (memberController.js →
+// memberSeatService.generateBackdatedCharges) to create real, dated
+// MonthlyCharge records catching the member up to the present.
 
 import MemberSeat    from "../models/MemberSeat.js";
-import MonthlyCharge from "../models/MonthlyCharge.js";
 
 // ── sanitize ──────────────────────────────────────────────────────────────────
 const sanitize = (val) => {
@@ -57,25 +58,23 @@ const parseCSV = (text) => {
 };
 
 // ── validateRow ───────────────────────────────────────────────────────────────
-// joinDate is OPTIONAL — only membershipNo, name, dueAmount are required.
+// joinDate and paidThroughMonth are both OPTIONAL — only membershipNo,
+// name, plotNo are required.
 
-const REQUIRED_HEADERS = ["membershipno", "name", "plotno", "dueamount"];
+const REQUIRED_HEADERS = ["membershipno", "name", "plotno"];
+const PAID_THROUGH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const validateRow = (row) => {
   const errors = [];
 
-  const membershipNo = sanitize(row["membershipno"] ?? "").toUpperCase();
-  const name         = sanitize(row["name"]         ?? "");
-  const dueAmountRaw = sanitize(row["dueamount"]    ?? "0");
-  const joinDateRaw  = sanitize(row["joindate"]     ?? ""); // optional
+  const membershipNo       = sanitize(row["membershipno"]       ?? "").toUpperCase();
+  const name                = sanitize(row["name"]                ?? "");
+  const joinDateRaw         = sanitize(row["joindate"]            ?? ""); // optional
+  const paidThroughMonthRaw = sanitize(row["paidthroughmonth"]    ?? ""); // optional
 
   if (!membershipNo) errors.push("membershipNo is required");
   if (!/^[A-Z0-9\-]+$/.test(membershipNo)) errors.push("membershipNo contains invalid characters");
   if (!name) errors.push("name is required");
-
-  const dueAmount = parseFloat(dueAmountRaw);
-  if (isNaN(dueAmount)) errors.push(`dueAmount "${dueAmountRaw}" is not a number`);
-  if (dueAmount < 0)    errors.push("dueAmount cannot be negative");
 
   // joinDate validation — only if provided
   let parsedDate = null;
@@ -90,16 +89,34 @@ const validateRow = (row) => {
     }
   }
 
+  // paidThroughMonth validation — only if provided
+  let paidThroughMonth = null;
+  if (paidThroughMonthRaw) {
+    if (!PAID_THROUGH_PATTERN.test(paidThroughMonthRaw)) {
+      errors.push(`paidThroughMonth "${paidThroughMonthRaw}" must be in YYYY-MM format (e.g. 2026-03)`);
+    } else {
+      const [yearStr, monthStr] = paidThroughMonthRaw.split("-");
+      const asDate = new Date(Number(yearStr), Number(monthStr) - 1, 1);
+      const now    = new Date();
+      const nowFirstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      if (asDate > nowFirstOfMonth) {
+        errors.push("paidThroughMonth cannot be in the future");
+      } else {
+        paidThroughMonth = paidThroughMonthRaw;
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
     parsed: errors.length === 0 ? {
       membershipNo,
       name,
-      plotNo:      sanitize(row["plotno"]      ?? ""),
-      designation: sanitize(row["designation"] ?? ""),
-      joinDate:    parsedDate, // null if not provided — that's fine
-      dueAmount:   Math.round(isNaN(dueAmount) ? 0 : dueAmount),
+      plotNo:           sanitize(row["plotno"]      ?? ""),
+      designation:      sanitize(row["designation"] ?? ""),
+      joinDate:         parsedDate,
+      paidThroughMonth,
     } : null,
   };
 };
@@ -120,21 +137,26 @@ export const getAllSeats = async (req, res) => {
 
 export const createSeat = async (req, res) => {
   try {
-    const { membershipNo, name, plotNo, designation, joinDate } = req.body;
+    const { membershipNo, name, plotNo, designation, joinDate, paidThroughMonth } = req.body;
 
     if (!membershipNo?.trim()) return res.status(400).json({ success: false, message: "Membership number is required" });
     if (!name?.trim())         return res.status(400).json({ success: false, message: "Name is required" });
+
+    if (paidThroughMonth && !PAID_THROUGH_PATTERN.test(paidThroughMonth)) {
+      return res.status(400).json({ success: false, message: "paidThroughMonth must be in YYYY-MM format" });
+    }
 
     const clean = membershipNo.trim().toUpperCase();
     const existing = await MemberSeat.findOne({ membershipNo: clean });
     if (existing) return res.status(400).json({ success: false, message: `Membership number ${clean} already exists` });
 
     const seat = await MemberSeat.create({
-      membershipNo: clean,
-      name:         name.trim(),
-      plotNo:       plotNo?.trim() || "",
-      designation:  designation?.trim() || "",
-      joinDate:     joinDate ? new Date(joinDate) : null, // optional
+      membershipNo:     clean,
+      name:             name.trim(),
+      plotNo:           plotNo?.trim() || "",
+      designation:      designation?.trim() || "",
+      joinDate:         joinDate ? new Date(joinDate) : null,
+      paidThroughMonth: paidThroughMonth || null,
     });
 
     return res.status(201).json({ success: true, seat });
@@ -151,13 +173,19 @@ export const updateSeat = async (req, res) => {
     const seat = await MemberSeat.findById(req.params.id);
     if (!seat) return res.status(404).json({ success: false, message: "Seat not found" });
 
-    const { membershipNo, name, plotNo, designation, joinDate } = req.body;
+    const { membershipNo, name, plotNo, designation, joinDate, paidThroughMonth } = req.body;
+
+    if (paidThroughMonth && !PAID_THROUGH_PATTERN.test(paidThroughMonth)) {
+      return res.status(400).json({ success: false, message: "paidThroughMonth must be in YYYY-MM format" });
+    }
 
     if (seat.isClaimed) {
+      // Claimed seats: paidThroughMonth is locked too — it was already
+      // consumed once at claim time and re-applying it retroactively
+      // would create duplicate/incorrect backdated charges.
       if (name)        seat.name        = name.trim();
       if (plotNo !== undefined) seat.plotNo = plotNo.trim();
       if (designation !== undefined) seat.designation = designation.trim();
-      // joinDate and membershipNo locked on claimed seats
     } else {
       if (membershipNo) {
         const clean = membershipNo.trim().toUpperCase();
@@ -171,6 +199,7 @@ export const updateSeat = async (req, res) => {
       if (plotNo !== undefined)      seat.plotNo      = plotNo.trim();
       if (designation !== undefined) seat.designation = designation.trim();
       if (joinDate)           seat.joinDate    = new Date(joinDate);
+      if (paidThroughMonth !== undefined) seat.paidThroughMonth = paidThroughMonth || null;
     }
 
     await seat.save();
@@ -220,7 +249,7 @@ export const importSeatsFromCSV = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `CSV is missing required columns: ${missingHeaders.join(", ")}`,
-        hint:    "Required: membershipNo, name, dueAmount — Optional: plotNo, designation, joinDate",
+        hint:    "Required: membershipNo, name, plotNo — Optional: designation, joinDate, paidThroughMonth",
       });
     }
 
@@ -245,27 +274,27 @@ export const importSeatsFromCSV = async (req, res) => {
         const existing = await MemberSeat.findOne({ membershipNo: parsed.membershipNo });
 
         if (existing) {
-          // Always update display fields
           existing.name        = parsed.name;
           existing.plotNo      = parsed.plotNo;
           existing.designation = parsed.designation;
 
-          // Only update joinDate and openingBalance on unclaimed seats
+          // Only update joinDate/paidThroughMonth on unclaimed seats —
+          // same reasoning as updateSeat above.
           if (!existing.isClaimed) {
             if (parsed.joinDate) existing.joinDate = parsed.joinDate;
-            existing.openingBalance = parsed.dueAmount;
+            if (parsed.paidThroughMonth) existing.paidThroughMonth = parsed.paidThroughMonth;
           }
 
           await existing.save();
           results.updated++;
         } else {
           await MemberSeat.create({
-            membershipNo:   parsed.membershipNo,
-            name:           parsed.name,
-            plotNo:         parsed.plotNo,
-            designation:    parsed.designation,
-            joinDate:       parsed.joinDate || null,
-            openingBalance: parsed.dueAmount,
+            membershipNo:     parsed.membershipNo,
+            name:             parsed.name,
+            plotNo:           parsed.plotNo,
+            designation:      parsed.designation,
+            joinDate:         parsed.joinDate || null,
+            paidThroughMonth: parsed.paidThroughMonth || null,
           });
           results.created++;
         }

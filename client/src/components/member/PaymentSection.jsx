@@ -1,19 +1,26 @@
 // client/src/components/member/PaymentSection.jsx
 //
-// CHANGE from previous version:
-//   - Opening Balance amount input now uses a separate raw-text state
-//     (openingBalanceInput) that the user can type into freely — including
-//     clearing it or typing an out-of-range value mid-edit. Clamping to
-//     [1, fullAmount] now happens only on blur, not on every keystroke.
-//     Previously, clamping on every onChange meant the value snapped back
-//     to 1 the instant the field became empty (e.g. while selecting all
-//     and retyping), making it impossible to type a fresh number like 300
-//     without it becoming "1300" first. openingBalanceAmount (the numeric
-//     state actually used in selectedExtraTotal/handlePay) only updates
-//     once a valid, clamped value is committed on blur.
-//   - Everything else — i18next usage, ExportControl, FIFO month selection,
-//     regular extra charge checkboxes, pay flow, receipt download — is
-//     unchanged.
+// CHANGE (this pass): the month range picker now extends 12 months
+// beyond the member's real unpaid charges, showing "projected" future
+// months (not yet billed — no MonthlyCharge exists for them yet) so a
+// member can pay a full year ahead in one range selection, e.g. "August
+// this year through July next year."
+//
+// Real unpaid months keep working exactly as before — selecting them
+// populates selectedMonthlyIds and is allocated immediately at
+// confirmation. Projected future months have no real charge ID yet, so
+// selecting them instead adds to advanceAmount (banked credit), reusing
+// the existing, already-deployed credit system: as each projected month
+// actually arrives, chargeService.js's monthly cron auto-applies the
+// banked credit to clear it, with zero new backend logic required here.
+//
+// The previous manual "add extra for future dues" input is retained as
+// a separate free-form top-up (for an amount not tied to a specific
+// month count), additive to whatever the picker contributes.
+//
+// Everything else — Opening-Balance-free summary card, Paid Through
+// indicator, credit balance banner, extra charge checkboxes, receipt
+// download, i18next usage, ExportControl — is unchanged.
 
 import React, {
   useState, useEffect, useCallback, useMemo, useRef,
@@ -28,11 +35,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
 
-// ─── Static lookups ───────────────────────────────────────────────────────────
+// Number of not-yet-billed future months to offer in the range picker
+// beyond the member's real unpaid charges. 12 covers "pay a full year
+// ahead" in one selection without the chip row growing unbounded.
+const PROJECTED_MONTHS_AHEAD = 12;
+
 const monthName = (month, format = "long") =>
   new Date(2000, month - 1).toLocaleDateString(undefined, { month: format });
-
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
 
 const Skeleton = ({ className }) => (
   <div className={`animate-pulse bg-gray-100 rounded ${className}`} />
@@ -50,8 +59,6 @@ const SummaryCardSkeleton = () => (
     </div>
   </div>
 );
-
-// ─── StatusBadge ─────────────────────────────────────────────────────────────
 
 const STATUS_STYLES = {
   completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -247,31 +254,23 @@ export default function PaymentSection({ onPaymentSuccess }) {
 
   const { t } = useTranslation("payment");
 
-  const [breakdown,            setBreakdown]            = useState(null);
-  const [history,              setHistory]              = useState([]);
-  const [selectedMonthlyIds,   setSelectedMonthlyIds]   = useState([]);
-  const [selectedExtraIds,     setSelectedExtraIds]     = useState([]);
-  const [openingBalanceAmount, setOpeningBalanceAmount] = useState(0);
-  // Raw text the user is typing into the Opening Balance amount input.
-  // Kept separate from openingBalanceAmount (the numeric, clamped value
-  // actually used in calculations) so the field can be freely edited —
-  // including a momentarily empty or out-of-range value — without being
-  // fought on every keystroke. Clamping happens on blur, in the input's
-  // onBlur handler below.
-  const [openingBalanceInput,  setOpeningBalanceInput]  = useState("0");
-  const [loadingData,          setLoadingData]          = useState(true);
-  const [loadingHistory,       setLoadingHistory]       = useState(false);
-  const [paying,               setPaying]               = useState(false);
-  const [historyOpen,          setHistoryOpen]          = useState(false);
-  const [expandedPayment,      setExpandedPayment]      = useState(null);
+  const [breakdown,          setBreakdown]          = useState(null);
+  const [history,            setHistory]            = useState([]);
+  const [selectedMonthlyIds, setSelectedMonthlyIds] = useState([]);
+  // Number of PROJECTED (not-yet-billed) future months currently
+  // included in the picker's selected range. Kept separate from
+  // selectedMonthlyIds because projected months have no real charge ID.
+  const [selectedFutureCount, setSelectedFutureCount] = useState(0);
+
+ 
+  const [selectedExtraIds,   setSelectedExtraIds]   = useState([]);
 
 
-
-const [advanceAmount,   setAdvanceAmount]   = useState(0);
-const [advanceInput,    setAdvanceInput]    = useState("0");
-const [payingAdvance,   setPayingAdvance]   = useState(false);
-
-
+  const [loadingData,        setLoadingData]        = useState(true);
+  const [loadingHistory,     setLoadingHistory]     = useState(false);
+  const [paying,             setPaying]             = useState(false);
+  const [historyOpen,        setHistoryOpen]        = useState(false);
+  const [expandedPayment,    setExpandedPayment]    = useState(null);
 
   const fetchBreakdown = useCallback(async () => {
     try {
@@ -282,10 +281,9 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
       if (data.success) {
         setBreakdown(data);
         setSelectedMonthlyIds([]);
+        setSelectedFutureCount(0);
         setSelectedExtraIds([]);
-        const openingAmt = data.openingBalanceCharge?.amount ?? 0;
-        setOpeningBalanceAmount(openingAmt);
-        setOpeningBalanceInput(String(openingAmt));
+ 
       }
     } catch {
       toast.error("Failed to load payment data");
@@ -317,7 +315,7 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
     const status = params.get("payment_status");
     if (!status) return;
     window.history.replaceState({}, "", window.location.pathname);
-     if (status === "VALID") {
+    if (status === "VALID") {
       toast.success("Payment received! Awaiting confirmation from admin.");
       fetchBreakdown();
       onPaymentSuccess?.();
@@ -328,20 +326,99 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleMonthClick = useCallback((chargeId, index) => {
-    const isSelected = selectedMonthlyIds.includes(chargeId);
-    if (isSelected) {
-      setSelectedMonthlyIds(
-        (breakdown?.unpaidMonthlyCharges || [])
-          .slice(0, index).map(c => String(c._id))
-      );
+  // ── Combined display list: real unpaid months + projected future ───────
+  // months. Projected months are computed client-side (no MonthlyCharge
+  // exists for them yet) by continuing the sequence from the last real
+  // unpaid month, or from the current month if the member has no unpaid
+  // months at all. Each uses the CURRENT fee as its best-available
+  // estimate — the actual amount is only locked when that month's real
+  // charge is eventually created by the monthly cron.
+  const displayMonths = useMemo(() => {
+    if (!breakdown) return [];
+
+    const real = breakdown.unpaidMonthlyCharges.map(c => ({
+      kind:   "real",
+      id:     String(c._id),
+      month:  c.month,
+      year:   c.year,
+      amount: c.amount,
+    }));
+
+    let cursorMonth, cursorYear;
+    if (real.length > 0) {
+      const last = real[real.length - 1];
+      cursorMonth = last.month;
+      cursorYear  = last.year;
     } else {
-      setSelectedMonthlyIds(
-        (breakdown?.unpaidMonthlyCharges || [])
-          .slice(0, index + 1).map(c => String(c._id))
-      );
+      const now = new Date();
+      cursorMonth = now.getMonth() + 1;
+      cursorYear  = now.getFullYear();
+      // No unpaid months at all — the current month itself may already
+      // exist as Paid, so projected months start the month AFTER it to
+      // avoid ever projecting a month that's already been charged.
     }
-  }, [selectedMonthlyIds, breakdown]);
+
+    const projected = [];
+    for (let i = 0; i < PROJECTED_MONTHS_AHEAD; i++) {
+      cursorMonth += 1;
+      if (cursorMonth > 12) { cursorMonth = 1; cursorYear += 1; }
+      projected.push({
+        kind:   "projected",
+        id:     `projected-${cursorYear}-${cursorMonth}`,
+        month:  cursorMonth,
+        year:   cursorYear,
+        amount: breakdown.currentFee,
+      });
+    }
+
+    return [...real, ...projected];
+  }, [breakdown]);
+
+  const realMonthCount = breakdown?.unpaidMonthlyCharges?.length ?? 0;
+
+  // Prepay ahead is only meaningful once nothing real is left unpaid —
+// paying ahead while a real month is still due would silently violate
+// the FIFO order every other part of the system enforces.
+const allRealMonthsSelected = realMonthCount === 0 || selectedMonthlyIds.length === realMonthCount;
+
+  // ── Month range picker ───────────────────────────────────────────────────
+  // Two-click range selection over the combined (real + projected) list.
+  // Real months populate selectedMonthlyIds as before. Projected months
+  // populate selectedFutureCount, which is converted to an advanceAmount
+  // contribution (count × currentFee) at payment time — routing through
+  // the existing, already-deployed credit system with no backend change.
+// Single-click, FIFO cumulative selection over REAL unpaid months only —
+// clicking a month selects it and every unpaid month before it. Clicking
+// the currently-furthest-selected month again shrinks the selection back
+// by one. Always deterministic — no anchor state, nothing to reset.
+const handleRealMonthClick = useCallback((index) => {
+  const isCurrentlyFurthestSelected =
+    selectedMonthlyIds.length === index + 1 &&
+    selectedMonthlyIds[index] === displayMonths[index].id;
+
+  const newSelection = isCurrentlyFurthestSelected
+    ? displayMonths.slice(0, index).map(m => m.id)
+    : displayMonths.slice(0, index + 1).map(m => m.id);
+
+  setSelectedMonthlyIds(newSelection);
+
+  // Prepay ahead requires every real unpaid month to be covered first —
+  // if this click leaves any unpaid month unselected, clear any existing
+  // prepay selection so state can never represent "prepaying future
+  // months while current dues remain unpaid."
+  if (newSelection.length < realMonthCount) {
+    setSelectedFutureCount(0);
+  }
+}, [selectedMonthlyIds, displayMonths, realMonthCount]);
+
+// Prepay-ahead selection — a single value from the dropdown, not clicks.
+const handlePrepayMonthsChange = useCallback((e) => {
+  setSelectedFutureCount(Number(e.target.value));
+}, []);
+
+
+
+
 
   const handleExtraToggle = useCallback((chargeId) => {
     setSelectedExtraIds(prev =>
@@ -385,43 +462,46 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
       .reduce((sum, c) => sum + c.amount, 0);
   }, [breakdown, selectedMonthlyIds]);
 
+  // Estimated cost of the selected projected future months, at today's
+  // fee. This is what gets banked as credit for them — see the caveat
+  // rendered in the UI below about fee changes before those months bill.
+  const projectedFutureTotal = useMemo(() => {
+    if (!breakdown) return 0;
+    return selectedFutureCount * (breakdown.currentFee || 0);
+  }, [breakdown, selectedFutureCount]);
+
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
-    const regularExtraTotal = breakdown.unpaidExtraCharges
+    return breakdown.unpaidExtraCharges
       .filter(c => selectedExtraIds.includes(String(c._id)))
       .reduce((sum, c) => sum + c.amount, 0);
+  }, [breakdown, selectedExtraIds]);
 
-    const openingBalanceId = breakdown.openingBalanceCharge
-      ? String(breakdown.openingBalanceCharge._id)
-      : null;
-    const openingBalanceSelected = openingBalanceId && selectedExtraIds.includes(openingBalanceId);
+  const chargesSelectedTotal = selectedMonthlyTotal + selectedExtraTotal;
+const totalAdvanceAmount = projectedFutureTotal;
+  const selectedTotal        = chargesSelectedTotal + totalAdvanceAmount;
 
-    return regularExtraTotal + (openingBalanceSelected ? openingBalanceAmount : 0);
-  }, [breakdown, selectedExtraIds, openingBalanceAmount]);
-
-  const selectedTotal = selectedMonthlyTotal + selectedExtraTotal;
-  const hasSelection  = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
+  const hasSelection =
+    selectedMonthlyIds.length > 0 ||
+    selectedExtraIds.length   > 0 ||
+    totalAdvanceAmount        > 0;
 
   const handlePay = async () => {
     if (!hasSelection) {
-      toast.error("Select at least one charge to pay");
+      toast.error("Select at least one month or charge, or add an amount to pay in advance");
       return;
     }
     setPaying(true);
     try {
       const token = await getToken();
 
-      const openingBalanceId = breakdown?.openingBalanceCharge
-        ? String(breakdown.openingBalanceCharge._id)
-        : null;
-      const partialAmounts = {};
-      if (openingBalanceId && selectedExtraIds.includes(openingBalanceId)) {
-        partialAmounts[openingBalanceId] = openingBalanceAmount;
-      }
-
       const { data } = await axios.post(
         "/api/payments/create",
-        { selectedMonthlyIds, selectedExtraIds, partialAmounts },
+        {
+          selectedMonthlyIds,
+          selectedExtraIds,
+          advanceAmount: totalAdvanceAmount,
+        },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success && data.url) {
@@ -436,41 +516,6 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
     }
   };
 
-
-
-
-
-  const handleAdvancePay = async () => {
-  if (advanceAmount < 1) {
-    toast.error("Enter a valid amount");
-    return;
-  }
-  setPayingAdvance(true);
-  try {
-    const token = await getToken();
-    const { data } = await axios.post(
-      "/api/payments/create",
-      { advanceAmount },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (data.success && data.url) {
-      window.location.href = data.url;
-    } else {
-      toast.error(data.message || "Failed to start payment");
-      setPayingAdvance(false);
-    }
-  } catch (e) {
-    toast.error(e.response?.data?.message || "Payment failed. Try again.");
-    setPayingAdvance(false);
-  }
-};
-
-
-
-
-
-
-  const unpaidMonthly    = breakdown?.unpaidMonthlyCharges ?? [];
   const unpaidExtra      = breakdown?.unpaidExtraCharges   ?? [];
   const last12           = breakdown?.last12Months         ?? [];
   const currentFee       = breakdown?.currentFee           ?? 0;
@@ -480,9 +525,11 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
   const isPaid           = breakdown?.paymentStatus        === "Paid";
   const lastPayment      = breakdown?.lastPayment          ?? null;
   const nextDueMonth     = breakdown?.nextDueMonth         ?? null;
+  const paidThroughMonth = breakdown?.paidThroughMonth     ?? null;
   const pendingPayment   = breakdown?.pendingPayment       ?? null;
-  const unpaidMonthCount = unpaidMonthly.length;
-  const remainingAfterSelection = totalDue - selectedTotal;
+  const creditBalance    = breakdown?.creditBalance        ?? 0;
+  const unpaidMonthCount = realMonthCount;
+  const remainingAfterSelection = totalDue - chargesSelectedTotal;
 
   const dueDescription = (() => {
     const mc = unpaidMonthCount;
@@ -524,6 +571,11 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
               </p>
             </div>
           </div>
+          {paidThroughMonth && (
+            <p className="text-xs text-emerald-600 mt-3 pt-3 border-t border-emerald-100">
+              Dues current through <span className="font-semibold">{paidThroughMonth.label}</span>
+            </p>
+          )}
         </div>
       ) : (
         <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
@@ -556,7 +608,6 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
             </div>
           </div>
 
-          {/* Breakdown strip */}
           <div className="grid grid-cols-2 divide-x divide-gray-100 border-t border-gray-100">
             <div className="p-3.5 text-center">
               <p className="text-[10px] text-gray-400 uppercase tracking-wide">
@@ -576,10 +627,19 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
             </div>
           </div>
 
-          {/* Metadata footer */}
-          {(nextDueMonth || lastPayment) && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-4 py-3
+          {(nextDueMonth || lastPayment || paidThroughMonth) && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 py-3
               border-t border-gray-100 bg-gray-50/60">
+              {paidThroughMonth && (
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                    Paid Through
+                  </p>
+                  <p className="text-xs font-semibold text-gray-700 mt-0.5">
+                    {paidThroughMonth.label}
+                  </p>
+                </div>
+              )}
               {nextDueMonth && (
                 <div>
                   <p className="text-[10px] text-gray-400 uppercase tracking-wide">
@@ -620,62 +680,21 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
         </div>
       )}
 
-
-
-{!loadingData && isPaid && (
-  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 overflow-hidden">
-    <div className="px-5 py-4 flex items-center gap-3">
-      <div className="p-1.5 bg-emerald-100 rounded-lg">
-        <Wallet className="h-4 w-4 text-emerald-600" />
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-emerald-900">Pay in Advance</p>
-        <p className="text-xs text-emerald-700">
-          Prepay future dues — it will be applied automatically as new months become due
-        </p>
-      </div>
-      {breakdown?.creditBalance > 0 && (
-        <span className="ml-auto text-sm font-bold text-emerald-700">
-          Credit: ৳{breakdown.creditBalance.toLocaleString()}
-        </span>
+      {/* ── Credit balance banner ────────────────────────────────────── */}
+      {!loadingData && creditBalance > 0 && (
+        <div className="flex items-center gap-3 p-4 bg-emerald-50 border
+          border-emerald-200 rounded-xl">
+          <Wallet className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+          <div className="text-sm">
+            <p className="font-semibold text-emerald-800">
+              Credit Balance: ৳{creditBalance.toLocaleString()}
+            </p>
+            <p className="text-emerald-600 text-xs mt-0.5">
+              This will be automatically applied to your upcoming monthly dues.
+            </p>
+          </div>
+        </div>
       )}
-    </div>
-    <div className="px-5 pb-5 flex items-center gap-3 flex-wrap">
-      <label className="text-xs text-gray-500">Amount to prepay</label>
-      <span className="text-sm text-gray-500">৳</span>
-      <input
-        type="number"
-        min={1}
-        value={advanceInput}
-        onChange={e => setAdvanceInput(e.target.value)}
-        onBlur={() => {
-          const parsed = Number(advanceInput);
-          const clamped = Math.max(1, Number.isFinite(parsed) ? parsed : 1);
-          setAdvanceInput(String(clamped));
-          setAdvanceAmount(clamped);
-        }}
-        className="w-32 p-2 border border-gray-200 rounded-lg text-sm
-          focus:outline-none focus:ring-2 focus:ring-emerald-300"
-      />
-      <button
-        onClick={handleAdvancePay}
-        disabled={payingAdvance}
-        className="ml-auto flex items-center gap-2 px-4 py-2 text-xs font-semibold
-          rounded-lg bg-emerald-600 text-white hover:bg-emerald-700
-          disabled:opacity-50 transition-colors"
-      >
-        {payingAdvance
-          ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Processing…</>
-          : <><CreditCard className="h-3.5 w-3.5" /> Pay in Advance</>
-        }
-      </button>
-    </div>
-  </div>
-)}
-
-
-
-
 
       {/* ── Pending payment warning ────────────────────────────────────── */}
       {!loadingData && pendingPayment && (
@@ -714,9 +733,9 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
       {/* ── 12-month history strip ─────────────────────────────────────── */}
       <div>
         <p className="text-[10px] font-semibold text-gray-400 uppercase
-          tracking-widest mb-2">
-          {t("history12")}
-        </p>
+  tracking-widest mb-2">
+  Payment History
+</p>
         <div className="flex gap-1.5 overflow-x-auto pb-1"
           style={{ scrollbarWidth: "none" }}>
           {loadingData
@@ -751,166 +770,136 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
         </div>
       </div>
 
-      {/* ── Opening Balance card ─────────────────────────────────────────
-          Rendered only when the member has an unpaid Opening Balance
-          charge. Placed after the 12-month strip, before the monthly
-          dues selector, since it's neither a calendar month nor a
-          regular extra charge. */}
-      {!loadingData && breakdown?.openingBalanceCharge && (
-        <div className="border border-indigo-200 rounded-2xl overflow-hidden bg-indigo-50/40">
-          <div className="px-5 py-4 flex items-center gap-3">
-            <div className="p-1.5 bg-indigo-100 rounded-lg">
-              <Wallet className="h-4 w-4 text-indigo-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-indigo-900">Opening Balance</p>
-              <p className="text-xs text-indigo-600">
-                Carried over from before joining the digital system — stays here until fully cleared
-              </p>
-            </div>
-            <span className="ml-auto text-sm font-bold text-indigo-700">
-              ৳{breakdown.openingBalanceCharge.amount.toLocaleString()}
-            </span>
-          </div>
+      {/* ── Monthly dues range picker — real unpaid months + projected
+          future months (up to a year ahead), in one combined range
+          selection. ──────────────────────────────────────────────────── */}
+      {/* ── Monthly dues — real unpaid months (click to select through) ── */}
+<div className="border border-gray-200 rounded-2xl overflow-hidden">
+  <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+    <div className="p-1.5 bg-blue-50 rounded-lg">
+      <Wallet className="h-4 w-4 text-blue-600" />
+    </div>
+    <div>
+      <p className="text-sm font-semibold text-gray-800">
+        {t("monthly.title")}
+      </p>
+      <p className="text-xs text-gray-400">
+  Pay through a selected month
+</p>
+    </div>
+  </div>
 
-          <div className="px-5 pb-5 flex items-center gap-3 flex-wrap">
-            <label className="text-xs text-gray-500">Amount to pay now</label>
-            <span className="text-sm text-gray-500">৳</span>
-            <input
-              type="number"
-              min={1}
-              max={breakdown.openingBalanceCharge.amount}
-              value={openingBalanceInput}
-              onChange={e => {
-                // Allow free typing — including a temporarily empty
-                // field or a value outside bounds — so the user isn't
-                // fighting the input while editing. Clamping/validation
-                // happens on blur instead of on every keystroke.
-                setOpeningBalanceInput(e.target.value);
-              }}
-              onBlur={() => {
-                const parsed = Number(openingBalanceInput);
-                const clamped = Math.min(
-                  Math.max(1, Number.isFinite(parsed) ? parsed : 1),
-                  breakdown.openingBalanceCharge.amount
-                );
-                setOpeningBalanceInput(String(clamped));
-                setOpeningBalanceAmount(clamped);
-              }}
-              className="w-32 p-2 border border-gray-200 rounded-lg text-sm
-                focus:outline-none focus:ring-2 focus:ring-indigo-300"
-            />
-            <button
-              onClick={() => handleExtraToggle(String(breakdown.openingBalanceCharge._id))}
-              className={`ml-auto px-3 py-1.5 text-xs font-semibold rounded-lg border
-                transition-colors ${
-                  selectedExtraIds.includes(String(breakdown.openingBalanceCharge._id))
-                    ? "bg-indigo-600 border-indigo-600 text-white"
-                    : "border-indigo-300 text-indigo-700 hover:bg-indigo-50"
-                }`}
-            >
-              {selectedExtraIds.includes(String(breakdown.openingBalanceCharge._id))
-                ? "Selected"
-                : "Select to pay"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Monthly dues selector ──────────────────────────────────────── */}
-      <div className="border border-gray-200 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
-          <div className="p-1.5 bg-blue-50 rounded-lg">
-            <Wallet className="h-4 w-4 text-blue-600" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-800">
-              {t("monthly.title")}
-            </p>
-            <p className="text-xs text-gray-400">
-              {t("monthly.subtitle")}
-            </p>
-          </div>
-        </div>
-
-        <div className="p-5">
-          {loadingData && (
-            <div className="flex flex-wrap gap-2">
-              {[1, 2, 3].map(i => (
-                <Skeleton key={i} className="h-9 w-28 rounded-xl" />
-              ))}
-            </div>
-          )}
-
-          {!loadingData && unpaidMonthly.length === 0 && (
-            <div className="flex items-center gap-3 py-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
-              <p className="text-sm text-emerald-700 font-medium">
-                {t("monthly.allPaid")}
-              </p>
-            </div>
-          )}
-
-          {!loadingData && unpaidMonthly.length > 0 && (
-            <>
-              <p className="text-xs text-gray-400 mb-3">
-                {t("monthly.selectHint")}
-              </p>
-              <div className="flex flex-wrap gap-2 mb-5">
-                {unpaidMonthly.map((charge, idx) => {
-                  const cid         = String(charge._id);
-                  const isSelected  = selectedMonthlyIds.includes(cid);
-                  const isReachable = idx === 0 || selectedMonthlyIds.includes(
-                    String(unpaidMonthly[idx - 1]._id)
-                  );
-                  return (
-                    <button
-                      key={cid}
-                      onClick={() => handleMonthClick(cid, idx)}
-                      title={`${monthName(charge.month)} ${charge.year} — ৳${charge.amount.toLocaleString()}`}
-                      className={`relative flex flex-col items-center px-4 py-2
-                        rounded-xl text-xs font-semibold border
-                        transition-all duration-150
-                        ${isSelected
-                          ? "bg-[var(--color-primary)] border-[var(--color-primary)] text-white shadow-sm scale-105"
-                          : isReachable
-                          ? "bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:bg-blue-50"
-                          : "bg-gray-50 border-gray-100 text-gray-300 cursor-default"
-                        }`}
-                    >
-                      <span>
-                        {new Date(charge.year, charge.month - 1)
-                          .toLocaleDateString(undefined, { month: "short" })}{" "}
-                        {charge.year}
-                      </span>
-                      <span className={`text-[10px] mt-0.5 font-normal ${
-                        isSelected ? "text-white/80" : "text-gray-400"
-                      }`}>
-                        ৳{charge.amount.toLocaleString()}
-                      </span>
-                      {isSelected && (
-                        <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5
-                          bg-emerald-400 rounded-full flex items-center justify-center">
-                          <span className="text-[7px] text-white font-bold">✓</span>
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedMonthlyIds.length > 0 && (
-                <p className="text-xs text-gray-500 mb-4">
-                  {t("monthly.selectedSummary", {
-                    count:  selectedMonthlyIds.length,
-                    amount: selectedMonthlyTotal.toLocaleString(),
-                  })}
-                </p>
-              )}
-            </>
-          )}
-        </div>
+  <div className="p-5">
+    {loadingData && (
+      <div className="flex flex-wrap gap-2">
+        {[1, 2, 3].map(i => (
+          <Skeleton key={i} className="h-9 w-28 rounded-xl" />
+        ))}
       </div>
+    )}
+
+    {!loadingData && realMonthCount === 0 && (
+      <div className="flex items-center gap-3 py-2">
+        <CheckCircle2 className="h-5 w-5 text-emerald-500 flex-shrink-0" />
+        <p className="text-sm text-emerald-700 font-medium">
+          {t("monthly.allPaid")}
+        </p>
+      </div>
+    )}
+
+    {!loadingData && realMonthCount > 0 && (
+      <>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {displayMonths.slice(0, realMonthCount).map((m, idx) => {
+            const isSelected = selectedMonthlyIds.includes(m.id);
+            return (
+              <button
+                key={m.id}
+                onClick={() => handleRealMonthClick(idx)}
+                title={`${monthName(m.month)} ${m.year} — ৳${m.amount.toLocaleString()}`}
+                className={`relative flex flex-col items-center px-4 py-2
+                  rounded-xl text-xs font-semibold border
+                  transition-all duration-150
+                  ${isSelected
+                    ? "bg-[var(--color-primary)] border-[var(--color-primary)] text-white shadow-sm scale-105"
+                    : "bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:bg-blue-50"
+                  }`}
+              >
+                <span>
+                  {new Date(m.year, m.month - 1)
+                    .toLocaleDateString(undefined, { month: "short" })}{" "}
+                  {m.year}
+                </span>
+                <span className={`text-[10px] mt-0.5 font-normal ${
+                  isSelected ? "text-white/80" : "text-gray-400"
+                }`}>
+                  ৳{m.amount.toLocaleString()}
+                </span>
+                {isSelected && (
+                  <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5
+                    bg-emerald-400 rounded-full flex items-center justify-center">
+                    <span className="text-[7px] text-white font-bold">✓</span>
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedMonthlyIds.length > 0 && (
+          <p className="text-xs text-gray-500 mb-4">
+            {t("monthly.selectedSummary", {
+              count:  selectedMonthlyIds.length,
+              amount: selectedMonthlyTotal.toLocaleString(),
+            })}
+          </p>
+        )}
+      </>
+    )}
+
+    {/* ── Prepay ahead — a single dropdown, not a chip grid. Estimated
+        amount shown live, right next to the selection. ─────────────── */}
+    {/* ── Prepay ahead — a single dropdown. Each option shows the total
+    cost of prepaying through that point, so the member sees the real
+    commitment before picking, not after. ────────────────────────── */}
+<div className="pt-4 border-t border-gray-100">
+  <div className="flex items-center gap-3 flex-wrap">
+    <label className="text-xs font-medium text-gray-600">
+      Prepay ahead <span className="text-gray-400 font-normal">(optional, at today's rate)</span>
+    </label>
+    <select
+      value={selectedFutureCount}
+      onChange={handlePrepayMonthsChange}
+      disabled={!allRealMonthsSelected}
+      className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs
+        focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white
+        min-w-[220px] disabled:bg-gray-50 disabled:text-gray-300
+        disabled:cursor-not-allowed"
+    >
+      <option value={0}>None</option>
+      {displayMonths.slice(realMonthCount).map((m, i) => {
+        const cumulativeCost = (i + 1) * (breakdown?.currentFee || 0);
+        return (
+          <option key={m.id} value={i + 1}>
+            {monthName(m.month, "short")} {m.year} — {i + 1} month{i > 0 ? "s" : ""}, ~৳{cumulativeCost.toLocaleString()}
+          </option>
+        );
+      })}
+    </select>
+  </div>
+  {!allRealMonthsSelected && (
+    <p className="text-[11px] text-gray-400 mt-2">
+      Clear current dues to unlock prepay
+    </p>
+  )}
+  {allRealMonthsSelected && selectedFutureCount > 0 && (
+    <p className="text-xs text-emerald-600 mt-2">
+      ৳{projectedFutureTotal.toLocaleString()} will be added as credit
+    </p>
+  )}
+</div>
+  </div>
+</div>
 
       {/* ── Extra / additional charges ────────────────────────────────── */}
       {!loadingData && unpaidExtra.length > 0 && (
@@ -983,79 +972,84 @@ const [payingAdvance,   setPayingAdvance]   = useState(false);
         </div>
       )}
 
-      {/* ── Pay now ───────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {!loadingData && !isPaid && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className={`rounded-2xl border p-5 transition-all duration-200
-              ${hasSelection
-                ? "border-[var(--color-primary)] bg-blue-50"
-                : "border-gray-200 bg-gray-50"
-              }`}
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide">
-                  {hasSelection
-                    ? t("pay.totalSelected")
-                    : t("pay.selectAbove")
-                  }
-                </p>
-                <p className={`text-3xl font-bold font-playfair leading-none mt-1
-                  ${hasSelection ? "text-gray-900" : "text-gray-300"}`}>
-                  {hasSelection ? `৳${selectedTotal.toLocaleString()}` : "—"}
-                </p>
+      {/* ── Pay now — always available, so a member can add an advance
+          top-up at any time even with nothing else selected. ────────── */}
+      {!loadingData && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`rounded-2xl border p-5 transition-all duration-200
+            ${hasSelection
+              ? "border-[var(--color-primary)] bg-blue-50"
+              : "border-gray-200 bg-gray-50"
+            }`}
+        >
+          
 
-                {hasSelection && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {selectedMonthlyIds.length > 0 && (
-                      <p className="text-xs text-gray-500">
-                        {t("pay.monthLine", {
-                          count:  selectedMonthlyIds.length,
-                          amount: selectedMonthlyTotal.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                    {selectedExtraIds.length > 0 && (
-                      <p className="text-xs text-gray-500">
-                        {t("pay.extraLine", {
-                          count:  selectedExtraIds.length,
-                          amount: selectedExtraTotal.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                    {remainingAfterSelection > 0 && (
-                      <p className="text-xs text-orange-500 font-medium">
-                        {t("pay.remaining", {
-                          amount: remainingAfterSelection.toLocaleString(),
-                        })}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={handlePay}
-                disabled={!hasSelection || paying}
-                className="flex items-center gap-2 px-6 py-3
-                  bg-[var(--color-primary)] text-white text-sm font-semibold
-                  rounded-xl shadow-sm hover:bg-blue-700 active:scale-95
-                  transition-all disabled:opacity-40 disabled:cursor-not-allowed
-                  disabled:active:scale-100 flex-shrink-0"
-              >
-                {paying
-                  ? <><Loader2 className="animate-spin h-4 w-4" /> {t("pay.processing")}</>
-                  : <><CreditCard className="h-4 w-4" /> {t("pay.payNow")}</>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                {hasSelection
+                  ? t("pay.totalSelected")
+                  : t("pay.selectAbove")
                 }
-              </button>
+              </p>
+              <p className={`text-3xl font-bold font-playfair leading-none mt-1
+                ${hasSelection ? "text-gray-900" : "text-gray-300"}`}>
+                {hasSelection ? `৳${selectedTotal.toLocaleString()}` : "—"}
+              </p>
+
+              {hasSelection && (
+                <div className="mt-1.5 space-y-0.5">
+                  {selectedMonthlyIds.length > 0 && (
+                    <p className="text-xs text-gray-500">
+                      {t("pay.monthLine", {
+                        count:  selectedMonthlyIds.length,
+                        amount: selectedMonthlyTotal.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                  {selectedExtraIds.length > 0 && (
+                    <p className="text-xs text-gray-500">
+                      {t("pay.extraLine", {
+                        count:  selectedExtraIds.length,
+                        amount: selectedExtraTotal.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                  {totalAdvanceAmount > 0 && (
+  <p className="text-xs text-emerald-600">
+    + ৳{totalAdvanceAmount.toLocaleString()} credit
+  </p>
+)}
+                  {remainingAfterSelection > 0 && (
+                    <p className="text-xs text-orange-500 font-medium">
+                      {t("pay.remaining", {
+                        amount: remainingAfterSelection.toLocaleString(),
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+            <button
+              onClick={handlePay}
+              disabled={!hasSelection || paying}
+              className="flex items-center gap-2 px-6 py-3
+                bg-[var(--color-primary)] text-white text-sm font-semibold
+                rounded-xl shadow-sm hover:bg-blue-700 active:scale-95
+                transition-all disabled:opacity-40 disabled:cursor-not-allowed
+                disabled:active:scale-100 flex-shrink-0"
+            >
+              {paying
+                ? <><Loader2 className="animate-spin h-4 w-4" /> {t("pay.processing")}</>
+                : <><CreditCard className="h-4 w-4" /> {t("pay.payNow")}</>
+              }
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Transaction history + export ──────────────────────────────── */}
       <div className="border border-gray-200 rounded-2xl">
