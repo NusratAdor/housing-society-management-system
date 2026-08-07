@@ -10,6 +10,20 @@
 //   explicitly confirms via adminPaymentController.approvePayment.
 //   This makes admin confirmation the single, deliberate point where
 //   money affects the member's account — not a third-party webhook.
+//
+// CHANGE (this pass) — unified payment session creation:
+//   createPaymentSession no longer branches on "isAdvancePayment" vs.
+//   "charge selection". The frontend now always sends advanceAmount
+//   (0 when no prepay is selected), so presence-based detection
+//   (`advanceAmount !== undefined && advanceAmount !== null`) incorrectly
+//   treated every ordinary payment as an advance payment. A member can
+//   legitimately select real months/extras AND prepay ahead in the same
+//   transaction, so both are now validated together in a single call to
+//   validatePaymentSelection, which already sums selectedMonthly +
+//   extraChargeAmounts + advanceAmount into totalAmount. The "must have
+//   zero due to prepay" rule is enforced client-side via the disabled
+//   prepay dropdown state, so validateAdvancePaymentRequest /
+//   getMemberDueSummary are no longer needed here.
 
 import mongoose     from "mongoose";
 import Member       from "../models/Member.js";
@@ -27,9 +41,6 @@ import {
   getMemberFullDashboardData,
   getMemberTransactionHistory,
 } from "../services/dashboardService.js";
-
-import { validateAdvancePaymentRequest } from "../services/creditService.js";
-import { getMemberDueSummary } from "../services/paymentService.js";
 
 // ─── GET /api/payments/me/breakdown ───────────────────────────────────────────
 // Powers the entire PaymentSection component on the member dashboard.
@@ -144,8 +155,13 @@ export const getPaymentAllocations = async (req, res) => {
 
 // ─── POST /api/payments/create ────────────────────────────────────────────────
 // Creates an SSLCommerz payment session for the member's selected charges.
-// UNCHANGED from previous pass — still validates the selection, computes the
-// verified total, creates a "pending" Payment, opens the gateway session.
+//
+// CHANGE (this pass): unified path — selectedMonthlyIds/selectedExtraIds and
+// advanceAmount are validated together via validatePaymentSelection, so a
+// member can select real charges and prepay ahead in the same transaction.
+// advanceAmount is value-based (Number(...) || 0), not presence-based, so
+// sending advanceAmount: 0 (which the frontend now always does) no longer
+// misroutes an ordinary payment down an advance-only path.
 
 export const createPaymentSession = async (req, res) => {
 
@@ -156,40 +172,48 @@ export const createPaymentSession = async (req, res) => {
       selectedMonthlyIds = [],
       selectedExtraIds   = [],
       partialAmounts     = {},
-      advanceAmount,       // NEW — presence of this signals an advance-payment request
+      advanceAmount,
     } = req.body;
 
     if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
-  return res.status(400).json({
-    success: false,
-    message: "selectedMonthlyIds and selectedExtraIds must be arrays",
-  });
-}
+      return res.status(400).json({
+        success: false,
+        message: "selectedMonthlyIds and selectedExtraIds must be arrays",
+      });
+    }
 
-const advanceAmt = Number(advanceAmount) || 0;
-if (advanceAmt < 0) {
-  return res.status(400).json({
-    success: false,
-    message: "Advance amount cannot be negative",
-  });
-}
+    const advanceAmt = Number(advanceAmount) || 0;
+    if (advanceAmt < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Advance amount cannot be negative",
+      });
+    }
 
-let totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts;
-try {
-  const validationResult = await validatePaymentSelection({
-    memberId: member._id,
-    selectedMonthlyIds,
-    selectedExtraIds,
-    partialAmounts,
-    advanceAmount: advanceAmt,
-  });
-  totalAmount        = validationResult.totalAmount;
-  selectedMonthly     = validationResult.selectedMonthly;
-  selectedExtra       = validationResult.selectedExtra;
-  extraChargeAmounts  = validationResult.extraChargeAmounts;
-} catch (validationError) {
-  return res.status(400).json({ success: false, message: validationError.message });
-}
+    const member = await Member
+      .findOne({ clerkUserId: req.clerkUserId })
+      .lean();
+
+    if (!member) {
+      return res.status(404).json({ success: false, message: "Member not found" });
+    }
+
+    let totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts;
+    try {
+      const validationResult = await validatePaymentSelection({
+        memberId: member._id,
+        selectedMonthlyIds,
+        selectedExtraIds,
+        partialAmounts,
+        advanceAmount: advanceAmt,
+      });
+      totalAmount        = validationResult.totalAmount;
+      selectedMonthly     = validationResult.selectedMonthly;
+      selectedExtra       = validationResult.selectedExtra;
+      extraChargeAmounts  = validationResult.extraChargeAmounts;
+    } catch (validationError) {
+      return res.status(400).json({ success: false, message: validationError.message });
+    }
 
     const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
     const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
@@ -203,14 +227,15 @@ try {
 
     const tranId = `TX-${Date.now()}-${String(member._id).slice(-6)}`;
 
-   payment = await Payment.create({
-  member:        member._id,
-  amount:        totalAmount,
-  advanceAmount: advanceAmt,
-  transactionId: tranId,
-  status:        "pending",
-  gateway:       "sslcommerz",
-});
+    payment = await Payment.create({
+      member:          member._id,
+      amount:          totalAmount,
+      advanceAmount:   advanceAmt,
+      transactionId:   tranId,
+      status:          "pending",
+      gateway:         "sslcommerz",
+      isCreditDeposit: advanceAmt > 0,
+    });
 
     const selectionPayload = Buffer.from(
       JSON.stringify({
@@ -238,7 +263,7 @@ try {
       `fail_url=${BACKEND}/payment/failed`,
       `cancel_url=${BACKEND}/payment/cancel`,
       `ipn_url=${BACKEND}/api/payments/callback`,
-      `product_name=${isAdvancePayment ? "Advance+Maintenance+Payment" : "Society+Maintenance+Dues"}`,
+      `product_name=${advanceAmt > 0 ? "Advance+Maintenance+Payment" : "Society+Maintenance+Dues"}`,
   `product_category=Membership`,
   `product_profile=general`,
   `shipping_method=NO`,
