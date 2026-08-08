@@ -115,9 +115,9 @@ export const createMonthlyChargesForMonth = async ({
   // balance on every monthly run.
   try {
     const memberIdsWithCredit = await Payment.distinct("member", {
-      isCreditDeposit: true,
-      status:          "completed",
-    });
+  advanceAmount: { $gt: 0 },
+  status:        "completed",
+});
 
     if (memberIdsWithCredit.length > 0) {
       const creditMemberSet = new Set(memberIdsWithCredit.map(String));
