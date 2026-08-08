@@ -704,22 +704,25 @@ const totalAdvanceAmount = projectedFutureTotal;
       )}
 
       {/* ── Credit balance banner ────────────────────────────────────── */}
-      {!loadingData && creditBalance > 0 && (
-        <div className="flex items-center gap-3 p-4 bg-emerald-50 border
-          border-emerald-200 rounded-xl">
-          <Wallet className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-          <div className="text-sm">
-            <p className="text-emerald-600 text-xs mt-0.5">
-  {creditCoveredThroughLabel
-    ? `Already covers your dues through ${creditCoveredThroughLabel}`
-    : "This will be automatically applied to your upcoming monthly dues."}
-</p>
-            <p className="text-emerald-600 text-xs mt-0.5">
-              This will be automatically applied to your upcoming monthly dues.
-            </p>
-          </div>
-        </div>
-      )}
+     {!loadingData && creditBalance > 0 && (
+  <div className="relative flex items-center gap-3 p-4 pl-5 bg-white
+    border border-gray-200 rounded-xl overflow-hidden">
+    <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
+    <div className="p-2 bg-indigo-50 rounded-lg flex-shrink-0">
+      <Wallet className="h-4 w-4 text-indigo-600" />
+    </div>
+    <div className="text-sm">
+      <p className="font-semibold text-gray-800">
+        Credit balance: <span className="text-indigo-600">৳{creditBalance.toLocaleString()}</span>
+      </p>
+      <p className="text-gray-500 text-xs mt-0.5">
+        {creditCoveredThroughLabel
+          ? `Covers dues through ${creditCoveredThroughLabel}`
+          : "Applied automatically to future dues"}
+      </p>
+    </div>
+  </div>
+)}
 
       {/* ── Pending payment warning ────────────────────────────────────── */}
       {!loadingData && pendingPayment && (
@@ -770,25 +773,29 @@ const totalAdvanceAmount = projectedFutureTotal;
             : last12.length > 0
             ? last12.map(({ month, year, status }) => (
                 <div
-                  key={`${month}-${year}`}
-                  title={`${new Date(year, month - 1)
-                    .toLocaleDateString(undefined, { month: "long" })} ${year} — ${status}`}
-                  className={`flex-shrink-0 flex flex-col items-center px-2.5 py-1.5
-                    rounded-lg text-xs font-semibold border cursor-default
-                    select-none min-w-[44px]
-                    ${status === "Paid"
-                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                      : "bg-gray-50 border-gray-200 text-gray-500"
-                    }`}
-                >
-                  <span>
-                    {new Date(year, month - 1)
-                      .toLocaleDateString(undefined, { month: "short" })}
-                  </span>
-                  <span className="text-[8px] opacity-60 font-normal">
-                    {String(year).slice(2)}
-                  </span>
-                </div>
+  key={`${month}-${year}`}
+  title={`${new Date(year, month - 1)
+    .toLocaleDateString(undefined, { month: "long" })} ${year} — ${status}`}
+  className={`relative flex-shrink-0 flex flex-col items-center px-2.5 py-1.5
+    rounded-lg text-xs font-semibold border cursor-default
+    select-none min-w-[44px]
+    ${status === "Paid"
+      ? "bg-white border-gray-200 text-gray-700"
+      : "bg-gray-50 border-gray-200 text-gray-400"
+    }`}
+>
+  {status === "Paid" && (
+    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5
+      rounded-full bg-emerald-500" />
+  )}
+  <span>
+    {new Date(year, month - 1)
+      .toLocaleDateString(undefined, { month: "short" })}
+  </span>
+  <span className="text-[8px] opacity-60 font-normal">
+    {String(year).slice(2)}
+  </span>
+</div>
               ))
             : <p className="text-xs text-gray-400">—</p>
           }
