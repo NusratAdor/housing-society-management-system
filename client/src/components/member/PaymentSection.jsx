@@ -936,16 +936,7 @@ const totalAdvanceAmount = projectedFutureTotal;
   </p>
 )}
 
-  {!allRealMonthsSelected && (
-    <p className="text-[11px] text-gray-400 mt-2">
-      Clear current dues to unlock prepay
-    </p>
-  )}
-  {allRealMonthsSelected && selectedFutureCount > 0 && (
-    <p className="text-xs text-emerald-600 mt-2">
-      ৳{projectedFutureTotal.toLocaleString()} will be added as credit
-    </p>
-  )}
+ 
 </div>
   </div>
 </div>
