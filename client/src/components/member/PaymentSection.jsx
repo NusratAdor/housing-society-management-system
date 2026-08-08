@@ -470,6 +470,29 @@ const handlePrepayMonthsChange = useCallback((e) => {
     return selectedFutureCount * (breakdown.currentFee || 0);
   }, [breakdown, selectedFutureCount]);
 
+
+  // How many whole future months the member's EXISTING credit balance
+// already covers, at today's fee. Used to keep the prepay dropdown from
+// re-offering months that are already effectively paid for — selecting
+// one of those would silently waste money by banking duplicate credit
+// for a month that's already covered.
+const creditCoveredMonths = useMemo(() => {
+  if (!breakdown?.currentFee) return 0;
+  return Math.floor((breakdown.creditBalance || 0) / breakdown.currentFee);
+}, [breakdown]);
+
+// Human-readable label for the last month the existing credit balance
+// covers — e.g. "Dec 2026" — shown so the member understands why the
+// prepay dropdown starts after that point.
+const creditCoveredThroughLabel = useMemo(() => {
+  if (creditCoveredMonths <= 0) return null;
+  const covered = displayMonths.slice(realMonthCount, realMonthCount + creditCoveredMonths);
+  if (covered.length === 0) return null;
+  const last = covered[covered.length - 1];
+  return `${monthName(last.month, "short")} ${last.year}`;
+}, [displayMonths, realMonthCount, creditCoveredMonths]);
+  
+
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
     return breakdown.unpaidExtraCharges
@@ -686,9 +709,11 @@ const totalAdvanceAmount = projectedFutureTotal;
           border-emerald-200 rounded-xl">
           <Wallet className="h-4 w-4 text-emerald-600 flex-shrink-0" />
           <div className="text-sm">
-            <p className="font-semibold text-emerald-800">
-              Credit Balance: ৳{creditBalance.toLocaleString()}
-            </p>
+            <p className="text-emerald-600 text-xs mt-0.5">
+  {creditCoveredThroughLabel
+    ? `Already covers your dues through ${creditCoveredThroughLabel}`
+    : "This will be automatically applied to your upcoming monthly dues."}
+</p>
             <p className="text-emerald-600 text-xs mt-0.5">
               This will be automatically applied to your upcoming monthly dues.
             </p>
@@ -877,7 +902,7 @@ const totalAdvanceAmount = projectedFutureTotal;
         disabled:cursor-not-allowed"
     >
       <option value={0}>None</option>
-      {displayMonths.slice(realMonthCount).map((m, i) => {
+      {displayMonths.slice(realMonthCount + creditCoveredMonths).map((m, i) => {
         const cumulativeCost = (i + 1) * (breakdown?.currentFee || 0);
         return (
           <option key={m.id} value={i + 1}>
@@ -887,6 +912,23 @@ const totalAdvanceAmount = projectedFutureTotal;
       })}
     </select>
   </div>
+
+  {allRealMonthsSelected && creditCoveredMonths > 0 && (
+  <p className="text-[11px] text-gray-400 mt-2">
+    Your existing credit already covers through {creditCoveredThroughLabel} — options above start after that
+  </p>
+)}
+{!allRealMonthsSelected && (
+  <p className="text-[11px] text-gray-400 mt-2">
+    Clear current dues to unlock prepay
+  </p>
+)}
+{allRealMonthsSelected && selectedFutureCount > 0 && (
+  <p className="text-xs text-emerald-600 mt-2">
+    ৳{projectedFutureTotal.toLocaleString()} will be added as credit
+  </p>
+)}
+
   {!allRealMonthsSelected && (
     <p className="text-[11px] text-gray-400 mt-2">
       Clear current dues to unlock prepay
