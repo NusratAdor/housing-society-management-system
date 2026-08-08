@@ -244,8 +244,24 @@ export const rejectPayment = async (req, res) => {
     });
 
     return res.status(200).json({ success: true, message: "Payment rejected" });
-  } catch (error) {
-    console.error("rejectPayment error:", error.message);
+} catch (error) {
+    console.error("approvePayment error:", error.message);
+
+    // allocatePayment throws this specific message when a charge in this
+    // payment's selection was already cleared by another payment — the
+    // exact situation created by duplicate/overlapping payment sessions.
+    // Surface this plainly instead of a generic 500 so the admin knows
+    // exactly what happened and what to do about it (reject this one).
+    const isDuplicateChargeConflict = /already processed/i.test(error.message);
+
+    if (isDuplicateChargeConflict) {
+      return res.status(409).json({
+        success:     false,
+        message:     "One or more charges in this payment were already cleared by another payment — this appears to be a duplicate. Please use Reject instead of Confirm for this transaction.",
+        isDuplicate: true,
+      });
+    }
+
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };

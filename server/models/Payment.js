@@ -137,10 +137,17 @@ const paymentSchema = new mongoose.Schema(
       type: String,
     },
 
-    isCreditDeposit: {
-      type:    Boolean,
-      default: false,
-    },
+  // The portion of `amount` that is banked as credit for future dues,
+// rather than tied to a specific selected charge. 0 for an ordinary
+// payment. A single payment can be PARTLY charges and PARTLY credit —
+// e.g. clearing this month's due while also prepaying two months ahead
+// — which is why this is a portion of the total, not an all-or-nothing
+// flag on the whole payment.
+advanceAmount: {
+  type:    Number,
+  default: 0,
+  min:     [0, "Advance amount cannot be negative"],
+},
     
   },
   {
@@ -154,5 +161,6 @@ paymentSchema.index({ member: 1, status: 1 });
 // Admin queues — pending gateway sessions, and verified-awaiting-confirmation
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ status: 1, verifiedAt: -1 });
+paymentSchema.index({ member: 1, advanceAmount: 1, status: 1 });
 
 export default mongoose.model("Payment", paymentSchema);

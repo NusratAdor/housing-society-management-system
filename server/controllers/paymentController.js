@@ -2,34 +2,27 @@
 //
 // Member-facing payment endpoints.
 //
-// CHANGE (this pass) — two-step confirmation:
-//   paymentCallback (the SSLCommerz IPN handler) no longer calls
-//   allocatePayment directly. It marks the payment "verified" and stores
-//   the confirmed charge selection on the Payment document. Dues are only
-//   marked Paid, and the member is only notified/emailed, once an admin
-//   explicitly confirms via adminPaymentController.approvePayment.
-//   This makes admin confirmation the single, deliberate point where
-//   money affects the member's account — not a third-party webhook.
-//
-// CHANGE (this pass) — unified payment session creation:
-//   createPaymentSession no longer branches on "isAdvancePayment" vs.
-//   "charge selection". The frontend now always sends advanceAmount
-//   (0 when no prepay is selected), so presence-based detection
-//   (`advanceAmount !== undefined && advanceAmount !== null`) incorrectly
-//   treated every ordinary payment as an advance payment. A member can
-//   legitimately select real months/extras AND prepay ahead in the same
-//   transaction, so both are now validated together in a single call to
-//   validatePaymentSelection, which already sums selectedMonthly +
-//   extraChargeAmounts + advanceAmount into totalAmount. The "must have
-//   zero due to prepay" rule is enforced client-side via the disabled
-//   prepay dropdown state, so validateAdvancePaymentRequest /
-//   getMemberDueSummary are no longer needed here.
+// CHANGE (this pass):
+//   1. Fixed a real bug — the previous isAdvancePayment branch used a
+//      presence check (advanceAmount !== undefined) instead of a value
+//      check, so ANY request (including ordinary month payments, which
+//      always send advanceAmount: 0) was misrouted into the pure-advance
+//      path, which requires zero current dues. Merged into ONE unified
+//      path — a single payment can now include real charges AND an
+//      advance amount together, matching validatePaymentSelection's
+//      actual capability.
+//   2. Payment.create now writes advanceAmount (matching the current
+//      Payment schema) instead of the removed isCreditDeposit boolean.
+//   3. Added a one-active-payment guard: a member cannot open a new
+//      payment session while they already have one "pending" or
+//      "verified" — preventing duplicate/overlapping payment sessions
+//      for the same or different charges, and the downstream admin
+//      confirmation conflicts that caused.
 
 import mongoose     from "mongoose";
 import Member       from "../models/Member.js";
 import Payment      from "../models/Payment.js";
 import {
-  getMemberDueBreakdown,
   getMemberPaymentHistory,
   getPaymentAllocationDetails,
 } from "../services/paymentService.js";
@@ -43,8 +36,6 @@ import {
 } from "../services/dashboardService.js";
 
 // ─── GET /api/payments/me/breakdown ───────────────────────────────────────────
-// Powers the entire PaymentSection component on the member dashboard.
-// Returns everything the UI needs in one API call.
 
 export const getDueBreakdown = async (req, res) => {
   try {
@@ -66,7 +57,6 @@ export const getDueBreakdown = async (req, res) => {
 };
 
 // ─── GET /api/payments/me ─────────────────────────────────────────────────────
-// Transaction history for the member — completed, failed, and rejected payments.
 
 export const getMemberPayments = async (req, res) => {
   try {
@@ -88,7 +78,6 @@ export const getMemberPayments = async (req, res) => {
 };
 
 // ─── GET /api/payments/me/history ─────────────────────────────────────────────
-// Transaction history with per-payment allocation breakdown.
 
 export const getMemberHistory = async (req, res) => {
   try {
@@ -111,7 +100,6 @@ export const getMemberHistory = async (req, res) => {
 };
 
 // ─── GET /api/payments/:id/allocations ───────────────────────────────────────
-// Returns the allocation breakdown for a specific payment.
 
 export const getPaymentAllocations = async (req, res) => {
   try {
@@ -154,14 +142,15 @@ export const getPaymentAllocations = async (req, res) => {
 };
 
 // ─── POST /api/payments/create ────────────────────────────────────────────────
-// Creates an SSLCommerz payment session for the member's selected charges.
+// Creates an SSLCommerz payment session.
 //
-// CHANGE (this pass): unified path — selectedMonthlyIds/selectedExtraIds and
-// advanceAmount are validated together via validatePaymentSelection, so a
-// member can select real charges and prepay ahead in the same transaction.
-// advanceAmount is value-based (Number(...) || 0), not presence-based, so
-// sending advanceAmount: 0 (which the frontend now always does) no longer
-// misroutes an ordinary payment down an advance-only path.
+// Request body:
+//   selectedMonthlyIds  (Array<string>) — MonthlyCharge _ids to pay
+//   selectedExtraIds    (Array<string>) — ExtraCharge _ids to pay
+//   partialAmounts      (Object)        — { [extraChargeId]: amountNow }
+//   advanceAmount       (Number)        — optional extra to bank as credit;
+//                                          may be combined with a charge
+//                                          selection, or sent alone
 
 export const createPaymentSession = async (req, res) => {
 
@@ -172,21 +161,13 @@ export const createPaymentSession = async (req, res) => {
       selectedMonthlyIds = [],
       selectedExtraIds   = [],
       partialAmounts     = {},
-      advanceAmount,
+      advanceAmount      = 0,
     } = req.body;
 
     if (!Array.isArray(selectedMonthlyIds) || !Array.isArray(selectedExtraIds)) {
       return res.status(400).json({
         success: false,
         message: "selectedMonthlyIds and selectedExtraIds must be arrays",
-      });
-    }
-
-    const advanceAmt = Number(advanceAmount) || 0;
-    if (advanceAmt < 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Advance amount cannot be negative",
       });
     }
 
@@ -198,22 +179,53 @@ export const createPaymentSession = async (req, res) => {
       return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    let totalAmount, selectedMonthly, selectedExtra, extraChargeAmounts;
+    // ── One-active-payment guard ────────────────────────────────────────
+    // A member may only have ONE payment in flight (either awaiting
+    // gateway confirmation, or awaiting admin confirmation) at any time.
+    // This is the actual fix for duplicate/overlapping payment sessions:
+    // rather than trying to detect and reconcile conflicts after the
+    // fact (at admin-confirm time, where it previously surfaced as a
+    // confusing 500), it is prevented at the point of creation.
+    const existingActive = await Payment
+      .findOne({
+        member: member._id,
+        status: { $in: ["pending", "verified"] },
+      })
+      .select("_id status")
+      .lean();
+
+    if (existingActive) {
+      return res.status(409).json({
+        success: false,
+        message: existingActive.status === "verified"
+          ? "You already have a payment awaiting admin confirmation. Please wait for it to be confirmed before starting a new one."
+          : "You already have a payment in progress. Please complete it, or wait a moment and try again, before starting a new one.",
+      });
+    }
+
+    let validationResult;
     try {
-      const validationResult = await validatePaymentSelection({
+      validationResult = await validatePaymentSelection({
         memberId: member._id,
         selectedMonthlyIds,
         selectedExtraIds,
         partialAmounts,
-        advanceAmount: advanceAmt,
+        advanceAmount,
       });
-      totalAmount        = validationResult.totalAmount;
-      selectedMonthly     = validationResult.selectedMonthly;
-      selectedExtra       = validationResult.selectedExtra;
-      extraChargeAmounts  = validationResult.extraChargeAmounts;
     } catch (validationError) {
-      return res.status(400).json({ success: false, message: validationError.message });
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
     }
+
+    const {
+      totalAmount,
+      selectedMonthly,
+      selectedExtra,
+      extraChargeAmounts,
+      advanceAmount: verifiedAdvanceAmount,
+    } = validationResult;
 
     const storeId   = process.env.SSLCOMMERZ_STORE_ID?.trim();
     const storePass = process.env.SSLCOMMERZ_STORE_PASS?.trim();
@@ -228,13 +240,12 @@ export const createPaymentSession = async (req, res) => {
     const tranId = `TX-${Date.now()}-${String(member._id).slice(-6)}`;
 
     payment = await Payment.create({
-      member:          member._id,
-      amount:          totalAmount,
-      advanceAmount:   advanceAmt,
-      transactionId:   tranId,
-      status:          "pending",
-      gateway:         "sslcommerz",
-      isCreditDeposit: advanceAmt > 0,
+      member:        member._id,
+      amount:        totalAmount,
+      advanceAmount: verifiedAdvanceAmount,
+      transactionId: tranId,
+      status:        "pending",
+      gateway:       "sslcommerz",
     });
 
     const selectionPayload = Buffer.from(
@@ -263,11 +274,11 @@ export const createPaymentSession = async (req, res) => {
       `fail_url=${BACKEND}/payment/failed`,
       `cancel_url=${BACKEND}/payment/cancel`,
       `ipn_url=${BACKEND}/api/payments/callback`,
-      `product_name=${advanceAmt > 0 ? "Advance+Maintenance+Payment" : "Society+Maintenance+Dues"}`,
-  `product_category=Membership`,
-  `product_profile=general`,
-  `shipping_method=NO`,
-  `num_of_item=${Math.max(selectedMonthly.length + selectedExtra.length, 1)}`,
+      `product_name=Society+Maintenance+Dues`,
+      `product_category=Membership`,
+      `product_profile=general`,
+      `shipping_method=NO`,
+      `num_of_item=${Math.max(selectedMonthly.length + selectedExtra.length, 1)}`,
       `cus_name=${encodeURIComponent(member.name)}`,
       `cus_email=${encodeURIComponent(member.email)}`,
       `cus_phone=${encodeURIComponent(member.phone || "")}`,
@@ -319,18 +330,10 @@ export const createPaymentSession = async (req, res) => {
 };
 
 // ─── POST /api/payments/callback ─────────────────────────────────────────────
-// IPN (Instant Payment Notification) endpoint called by SSLCommerz servers.
-//
-// CHANGE (this pass): this endpoint's job stops at gateway verification.
-// It confirms genuine payment via SSLCommerz's validation API (same
-// security-critical check as before — never trust the callback body
-// alone), then marks the payment "verified" and stores the confirmed
-// selection. It does NOT allocate, does NOT mark charges Paid, and does
-// NOT notify the member. That happens only when an admin explicitly
-// confirms via PUT /api/payments/:id/confirm (approvePayment).
-//
-// Response format: plain text "OK" or a status string — SSLCommerz
-// expects a text response, not JSON.
+// IPN handler — UNCHANGED. advanceAmount is fixed on the Payment document
+// at creation time, so nothing here needs to know about it; this endpoint
+// only ever concerns itself with the charges selection and marking the
+// payment "verified".
 
 export const paymentCallback = async (req, res) => {
   const { tran_id, status, val_id, value_a, value_b } = req.body;
@@ -350,10 +353,6 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("PAYMENT_NOT_FOUND");
     }
 
-    // ── Idempotency check ─────────────────────────────────────────────────
-    // Duplicate IPN callbacks are treated as already-handled at either
-    // "verified" or "completed" — both mean this callback already did
-    // its job once and there is nothing further to do here.
     if (payment.status === "completed" || payment.status === "verified") {
       console.info(`[IPN] Payment ${tran_id} already ${payment.status} — ignoring duplicate`);
       return res.status(200).send("OK");
@@ -367,7 +366,6 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("FAILED");
     }
 
-    // ── CRITICAL: Verify payment with SSLCommerz validation API ──────────
     let verificationResult;
     try {
       verificationResult = await verifySSLCommerzPayment({
@@ -389,7 +387,6 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("VALIDATION_FAILED");
     }
 
-    // ── Parse the selection payload stored in value_b ─────────────────────
     let selectionData;
     try {
       const decoded = Buffer.from(value_b || "", "base64").toString("utf8");
@@ -418,10 +415,6 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("PAYMENT_ID_MISMATCH");
     }
 
-    // ── Mark as gateway-verified — do NOT allocate, do NOT notify ─────────
-    // This is the deliberate handoff point to the admin. Dues remain
-    // "Unpaid" and the member's dashboard is unaffected until an admin
-    // calls approvePayment.
     payment.gatewayValidationId = val_id;
     payment.status              = "verified";
     payment.verifiedAt          = new Date();
