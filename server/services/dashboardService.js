@@ -37,21 +37,17 @@ const MONTH_NAMES = [
 const computePaidThroughMonth = (last12MonthsDescending) => {
   if (last12MonthsDescending.length === 0) return null;
 
-  // last12Months is already sorted newest-first (year desc, month desc)
   const newest = last12MonthsDescending[0];
   if (newest.status !== "Paid") return null;
 
-  let result = { month: newest.month, year: newest.year };
-
-  for (let i = 1; i < last12MonthsDescending.length; i++) {
-    if (last12MonthsDescending[i].status !== "Paid") break;
-    result = { month: last12MonthsDescending[i].month, year: last12MonthsDescending[i].year };
-  }
-
+  // The streak by definition starts at the newest record — if it's
+  // Paid, dues are current through that month. No need to walk the
+  // list further; walking backward and reassigning was the bug that
+  // reported the OLDEST month in the streak instead of the newest.
   return {
-    month: result.month,
-    year:  result.year,
-    label: `${MONTH_NAMES[result.month]} ${result.year}`,
+    month: newest.month,
+    year:  newest.year,
+    label: `${MONTH_NAMES[newest.month]} ${newest.year}`,
   };
 };
 

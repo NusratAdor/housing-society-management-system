@@ -595,10 +595,10 @@ const totalAdvanceAmount = projectedFutureTotal;
             </div>
           </div>
           {paidThroughMonth && (
-            <p className="text-xs text-emerald-600 mt-3 pt-3 border-t border-emerald-100">
-              Dues current through <span className="font-semibold">{paidThroughMonth.label}</span>
-            </p>
-          )}
+  <p className="text-xs text-emerald-600 mt-3 pt-3 border-t border-emerald-100">
+    Paid through <span className="font-semibold">{paidThroughMonth.label}</span>
+  </p>
+)}
         </div>
       ) : (
         <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
@@ -922,8 +922,8 @@ const totalAdvanceAmount = projectedFutureTotal;
 
   {allRealMonthsSelected && creditCoveredMonths > 0 && (
   <p className="text-[11px] text-gray-400 mt-2">
-    Your existing credit already covers through {creditCoveredThroughLabel} — options above start after that
-  </p>
+  Credit covers through {creditCoveredThroughLabel}
+</p>
 )}
 {!allRealMonthsSelected && (
   <p className="text-[11px] text-gray-400 mt-2">
