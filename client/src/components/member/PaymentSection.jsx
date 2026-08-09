@@ -23,7 +23,7 @@
 // download, i18next usage, ExportControl — is unchanged.
 
 import React, {
-  useState, useEffect, useCallback, useMemo, useRef,
+  useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
@@ -76,10 +76,21 @@ const StatusBadge = ({ status }) => (
 
 // ─── ExportControl ────────────────────────────────────────────────────────────
 
+// ─── ExportControl ────────────────────────────────────────────────────────────
+// Positioning is measured, not guessed: after the panel mounts, its real
+// rendered height is read via offsetHeight and used to decide whether it
+// fits below the button or must flip above it. This stays correct
+// regardless of content length, translation differences, or font size —
+// a fixed height estimate was tried first and proved unreliable exactly
+// because real content can exceed any guessed number.
+
 const ExportControl = ({ t }) => {
   const { getToken } = useAppContext();
   const [open,        setOpen]        = useState(false);
-  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
+  // null until the panel has been measured and positioned for THIS open —
+  // used both to decide top/right and to gate visibility so the panel
+  // never flashes at a stale or wrong position before it's placed.
+  const [dropdownPos, setDropdownPos] = useState(null);
   const [startDate,   setStartDate]   = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 3);
@@ -93,26 +104,31 @@ const ExportControl = ({ t }) => {
   const btnRef   = useRef(null);
   const panelRef = useRef(null);
   const BACKEND  = import.meta.env.VITE_BACKEND_URL || "";
-// Approximate rendered height of the panel — used to decide whether it
-// fits below the button or needs to open upward instead. Slightly
-// generous on purpose; better to flip a little early than clip content.
-const PANEL_HEIGHT_ESTIMATE = 300;
 
-const handleOpen = () => {
-  if (!open && btnRef.current) {
-    const rect          = btnRef.current.getBoundingClientRect();
-    const spaceBelow    = window.innerHeight - rect.bottom;
-    const opensUpward   = spaceBelow < PANEL_HEIGHT_ESTIMATE;
+  const handleOpen = () => {
+    // Force a fresh measurement every time it's reopened — the button's
+    // position on screen may have changed (scroll, resize) since the
+    // last time this was open.
+    setDropdownPos(null);
+    setOpen(o => !o);
+  };
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current || !panelRef.current) return;
+
+    const btnRect     = btnRef.current.getBoundingClientRect();
+    const panelHeight = panelRef.current.offsetHeight;
+    const margin      = 8;
+    const spaceBelow  = window.innerHeight - btnRect.bottom;
+    const opensUpward = spaceBelow < panelHeight + margin;
 
     setDropdownPos({
-      top:   opensUpward
-        ? Math.max(rect.top - PANEL_HEIGHT_ESTIMATE - 8, 8)
-        : rect.bottom + 8,
-      right: window.innerWidth - rect.right,
+      top: opensUpward
+        ? Math.max(btnRect.top - panelHeight - margin, margin)
+        : btnRect.bottom + margin,
+      right: window.innerWidth - btnRect.right,
     });
-  }
-  setOpen(o => !o);
-};
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -186,13 +202,16 @@ const handleOpen = () => {
           <motion.div
             ref={panelRef}
             initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
+            animate={{ opacity: dropdownPos ? 1 : 0, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.13 }}
             style={{
               position: "fixed",
-              top:   dropdownPos.top,
-              right: dropdownPos.right,
+              // Kept off-screen until the real height has been measured
+              // and a correct position computed — this is what prevents
+              // any flash at the wrong location.
+              top:    dropdownPos?.top    ?? -9999,
+              right:  dropdownPos?.right  ?? 0,
               zIndex: 9999,
             }}
             className="w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-4"
