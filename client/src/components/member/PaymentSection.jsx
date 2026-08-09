@@ -93,17 +93,26 @@ const ExportControl = ({ t }) => {
   const btnRef   = useRef(null);
   const panelRef = useRef(null);
   const BACKEND  = import.meta.env.VITE_BACKEND_URL || "";
+// Approximate rendered height of the panel — used to decide whether it
+// fits below the button or needs to open upward instead. Slightly
+// generous on purpose; better to flip a little early than clip content.
+const PANEL_HEIGHT_ESTIMATE = 300;
 
-  const handleOpen = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setDropdownPos({
-        top:   rect.bottom + 8,
-        right: window.innerWidth - rect.right,
-      });
-    }
-    setOpen(o => !o);
-  };
+const handleOpen = () => {
+  if (!open && btnRef.current) {
+    const rect          = btnRef.current.getBoundingClientRect();
+    const spaceBelow    = window.innerHeight - rect.bottom;
+    const opensUpward   = spaceBelow < PANEL_HEIGHT_ESTIMATE;
+
+    setDropdownPos({
+      top:   opensUpward
+        ? Math.max(rect.top - PANEL_HEIGHT_ESTIMATE - 8, 8)
+        : rect.bottom + 8,
+      right: window.innerWidth - rect.right,
+    });
+  }
+  setOpen(o => !o);
+};
 
   useEffect(() => {
     if (!open) return;
