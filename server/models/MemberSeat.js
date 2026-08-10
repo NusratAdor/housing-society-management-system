@@ -87,7 +87,7 @@ const memberSeatSchema = new mongoose.Schema(
   }
 );
 
-memberSeatSchema.index({ membershipNo: 1 }, { unique: true });
+
 memberSeatSchema.index({ isClaimed: 1 });
 
 export default mongoose.model("MemberSeat", memberSeatSchema);

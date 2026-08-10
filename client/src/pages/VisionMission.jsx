@@ -74,10 +74,7 @@ const VisionMission = () => {
               </div>
               <h2 className="font-bold text-xl text-gray-900 mb-3">Our Mission</h2>
               <p className="text-gray-600 font-outfit leading-relaxed">
-                To provide our members with a well-managed, financially
-                transparent, and genuinely welcoming residential community —
-                where day-to-day services run smoothly and every family feels
-                heard and supported.
+                To provide quality housing and welfare services to members through transparency, accountability, cooperative values, and modern management, while fostering a safe, inclusive, environmentally friendly, and sustainable residential community.
               </p>
             </div>
           </motion.div>
@@ -96,9 +93,7 @@ const VisionMission = () => {
               </div>
               <h2 className="font-bold text-xl text-gray-900 mb-3">Our Vision</h2>
               <p className="text-gray-600 font-outfit leading-relaxed">
-                To be recognized as a model housing society — one where
-                strong governance, modern digital services, and an active
-                sense of community set the standard other societies look to.
+                To improve the quality of life of our members through planned, safe, modern, and sustainable housing, and to establish GOMCS as a model cooperative institution.
               </p>
             </div>
           </motion.div>

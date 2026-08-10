@@ -1,23 +1,22 @@
 // pages/admin/ManageMembers.jsx
 //
-// CHANGES from previous version:
-//   1. Switched from /dashboard/outstanding to the new
-//      /dashboard/member-due-status endpoint — every member now gets a
-//      definitive Paid/Due badge, not just members who owe something.
-//   2. Due badge is now clickable — shows a small popover breaking the
-//      total into Monthly vs Extra, sourced from the same computed data,
-//      no extra request needed. Progressive disclosure instead of two
-//      permanent columns that would be empty for most rows.
-//   3. "Admin Request" column removed. A pending request now shows as a
-//      small actionable badge folded into the Role column — visible only
-//      for the rare member who actually requested it.
-//   4. Reject admin request popover added — optional reason, low-friction.
-//   5. ADDED: total member count badge next to the page heading — shows
-//      "X of Y" while actively searching, plain total otherwise. Same
-//      Badge component and pattern already used in CustomCharges.jsx,
-//      for visual consistency across the admin panel.
+// CHANGES (this pass):
+//   1. Membership No. is now READ-ONLY in the edit modal — it is the
+//      permanent key tying Member/MemberSeat/MonthlyCharge/ExtraCharge/
+//      Payment records together and must never change after registration.
+//      Removed from the save payload, its client-side validation, and
+//      its editable input; matching server enforcement in
+//      adminController.js.
+//   2. Due Breakdown popover repositioned using measured coordinates
+//      (position: fixed, computed from the real button position via
+//      useLayoutEffect) instead of position: absolute anchored inside
+//      the scrollable table — the previous approach clipped/required
+//      scrolling for rows near the bottom of the table.
+//
+// Everything else — search, sort, pagination, admin approve/reject flow,
+// delete flow — is unchanged.
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -53,9 +52,14 @@ const ManageMembers = () => {
   const [editingMember,  setEditingMember]  = useState(null);
   const [saving,         setSaving]         = useState(false);
   const [phoneError,     setPhoneError]     = useState("");
-  const [membershipError,setMembershipError]= useState("");
   const [currentPage,    setCurrentPage]    = useState(1);
   const [openDuePopover, setOpenDuePopover] = useState(null); // memberId | null
+  // Measured screen position for the currently-open due breakdown
+  // popover — null until computed, same pattern used for the export
+  // panel in PaymentSection.jsx, so it can never render clipped or
+  // trapped inside the table's scroll container.
+  const [duePopoverPos,  setDuePopoverPos]  = useState(null);
+  const dueBtnRefs = useRef({}); // memberId -> button DOM node
   const [rejectPopover,  setRejectPopover]  = useState(null); // memberId | null
   const [rejectReason,   setRejectReason]   = useState("");
   const [rejecting,      setRejecting]      = useState(false);
@@ -83,19 +87,6 @@ const ManageMembers = () => {
       return false;
     }
     setPhoneError("");
-    return true;
-  };
-
-  const validateMembership = (value) => {
-    if (!value) {
-      setMembershipError("");
-      return true;
-    }
-    if (!/^[A-Za-z0-9-]+$/.test(value)) {
-      setMembershipError("Invalid membership number");
-      return false;
-    }
-    setMembershipError("");
     return true;
   };
 
@@ -200,22 +191,46 @@ const ManageMembers = () => {
     setRejectPopover(null);
   }, [currentPage, searchTerm]);
 
+  // ── Due breakdown popover positioning ───────────────────────────────────
+  // Measured from the real button position rather than anchored via
+  // position: absolute inside the table — this is what lets the popover
+  // escape the table's scroll boundary and the viewport edge for rows
+  // near the bottom of the page.
+  useLayoutEffect(() => {
+    if (!openDuePopover) { setDuePopoverPos(null); return; }
+    const btn = dueBtnRefs.current[openDuePopover];
+    if (!btn) return;
+
+    // Fixed content (three label/value rows) — safe to estimate its
+    // height rather than needing a two-pass real measurement.
+    const POPOVER_HEIGHT_ESTIMATE = 150;
+    const margin      = 4;
+    const rect        = btn.getBoundingClientRect();
+    const spaceBelow  = window.innerHeight - rect.bottom;
+    const opensUpward = spaceBelow < POPOVER_HEIGHT_ESTIMATE + margin;
+
+    setDuePopoverPos({
+      top: opensUpward
+        ? Math.max(rect.top - POPOVER_HEIGHT_ESTIMATE - margin, margin)
+        : rect.bottom + margin,
+      left: rect.left,
+    });
+  }, [openDuePopover]);
+
   // ── Edit handling ────────────────────────────────────────────────────────
 
   const handleEdit = (member) => {
     setEditingMember({
       ...member,
-      phone:        member.phone        || "",
-      membershipNo: member.membershipNo || "",
-      role:         member.role         || "member",
+      phone: member.phone || "",
+      role:  member.role  || "member",
     });
     setPhoneError("");
-    setMembershipError("");
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (phoneError || membershipError) {
+    if (phoneError) {
       toast.error("Please fix form errors before saving");
       return;
     }
@@ -228,27 +243,22 @@ const ManageMembers = () => {
       toast.error("Invalid phone number");
       return;
     }
-    if (
-      editingMember.membershipNo &&
-      !/^[A-Za-z0-9-]+$/.test(editingMember.membershipNo)
-    ) {
-      toast.error("Invalid membership number");
-      return;
-    }
 
     setSaving(true);
     try {
       const token = await getToken();
+      // membershipNo is intentionally never sent — it is locked once a
+      // member is registered. The backend also ignores it even if a raw
+      // API request includes it (see adminController.js).
       const { data } = await axios.put(
         `/api/admin/members/${editingMember._id}`,
         {
-          name:         editingMember.name,
-          phone:        normalizedPhone,
-          address:      editingMember.address,
-          designation:  editingMember.designation,
-          membershipNo: editingMember.membershipNo?.trim().toUpperCase(),
-          plotNo:       editingMember.plotNo,
-          role:         editingMember.role,
+          name:        editingMember.name,
+          phone:       normalizedPhone,
+          address:     editingMember.address,
+          designation: editingMember.designation,
+          plotNo:      editingMember.plotNo,
+          role:        editingMember.role,
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -287,72 +297,62 @@ const ManageMembers = () => {
     }
   };
 
-const handleApproveAdmin = async (id) => {
-  try {
-    const token = await getToken();
-    const { data } = await axios.put(
-      `/api/admin/members/${id}/approve`,
-      {},
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (data.success) {
-      setMembers((prev) =>
-        prev.map((m) =>
-          m._id === id ? { ...m, role: "admin", pendingAdmin: false } : m
-        )
+  const handleApproveAdmin = async (id) => {
+    try {
+      const token = await getToken();
+      const { data } = await axios.put(
+        `/api/admin/members/${id}/approve`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      toast.success("Member approved as admin");
-    } else {
-      toast.error(data.message || "Failed to approve admin");
+      if (data.success) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m._id === id ? { ...m, role: "admin", pendingAdmin: false } : m
+          )
+        );
+        toast.success("Member approved as admin");
+      } else {
+        toast.error(data.message || "Failed to approve admin");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to approve admin");
     }
-  } catch (error) {
-    toast.error(error.response?.data?.message || "Failed to approve admin");
-  }
-};
+  };
 
-// Replace handleRejectAdmin with this version — adds a guard against
-// double-submission and treats "already resolved" as a soft, non-alarming
-// outcome rather than a scary error, since the end state the admin wanted
-// (no pending request) is already true.
+  const handleRejectAdmin = async (id) => {
+    if (rejecting) return;
 
-const handleRejectAdmin = async (id) => {
-  // Guard: if a reject request for this exact member is already in flight,
-  // ignore subsequent clicks instead of firing a duplicate request.
-  if (rejecting) return;
-
-  setRejecting(true);
-  try {
-    const token = await getToken();
-    const { data } = await axios.put(
-      `/api/admin/members/${id}/reject-admin-request`,
-      { reason: rejectReason.trim() },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (data.success) {
-      setMembers((prev) =>
-        prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
+    setRejecting(true);
+    try {
+      const token = await getToken();
+      const { data } = await axios.put(
+        `/api/admin/members/${id}/reject-admin-request`,
+        { reason: rejectReason.trim() },
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      toast.success("Admin request rejected");
-      setRejectPopover(null);
-      setRejectReason("");
-    } else {
-      // The request was already resolved (approved/rejected elsewhere,
-      // or local state was stale). Sync local state to match reality
-      // instead of leaving a phantom "pendingAdmin: true" badge showing.
-      setMembers((prev) =>
-        prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
-      );
-      toast(data.message || "This request was already resolved", { icon: "ℹ️" });
-      setRejectPopover(null);
-      setRejectReason("");
+
+      if (data.success) {
+        setMembers((prev) =>
+          prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
+        );
+        toast.success("Admin request rejected");
+        setRejectPopover(null);
+        setRejectReason("");
+      } else {
+        setMembers((prev) =>
+          prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
+        );
+        toast(data.message || "This request was already resolved", { icon: "ℹ️" });
+        setRejectPopover(null);
+        setRejectReason("");
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to reject request");
+    } finally {
+      setRejecting(false);
     }
-  } catch (error) {
-    toast.error(error.response?.data?.message || "Failed to reject request");
-  } finally {
-    setRejecting(false);
-  }
-};
+  };
 
   // ── Loading / error states ──────────────────────────────────────────────
 
@@ -452,6 +452,7 @@ const handleRejectAdmin = async (id) => {
                       {hasDueData ? (
                         <button
                           type="button"
+                          ref={el => { if (el) dueBtnRefs.current[member._id] = el; }}
                           onClick={() =>
                             setOpenDuePopover(isPopoverOpen ? null : member._id)
                           }
@@ -470,16 +471,24 @@ const handleRejectAdmin = async (id) => {
                         <span className="text-gray-400 text-xs">—</span>
                       )}
 
-                      {/* Breakdown popover */}
+                      {/* Breakdown popover — position: fixed, computed
+                          from measured button coordinates, so it can
+                          never clip against the table or viewport. */}
                       <AnimatePresence>
                         {isPopoverOpen && due.totalDue > 0 && (
                           <motion.div
                             initial={{ opacity: 0, y: 4 }}
-                            animate={{ opacity: 1, y: 0 }}
+                            animate={{ opacity: duePopoverPos ? 1 : 0, y: 0 }}
                             exit={{ opacity: 0, y: 4 }}
                             transition={{ duration: 0.12 }}
-                            className="absolute z-20 top-full left-3 mt-1 w-48
-                              bg-white border border-gray-200 rounded-lg shadow-lg p-3"
+                            style={{
+                              position: "fixed",
+                              top:  duePopoverPos?.top  ?? -9999,
+                              left: duePopoverPos?.left ?? 0,
+                              zIndex: 9999,
+                            }}
+                            className="w-48 bg-white border border-gray-200
+                              rounded-lg shadow-lg p-3"
                           >
                             <p className="text-[10px] font-semibold text-gray-400
                               uppercase tracking-wide mb-2">
@@ -709,14 +718,10 @@ const handleRejectAdmin = async (id) => {
                 { label: "Address",     key: "address",     type: "text" },
                 { label: "Designation", key: "designation", type: "text" },
                 {
-                  label: "Membership No",
-                  key:   "membershipNo",
-                  type:  "text",
-                  error: membershipError,
-                  onChange: (e) => {
-                    setEditingMember({ ...editingMember, membershipNo: e.target.value });
-                    validateMembership(e.target.value);
-                  },
+                  label:    "Membership No",
+                  key:      "membershipNo",
+                  type:     "text",
+                  readOnly: true,
                 },
                 { label: "Plot No", key: "plotNo", type: "text" },
                 {
@@ -729,6 +734,9 @@ const handleRejectAdmin = async (id) => {
                 <div key={field.key} className="mb-4">
                   <label className="block text-sm text-gray-600 mb-1 font-medium">
                     {field.label}
+                    {field.readOnly && (
+                      <span className="text-gray-400 font-normal ml-1">(locked)</span>
+                    )}
                   </label>
                   {field.type === "select" ? (
                     <select
@@ -752,15 +760,20 @@ const handleRejectAdmin = async (id) => {
                     <Input
                       type={field.type}
                       value={editingMember[field.key] || ""}
+                      readOnly={field.readOnly}
                       onChange={
-                        field.onChange ||
-                        ((e) =>
-                          setEditingMember({
-                            ...editingMember,
-                            [field.key]: e.target.value,
-                          }))
+                        field.readOnly
+                          ? undefined
+                          : field.onChange ||
+                            ((e) =>
+                              setEditingMember({
+                                ...editingMember,
+                                [field.key]: e.target.value,
+                              }))
                       }
-                      className={field.error ? "border-red-500" : ""}
+                      className={`${field.error ? "border-red-500" : ""} ${
+                        field.readOnly ? "bg-gray-100 text-gray-500 cursor-default" : ""
+                      }`}
                     />
                   )}
                   {field.error && (
@@ -771,11 +784,9 @@ const handleRejectAdmin = async (id) => {
               <div className="flex justify-end gap-3">
                 <Button
                   type="submit"
-                  disabled={saving || !!phoneError || !!membershipError}
+                  disabled={saving || !!phoneError}
                   className={`bg-blue-500 hover:bg-blue-600 text-white gap-2 ${
-                    saving || phoneError || membershipError
-                      ? "opacity-50 cursor-not-allowed"
-                      : ""
+                    saving || phoneError ? "opacity-50 cursor-not-allowed" : ""
                   }`}
                 >
                   {saving && <Loader2 className="h-4 w-4 animate-spin" />}

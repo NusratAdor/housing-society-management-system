@@ -2,6 +2,17 @@
 // Every state-changing operation now writes an AuditLog via writeAuditLog().
 // The audit write is after the main operation and uses fire-and-forget
 // so a log write failure never causes the operation to return an error.
+//
+// CHANGE (this pass): updateMemberProfile no longer accepts membershipNo
+// at all — it is silently ignored even if sent in the request body. Once
+// a member is registered, their membership number is the permanent key
+// tying together Member, MemberSeat, MonthlyCharge, ExtraCharge, and
+// Payment records; allowing it to change after the fact risks orphaning
+// historical financial records or colliding with another member's
+// number. This is enforced here, server-side, rather than relying on the
+// admin UI alone to never send it — the UI should never offer to edit it
+// (see ManageMembers.jsx), but this endpoint must reject/ignore it
+// regardless of what any client sends.
 
 import Member          from "../models/Member.js";
 import Payment         from "../models/Payment.js";
@@ -11,8 +22,6 @@ import { writeAuditLog } from "../services/auditService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 // ─── Cascade delete helper ────────────────────────────────────────────────────
-// Used by deleteMember and clerkWebhooks.
-// Exported so clerkWebhooks can call it without importing the whole controller.
 
 export const cascadeDeleteMember = async (memberId, clerkUserId) => {
   await Promise.all([
@@ -41,26 +50,16 @@ export const updateMemberProfile = async (req, res) => {
     const { id } = req.params;
     const {
       name, phone, address, designation,
-      membershipNo, plotNo, role, pendingAdmin,
+      plotNo, role, pendingAdmin,
+      // membershipNo intentionally NOT destructured/used — see file header.
+      // Any membershipNo present in the request body is silently ignored,
+      // never validated, never written. This field is permanently locked
+      // once a member exists.
     } = req.body;
 
     // Validation
     if (phone && !isValidPhone(phone)) {
       return res.status(400).json({ success: false, message: "Invalid phone number" });
-    }
-
-    const cleanMembership = membershipNo?.trim().toUpperCase();
-    if (membershipNo && !/^[A-Za-z0-9-]+$/.test(cleanMembership)) {
-      return res.status(400).json({ success: false, message: "Invalid membership number" });
-    }
-    if (membershipNo) {
-      const dup = await Member.findOne({
-        membershipNo: { $regex: new RegExp(`^${cleanMembership}$`, "i") },
-        _id: { $ne: id },
-      });
-      if (dup) {
-        return res.status(400).json({ success: false, message: "Membership number already used" });
-      }
     }
 
     const validRoles = ["member", "admin"];
@@ -85,13 +84,14 @@ export const updateMemberProfile = async (req, res) => {
       pendingAdmin: oldMember.pendingAdmin,
     };
 
-    // Build update — only include fields that were sent
+    // Build update — only include fields that were sent. membershipNo is
+    // deliberately absent from this list, so it is never part of the
+    // $set payload regardless of what the request body contains.
     const updateData = {
       ...(name         !== undefined && { name:         name.trim() }),
       ...(phone        !== undefined && { phone:        normalizePhone(phone) }),
       ...(address      !== undefined && { address:      address.trim() }),
       ...(designation  !== undefined && { designation:  designation.trim() }),
-      ...(cleanMembership            && { membershipNo: cleanMembership }),
       ...(plotNo       !== undefined && { plotNo:       plotNo.trim() }),
       ...(role         !== undefined && { role }),
       ...(pendingAdmin !== undefined && { pendingAdmin }),
@@ -119,13 +119,14 @@ export const updateMemberProfile = async (req, res) => {
       pendingAdmin: updated.pendingAdmin,
     };
 
-    // Detect human-readable change list for notification
+    // Detect human-readable change list for notification.
+    // membershipNo remains in this map purely for audit-log readability —
+    // it will simply never show a diff, since it can no longer change.
     const fieldLabels = {
       name:         "name",
       phone:        "phone",
       address:      "address",
       designation:  "designation",
-      membershipNo: "membership number",
       plotNo:       "plot number",
       role:         "role",
     };
@@ -173,10 +174,8 @@ export const deleteMember = async (req, res) => {
       return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    // Cascade: remove all financial and notification records
     await cascadeDeleteMember(id, member.clerkUserId);
 
-    // Audit log — fire-and-forget
     writeAuditLog({
       action:      "MEMBER_DELETED",
       performedBy: req.clerkUserId,
@@ -219,7 +218,6 @@ export const approveAdmin = async (req, res) => {
       { new: true }
     );
 
-    // Notify the newly approved admin
     if (updated.clerkUserId) {
       await Notification.create({
         type:        "AdminApproved",
@@ -229,7 +227,6 @@ export const approveAdmin = async (req, res) => {
       });
     }
 
-    // Audit log — fire-and-forget
     writeAuditLog({
       action:      "MEMBER_ROLE_CHANGED",
       performedBy: req.clerkUserId,
@@ -247,25 +244,7 @@ export const approveAdmin = async (req, res) => {
   }
 };
 
-
-
-
-
-
-
-
-
-
-
 // ─── rejectAdminRequest ────────────────────────────────────────────────────
-// Admin declines a member's pending admin request.
-// Sets pendingAdmin back to false — the member's role is untouched
-// (they remain a regular "member"), and they are free to request again
-// later if they choose to.
-//
-// reason is optional. When provided, it is shown to the member in their
-// notification so they understand why the request was declined an
-// whether re-requesting later makes sense.
 
 export const rejectAdminRequest = async (req, res) => {
   try {
@@ -290,7 +269,6 @@ export const rejectAdminRequest = async (req, res) => {
       { new: true }
     );
 
-    // Notify the member — with or without a reason
     if (updated.clerkUserId) {
       const baseMessage = "Your admin access request was not approved.";
       const content = reason?.trim()
@@ -305,8 +283,6 @@ export const rejectAdminRequest = async (req, res) => {
       });
     }
 
-    // Audit log — same category as MEMBER_ROLE_CHANGED, since this is
-    // a decision about role elevation even though the outcome is "no change"
     writeAuditLog({
       action:      "MEMBER_ROLE_CHANGED",
       performedBy: req.clerkUserId,
@@ -326,30 +302,14 @@ export const rejectAdminRequest = async (req, res) => {
   }
 };
 
-
-
-
-
-
-
-
-
-
-
-
 // ── triggerMonthlyDue (dev/testing only) ─────────────────────────────────────
 
 export const triggerMonthlyDue = async (req, res) => {
-  // WHY this guard: this endpoint manually adds dues for all members.
-  // In production it would be catastrophic if triggered accidentally or
-  // by a confused admin. It only exists to let developers test the payment
-  // flow without waiting for the 1st of the month.
   if (process.env.NODE_ENV === "production") {
     return res.status(403).json({ success: false, message: "Not available in production" });
   }
 
   try {
-    // Dynamically import to avoid circular dependency at module load time
     const { addMonthlyDueForAll } = await import("./paymentController.js");
     return addMonthlyDueForAll(req, res);
   } catch (error) {
