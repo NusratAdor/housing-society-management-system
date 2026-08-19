@@ -14,9 +14,9 @@ const DB_NAME = process.env.MONGODB_DB_NAME || "housing_society";
 const run = async () => {
   await mongoose.connect(`${process.env.MONGODB_URI}/${DB_NAME}`);
 
-  const member = await Member.findOne({ membershipNo: "ADMIN-001" });
+  const member = await Member.findOne({ membershipNo: "123" });
   if (!member) {
-    console.log("❌ No member found with membershipNo ADMIN-001. Register on the site first.");
+    console.log("❌ No member found with membershipNo 123. Register on the site first.");
     process.exit(1);
   }
   if (member.role === "admin") {
