@@ -1,5 +1,8 @@
 // client/src/pages/CreateProfile.jsx
-// Only addition: usePageTitle hook. All existing logic unchanged.
+// CHANGE: staff (Content Manager / Super Admin) are redirected away from
+// this form instead of being shown it. Staff have no Member document by
+// design — this form would ask them for a membershipNo tied to a real
+// MemberSeat they don't have and should never be prompted to create.
 
 import React, { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
@@ -9,7 +12,10 @@ import { Navigate } from "react-router-dom";
 import usePageTitle from "../hooks/usePageTitle";
 
 const CreateProfile = () => {
-  const { getToken, navigate, axios, setMemberProfile, memberProfile, loadingProfile } = useAppContext();
+  const {
+    getToken, navigate, axios, setMemberProfile, memberProfile, loadingProfile,
+    staffProfile, loadingStaffProfile,
+  } = useAppContext();
   const { user } = useUser();
 
   usePageTitle("Create Profile");
@@ -25,18 +31,31 @@ const CreateProfile = () => {
   const [membershipError, setMembershipError] = useState("");
 
   useEffect(() => {
-    if (!loadingProfile && memberProfile) {
+    if (loadingProfile || loadingStaffProfile) return;
+
+    if (staffProfile) {
+      const destination = staffProfile.role === "super_admin" ? "/super-admin" : "/admin";
+      navigate(destination, { replace: true });
+      return;
+    }
+
+    if (memberProfile) {
       const destination = memberProfile.role === "admin" ? "/admin" : "/dashboard";
       navigate(destination, { replace: true });
     }
-  }, [memberProfile, loadingProfile, navigate]);
+  }, [memberProfile, loadingProfile, staffProfile, loadingStaffProfile, navigate]);
 
-  if (loadingProfile) {
+  if (loadingProfile || loadingStaffProfile) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="text-gray-600 font-outfit">Loading profile...</div>
       </div>
     );
+  }
+
+  if (staffProfile) {
+    const destination = staffProfile.role === "super_admin" ? "/super-admin" : "/admin";
+    return <Navigate to={destination} replace />;
   }
 
   if (memberProfile) {

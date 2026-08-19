@@ -734,9 +734,7 @@ const ManageMembers = () => {
                 <div key={field.key} className="mb-4">
                   <label className="block text-sm text-gray-600 mb-1 font-medium">
                     {field.label}
-                    {field.readOnly && (
-                      <span className="text-gray-400 font-normal ml-1">(locked)</span>
-                    )}
+                    
                   </label>
                   {field.type === "select" ? (
                     <select

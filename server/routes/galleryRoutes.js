@@ -11,7 +11,7 @@
 
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { isAdmin } from "../middleware/adminMiddleware.js";
+import { canManageContent } from "../middleware/staffMiddleware.js";
 import upload from "../middleware/uploadMiddleware.js";
 import {
   createGalleryItem,
@@ -28,7 +28,7 @@ router.get("/", getGalleryItems);
 router.get("/:id", getGalleryItemById);
 
 // Admin only
-router.use(protect, isAdmin);
+router.use(protect, canManageContent); 
 router.post("/", upload.array("images", 10), createGalleryItem);
 router.put("/:id", upload.array("images", 10), updateGalleryItem);
 router.delete("/:id", deleteGalleryItem);

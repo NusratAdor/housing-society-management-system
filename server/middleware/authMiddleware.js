@@ -1,18 +1,14 @@
 // server/middleware/authMiddleware.js
-// Reads the Clerk userId from req.auth (populated by clerkMiddleware from
-// @clerk/express). Attaches the Member document to req.member if a profile
-// exists. Does NOT block the request — that is the job of isAdmin or
-// route-level guards. Every authenticated route runs this first.
+// CHANGE: protect now also attaches req.staff (active StaffAccount, if
+// any) alongside the existing req.member lookup. Fully independent
+// queries — a person can be a Member, staff, both, or neither, and this
+// change does not alter existing req.member behavior in any way.
 
 import Member from "../models/Member.js";
+import StaffAccount from "../models/StaffAccount.js";
 
 export const protect = async (req, res, next) => {
   try {
-    // WHY: The original code had a typeof req.auth === "function" check
-    // inherited from @clerk/express v1 where req.auth() had to be called
-    // as a function. In v2+ req.auth is a plain object set by clerkMiddleware.
-    // Keeping the function check is dead code that misleads future developers
-    // into thinking both APIs are still supported. Removed.
     const userId = req.auth()?.userId;
 
     if (!userId) {
@@ -21,12 +17,15 @@ export const protect = async (req, res, next) => {
 
     req.clerkUserId = userId;
 
-    // Attach member document if a profile exists.
-    // Some routes (e.g. /create-profile) are called by signed-in users
-    // who do not yet have a Member document, so a missing member is not
-    // an error here — the controller handles that case.
+    // Unchanged from before.
     const member = await Member.findOne({ clerkUserId: userId }).select("-__v");
     if (member) req.member = member;
+
+    // NEW — independent lookup, does not affect req.member above.
+    const staff = await StaffAccount
+      .findOne({ clerkUserId: userId, active: true })
+      .select("-__v");
+    if (staff) req.staff = staff;
 
     next();
   } catch (error) {

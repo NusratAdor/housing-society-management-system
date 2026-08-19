@@ -16,25 +16,29 @@ const auditLogSchema = new mongoose.Schema(
   {
     // What type of action was performed
     action: {
-      type:     String,
+      type: String,
       required: true,
       enum: [
-        "FEE_CHANGED",          // admin changed monthly fee
-        "CHARGE_CREATED",       // admin created extra charge(s)
-        "CHARGE_CANCELLED",     // admin cancelled an extra charge
-        "PAYMENT_APPROVED",     // admin manually approved a payment
-        "PAYMENT_REJECTED",     // admin rejected a payment
-        "MEMBER_ROLE_CHANGED",  // admin changed a member's role
-        "MEMBER_UPDATED",       // admin updated member profile
-        "MEMBER_DELETED",       // admin deleted a member
-        "MONTHLY_DUES_ADDED",   // cron job added monthly dues
+        "FEE_CHANGED", // admin changed monthly fee
+        "CHARGE_CREATED", // admin created extra charge(s)
+        "CHARGE_CANCELLED", // admin cancelled an extra charge
+        "PAYMENT_APPROVED", // admin manually approved a payment
+        "PAYMENT_REJECTED", // admin rejected a payment
+        "MEMBER_ROLE_CHANGED", // admin changed a member's role
+        "MEMBER_UPDATED", // admin updated member profile
+        "MEMBER_DELETED", // admin deleted a member
+        "MONTHLY_DUES_ADDED", // cron job added monthly dues
+
+        "STAFF_INVITED",
+        "STAFF_ROLE_CHANGED",
+        "STAFF_REVOKED",
       ],
     },
 
     // Clerk userId of the admin who performed this action
     // "SYSTEM" for cron-initiated actions
     performedBy: {
-      type:     String,
+      type: String,
       required: true,
     },
 
@@ -45,7 +49,7 @@ const auditLogSchema = new mongoose.Schema(
 
     // Human-readable description of what changed
     description: {
-      type:     String,
+      type: String,
       required: true,
     },
 
@@ -69,7 +73,7 @@ const auditLogSchema = new mongoose.Schema(
   {
     // updatedAt intentionally excluded — these records never change
     timestamps: { createdAt: true, updatedAt: false },
-  }
+  },
 );
 
 // Admin audit dashboard — most recent actions first

@@ -1,36 +1,13 @@
 // client/src/context/AppContext.jsx
 //
-// THE CORE FIX (isLoaded) — unchanged, still correct:
-//   Mount → loadingProfile=true (stays true until we actually KNOW)
-//   → Clerk finishes (isLoaded=true) → fetchMemberProfile runs →
-//   profile arrives → loadingProfile=false.
-//
-// ADDITIONAL FIX — navigate/getToken stability:
-//   fetchMemberProfile previously listed `navigate` and `getToken`
-//   directly in its useCallback dependency array. Because AppProvider
-//   re-renders on every route change (it calls useNavigate, which
-//   subscribes to the router), and neither Clerk's getToken nor
-//   React Router's navigate are guaranteed to keep the same function
-//   reference across every render, fetchMemberProfile was being
-//   recreated on every tab switch. That triggered its effect again,
-//   which calls setLoadingProfile(true) — and ProtectedRoute swaps
-//   DashboardLayout out for LoadingScreen the instant that flips true,
-//   which is what caused TopBar/Sidebar to visibly unmount and remount
-//   on every navigation.
-//
-//   Fix: hold the latest navigate/getToken in refs. fetchMemberProfile
-//   reads through the ref, so its own identity only changes when
-//   isLoaded or user actually change — which is the only time it
-//   should ever re-run. Behaviour (session-expiry redirect, retries,
-//   error handling) is completely unchanged — only its re-render
-//   sensitivity is fixed.
-//
-// ADDITIONAL FIX — context value memoization:
-//   The context `value` object was a new object literal on every
-//   render, forcing every consumer of useAppContext() to re-render
-//   on every AppProvider render regardless of whether anything they
-//   actually use changed. Wrapped in useMemo so consumers only
-//   re-render when a value they depend on actually changes.
+// CHANGE (this pass): added a second, fully independent profile fetch —
+// staffProfile (StaffAccount) — following the EXACT same shape as the
+// existing memberProfile fetch: own ref-stabilized navigate/getToken,
+// own retry/backoff counter, own loading flag. This is deliberate, not
+// a shortcut — a user can be a Member, staff, both, or neither, and
+// conflating the two fetches into one function would break that
+// distinction. Nothing about the existing memberProfile fetch logic,
+// retry behavior, or error handling changes.
 
 import axiosInstance from "../utils/axiosInstance.js";
 import {
@@ -56,12 +33,20 @@ export const AppProvider = ({ children }) => {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isAdmin,        setIsAdmin]        = useState(false);
 
+  // NEW — staff identity, fully independent of member identity.
+  const [staffProfile,        setStaffProfile]        = useState(null);
+  const [loadingStaffProfile, setLoadingStaffProfile]  = useState(true);
+  const [isSuperAdmin,        setIsSuperAdmin]         = useState(false);
+  const [isContentManager,    setIsContentManager]     = useState(false);
+
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef(null);
 
-  // Latest navigate/getToken, read through refs so fetchMemberProfile's
-  // identity doesn't change just because these functions got a new
-  // reference on an unrelated re-render (e.g. route navigation).
+  // Separate retry state for the staff fetch — must not share a counter
+  // with the member fetch, since the two requests fail/succeed independently.
+  const staffRetryCountRef = useRef(0);
+  const staffRetryTimerRef = useRef(null);
+
   const navigateRef = useRef(navigate);
   const getTokenRef = useRef(getToken);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
@@ -71,6 +56,13 @@ export const AppProvider = ({ children }) => {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+  }, []);
+
+  const clearStaffRetryTimer = useCallback(() => {
+    if (staffRetryTimerRef.current) {
+      clearTimeout(staffRetryTimerRef.current);
+      staffRetryTimerRef.current = null;
     }
   }, []);
 
@@ -145,11 +137,6 @@ export const AppProvider = ({ children }) => {
         retryCountRef.current += 1;
         const delay = RETRY_BASE_MS * Math.pow(2, retryCountRef.current - 1);
 
-        console.info(
-          `[AppContext] Profile fetch failed (network). ` +
-          `Retry ${retryCountRef.current}/${MAX_RETRIES} in ${delay / 1000}s`
-        );
-
         retryTimerRef.current = setTimeout(() => {
           fetchMemberProfile();
         }, delay);
@@ -168,10 +155,91 @@ export const AppProvider = ({ children }) => {
         toast.error("Could not connect to server. Please refresh the page.");
       }
     }
-  // navigate/getToken intentionally excluded — accessed via ref above.
-  // This callback now only changes identity when isLoaded or user
-  // actually change, which is the only time it should re-run.
   }, [isLoaded, user, clearRetryTimer]);
+
+  // NEW — staff profile fetch. Deliberately silent on 404 (most users are
+  // not staff — that is the expected, common case, not an error worth
+  // surfacing) and deliberately does NOT redirect on session expiry itself,
+  // since fetchMemberProfile already owns that responsibility. This fetch
+  // only ever sets staff-related state.
+  const fetchStaffProfile = useCallback(async () => {
+    if (!isLoaded) {
+      return;
+    }
+
+    if (!user) {
+      clearStaffRetryTimer();
+      staffRetryCountRef.current = 0;
+      setStaffProfile(null);
+      setIsSuperAdmin(false);
+      setIsContentManager(false);
+      setLoadingStaffProfile(false);
+      return;
+    }
+
+    try {
+      setLoadingStaffProfile(true);
+
+      const token = await getTokenRef.current();
+      if (!token) {
+        throw new Error("NO_TOKEN");
+      }
+
+      const { data } = await axiosInstance.get("/api/staff/me", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      staffRetryCountRef.current = 0;
+      clearStaffRetryTimer();
+
+      if (data.success) {
+        setStaffProfile(data.staff);
+        setIsSuperAdmin(data.staff.role === "super_admin");
+        setIsContentManager(data.staff.role === "content_manager");
+      } else {
+        setStaffProfile(null);
+        setIsSuperAdmin(false);
+        setIsContentManager(false);
+      }
+      setLoadingStaffProfile(false);
+
+    } catch (error) {
+      const status         = error.response?.status;
+      const isNetworkError = !error.response;
+      const isNoToken      = error.message === "NO_TOKEN";
+
+      // 404 = not staff. This is the normal case for the vast majority
+      // of users — no toast, no retry, just an empty staff identity.
+      if (status === 404) {
+        staffRetryCountRef.current = 0;
+        clearStaffRetryTimer();
+        setStaffProfile(null);
+        setIsSuperAdmin(false);
+        setIsContentManager(false);
+        setLoadingStaffProfile(false);
+        return;
+      }
+
+      if ((isNetworkError || isNoToken) && staffRetryCountRef.current < MAX_RETRIES) {
+        staffRetryCountRef.current += 1;
+        const delay = RETRY_BASE_MS * Math.pow(2, staffRetryCountRef.current - 1);
+
+        staffRetryTimerRef.current = setTimeout(() => {
+          fetchStaffProfile();
+        }, delay);
+        return;
+      }
+
+      // Fail closed and quietly — a broken staff-status check should
+      // never block a regular member from using the app normally.
+      staffRetryCountRef.current = 0;
+      clearStaffRetryTimer();
+      setStaffProfile(null);
+      setIsSuperAdmin(false);
+      setIsContentManager(false);
+      setLoadingStaffProfile(false);
+    }
+  }, [isLoaded, user, clearStaffRetryTimer]);
 
   useEffect(() => {
     clearRetryTimer();
@@ -180,9 +248,36 @@ export const AppProvider = ({ children }) => {
     return () => clearRetryTimer();
   }, [fetchMemberProfile, clearRetryTimer]);
 
-  // Memoized so consumers of useAppContext() only re-render when a
-  // value they actually use changes — not on every AppProvider render.
-  const value = useMemo(() => ({
+  useEffect(() => {
+    clearStaffRetryTimer();
+    staffRetryCountRef.current = 0;
+    fetchStaffProfile();
+    return () => clearStaffRetryTimer();
+  }, [fetchStaffProfile, clearStaffRetryTimer]);
+
+  
+  // Computed once here — the single source of truth for which contexts
+  // this user can switch between. Every component that needs to know
+  // "where can this user go" (Navbar, WorkspaceSwitcher, etc.) reads
+  // THIS instead of re-deriving isAdmin/isContentManager/memberProfile
+  // logic independently — that duplication is what caused the Content
+  // Manager "Create Profile" button bug.
+const availableWorkspaces = useMemo(() => {
+    const workspaces = [];
+    if (isSuperAdmin) {
+      workspaces.push({ key: "super-admin", path: "/super-admin", soloLabel: "Super Admin", switchLabel: "Super Admin" });
+    }
+    if (isAdmin || isContentManager) {
+      workspaces.push({ key: "admin", path: "/admin", soloLabel: "Admin Panel", switchLabel: "Admin Panel" });
+    }
+    if (memberProfile) {
+      workspaces.push({ key: "member", path: "/dashboard", soloLabel: "Dashboard", switchLabel: "My Membership" });
+    }
+    return workspaces;
+  }, [isSuperAdmin, isAdmin, isContentManager, memberProfile]);
+
+
+     const value = useMemo(() => ({
     navigate,
     user,
     getToken,
@@ -192,7 +287,21 @@ export const AppProvider = ({ children }) => {
     fetchMemberProfile,
     loadingProfile,
     isAdmin,
-  }), [navigate, user, getToken, memberProfile, fetchMemberProfile, loadingProfile, isAdmin]);
+    staffProfile,
+    fetchStaffProfile,
+    loadingStaffProfile,
+    isSuperAdmin,
+    isContentManager,
+    // NEW
+    availableWorkspaces,
+  }), [
+    navigate, user, getToken,
+    memberProfile, fetchMemberProfile, loadingProfile, isAdmin,
+    staffProfile, fetchStaffProfile, loadingStaffProfile, isSuperAdmin, isContentManager,
+    availableWorkspaces,
+  ]);
+
+
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

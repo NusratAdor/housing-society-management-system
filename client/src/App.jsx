@@ -1,15 +1,25 @@
 // client/src/App.jsx
 //
-// CHANGE (this pass): full Events system wired up:
-//   - /events       -> Events.jsx (public listing, Upcoming/Past)
-//   - /events/:id   -> EventDetail.jsx (public single event page)
-//   - /admin/manage-events -> ManageEvents.jsx (admin CRUD)
-// EventsPreview.jsx (homepage section) now fetches real data from
-// GET /api/events/public instead of using dummy arrays — no change
-// needed here for that, it was already rendered from Home.jsx.
+// CHANGE (this pass): ProtectedRoute now checks staffProfile BEFORE the
+// !memberProfile → /create-profile fallback. Without this, every staff
+// login (Content Manager / Super Admin — neither has a Member document
+// by design) would be redirected into the member-registration form,
+// which asks for a membershipNo they don't have and shouldn't get.
 //
-// Everything else — About Us section, Services section, dashboard/
-// admin shell routing, ProtectedRoute — UNCHANGED.
+// /admin index route now renders role-appropriate content: Dashboard
+// for Admin, ContentManagerLanding for Content Manager — via the new
+// AdminIndex wrapper, so the route table itself stays simple.
+//
+// Financial/member-management subroutes under /admin are individually
+// wrapped with allowedRoles={["admin"]} — Content Manager reaches
+// /admin at all, but not those. Content-manageable subroutes accept
+// both roles explicitly (defense in depth, even though the outer gate
+// already narrows it).
+//
+// New /super-admin route tree, gated on role "super_admin" only.
+//
+// Everything else — Home, Notices, Gallery, Events, About Us, Services,
+// dashboard/member shell routing — UNCHANGED.
 
 import React, { useState, useEffect } from "react";
 import { Routes, Route, useLocation, Navigate } from "react-router-dom";
@@ -30,18 +40,15 @@ import SignIn             from "./pages/SignIn";
 import SignUp             from "./pages/SignUp";
 import CreateProfile      from "./pages/CreateProfile";
 
-// Events
 import Events        from "./pages/Events";
 import EventDetail   from "./pages/EventDetail";
 
-// About Us section
 import AboutSociety          from "./pages/AboutSociety";
 import VisionMission         from "./pages/VisionMission";
 import Achievements          from "./pages/Achievements";
 import CommitteeSection      from "./pages/CommitteeSection";
 import CommitteeMemberDetail from "./pages/CommitteeMemberDetail";
 
-// Services section
 import Services       from "./pages/Services";
 import SwimmingPool   from "./pages/SwimmingPool";
 import MemberSupport  from "./pages/MemberSupport";
@@ -53,17 +60,21 @@ import DashboardNotices  from "./pages/dashboard/DashboardNotices";
 import DashboardFAQs     from "./pages/dashboard/DashboardFAQs";
 
 import Layout             from "./pages/admin/Layout";
-import Dashboard          from "./pages/admin/Dashboard";
+import AdminIndex         from "./pages/admin/AdminIndex";
 import ManageMembers      from "./pages/admin/ManageMembers";
 import ManageNotices      from "./pages/admin/ManageNotices";
 import ManageEvents       from "./pages/admin/ManageEvents";
 import ManageFAQs         from "./pages/admin/ManageFAQs";
 import ManageGallery      from "./pages/admin/ManageGallery";
-import ManageMemberSeats from "./pages/admin/ManageMemberSeats";
+import ManageMemberSeats  from "./pages/admin/ManageMemberSeats";
 import ManagePayments     from "./pages/admin/ManagePayments";
 import ManageCommittee    from "./pages/admin/ManageCommittee";
 import ManageAnnouncement from "./pages/admin/ManageAnnouncement";
 import DashboardLayout    from "./layouts/DashboardLayout";
+
+// NEW — Super Admin
+import SuperAdminLayout   from "./pages/superadmin/SuperAdminLayout";
+import ManageStaff        from "./pages/superadmin/ManageStaff";
 
 import LoadingScreen      from "./components/LoadingScreen";
 import { ScrollRestorer, ScrollToTopButton } from "./components/ScrollToTop";
@@ -72,12 +83,29 @@ import { ScrollRestorer, ScrollToTopButton } from "./components/ScrollToTop";
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isLoaded, isSignedIn } = useAuth();
-  const { memberProfile, loadingProfile } = useAppContext();
+  const {
+    memberProfile, loadingProfile,
+    staffProfile,  loadingStaffProfile,
+  } = useAppContext();
 
-  if (!isLoaded)       return <LoadingScreen />;
-  if (!isSignedIn)     return <Navigate to="/sign-in" replace />;
-  if (loadingProfile)  return <LoadingScreen />;
-  if (!memberProfile)  return <Navigate to="/create-profile" replace />;
+  if (!isLoaded)               return <LoadingScreen />;
+  if (!isSignedIn)              return <Navigate to="/sign-in" replace />;
+  if (loadingProfile || loadingStaffProfile) return <LoadingScreen />;
+
+  // Staff identity is checked FIRST and deliberately. Staff (Content
+  // Manager, Super Admin) have no Member document by design — if this
+  // check ran after the memberProfile check below, every staff login
+  // would fall into the !memberProfile branch and get redirected to
+  // /create-profile, which is wrong for them.
+  if (staffProfile) {
+    if (allowedRoles.includes(staffProfile.role)) {
+      return children;
+    }
+    const fallback = staffProfile.role === "super_admin" ? "/super-admin" : "/admin";
+    return <Navigate to={fallback} replace />;
+  }
+
+  if (!memberProfile) return <Navigate to="/create-profile" replace />;
 
   const userRole = memberProfile.role || "member";
   if (!allowedRoles.includes(userRole)) {
@@ -91,31 +119,32 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const App = () => {
-  const { loadingProfile } = useAppContext();
+  const { loadingProfile, loadingStaffProfile } = useAppContext();
   const location = useLocation();
 
   const [overlayVisible, setOverlayVisible] = useState(true);
   const [overlayFading,  setOverlayFading]  = useState(false);
 
   useEffect(() => {
-    if (!loadingProfile) {
+    if (!loadingProfile && !loadingStaffProfile) {
       setOverlayFading(true);
       const t = setTimeout(() => setOverlayVisible(false), 600);
       return () => clearTimeout(t);
     }
-  }, [loadingProfile]);
+  }, [loadingProfile, loadingStaffProfile]);
 
-  const isAdminPath     = location.pathname.startsWith("/admin");
-  const isDashboardPath = location.pathname.startsWith("/dashboard");
-  const isAuthPath      = location.pathname.startsWith("/sign-in") ||
-                          location.pathname.startsWith("/sign-up");
+  const isAdminPath      = location.pathname.startsWith("/admin");
+  const isSuperAdminPath = location.pathname.startsWith("/super-admin");
+  const isDashboardPath  = location.pathname.startsWith("/dashboard");
+  const isAuthPath       = location.pathname.startsWith("/sign-in") ||
+                           location.pathname.startsWith("/sign-up");
 
-  const hideNavbar = isAdminPath || isDashboardPath || isAuthPath ||
+  const hideNavbar = isAdminPath || isSuperAdminPath || isDashboardPath || isAuthPath ||
                      location.pathname === "/create-profile";
 
   const needsTopMargin = location.pathname !== "/" && !hideNavbar;
 
-  const isShellRoute = isDashboardPath || isAdminPath;
+  const isShellRoute = isDashboardPath || isAdminPath || isSuperAdminPath;
 
   return (
     <div>
@@ -140,40 +169,122 @@ const App = () => {
       {isShellRoute ? (
         <Routes location={location}>
           <Route
-  path="/dashboard"
-  element={
-    <ProtectedRoute allowedRoles={["member"]}>
-      <DashboardLayout />
-    </ProtectedRoute>
-  }
->
-  <Route index    element={<Navigate to="overview" replace />} />
-  <Route path="overview" element={<DashboardOverview />} />
-  <Route path="payment"  element={<DashboardPayment />} />
-  <Route path="profile"  element={<DashboardProfile />} />
-  <Route path="notices"  element={<DashboardNotices />} />
-  <Route path="faqs"     element={<DashboardFAQs />} />
-  <Route path="*"        element={<Navigate to="overview" replace />} />
+            path="/dashboard"
+            element={
+              <ProtectedRoute allowedRoles={["member", "admin"]}>
+                <DashboardLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index    element={<Navigate to="overview" replace />} />
+            <Route path="overview" element={<DashboardOverview />} />
+            <Route path="payment"  element={<DashboardPayment />} />
+            <Route path="profile"  element={<DashboardProfile />} />
+            <Route path="notices"  element={<DashboardNotices />} />
+            <Route path="faqs"     element={<DashboardFAQs />} />
+            <Route path="*"        element={<Navigate to="overview" replace />} />
           </Route>
 
           <Route
             path="/admin"
             element={
-              <ProtectedRoute allowedRoles={["admin"]}>
+              <ProtectedRoute allowedRoles={["admin", "content_manager"]}>
                 <Layout />
               </ProtectedRoute>
             }
           >
-            <Route index                  element={<Dashboard />} />
-            <Route path="manage-members"  element={<ManageMembers />} />
-            <Route path="manage-notices"  element={<ManageNotices />} />
-            <Route path="manage-events"   element={<ManageEvents />} />
-            <Route path="manage-faqs"     element={<ManageFAQs />} />
-            <Route path="manage-gallery"  element={<ManageGallery />} />
-            <Route path="manage-seats" element={<ManageMemberSeats />} />
-            <Route path="manage-committee" element={<ManageCommittee />} />
-            <Route path="manage-announcements" element={<ManageAnnouncement />} />
-            <Route path="payments"        element={<ManagePayments />} />
+            {/* Role-aware landing — Admin sees the financial Dashboard,
+                Content Manager sees a scoped, non-financial landing page. */}
+            <Route index element={<AdminIndex />} />
+
+            {/* Content-manageable — Admin OR Content Manager */}
+            <Route
+              path="manage-notices"
+              element={
+                <ProtectedRoute allowedRoles={["admin", "content_manager"]}>
+                  <ManageNotices />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-gallery"
+              element={
+                <ProtectedRoute allowedRoles={["admin", "content_manager"]}>
+                  <ManageGallery />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-announcements"
+              element={
+                <ProtectedRoute allowedRoles={["admin", "content_manager"]}>
+                  <ManageAnnouncement />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-faqs"
+              element={
+                <ProtectedRoute allowedRoles={["admin", "content_manager"]}>
+                  <ManageFAQs />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Admin-only — members, dues, payments, seats, events, committee */}
+            <Route
+              path="manage-members"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManageMembers />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-events"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManageEvents />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-seats"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManageMemberSeats />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="manage-committee"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManageCommittee />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="payments"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManagePayments />
+                </ProtectedRoute>
+              }
+            />
+          </Route>
+
+          {/* Super Admin — single-purpose: manage staff accounts only. */}
+          <Route
+            path="/super-admin"
+            element={
+              <ProtectedRoute allowedRoles={["super_admin"]}>
+                <SuperAdminLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<ManageStaff />} />
+            <Route path="*" element={<Navigate to="/super-admin" replace />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -199,11 +310,9 @@ const App = () => {
                 <Route path="/sign-up/*"   element={<SignUp />} />
                 <Route path="/create-profile" element={<CreateProfile />} />
 
-                {/* Events */}
                 <Route path="/events"      element={<Events />} />
                 <Route path="/events/:id"  element={<EventDetail />} />
 
-                {/* About Us section */}
                 <Route path="/about-us"                          element={<AboutSociety />} />
                 <Route path="/about-us/vision-mission"           element={<VisionMission />} />
                 <Route path="/about-us/achievements"             element={<Achievements />} />
@@ -215,7 +324,6 @@ const App = () => {
                 <Route path="/about-us/executive-committee"      element={<CommitteeSection category="executiveCommittee" />} />
                 <Route path="/about-us/member/:id"               element={<CommitteeMemberDetail />} />
 
-                {/* Services section */}
                 <Route path="/our-services"                  element={<Services />} />
                 <Route path="/our-services/swimming-pool"    element={<SwimmingPool />} />
                 <Route path="/our-services/member-support"   element={<MemberSupport />} />

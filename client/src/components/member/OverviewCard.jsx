@@ -25,7 +25,7 @@ import React, { useEffect, useCallback, useState, useMemo } from "react";
 import { motion }        from "framer-motion";
 import {
   AlertCircle, ArrowRight, Bell, CreditCard,
-  HelpCircle, ChevronRight, FileText,
+  HelpCircle, ChevronRight, FileText,Activity,
   Image as ImageIcon, CheckCircle2,
 } from "lucide-react";
 import { Link }          from "react-router-dom";

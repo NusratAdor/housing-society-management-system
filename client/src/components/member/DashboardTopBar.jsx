@@ -14,6 +14,9 @@ import { useAppContext }  from "../../context/AppContext";
 import LanguageToggle     from "../LanguageToggle";
 import NotificationBell   from "./NotificationBell";
 
+import WorkspaceSwitcher  from "../WorkspaceSwitcher";
+
+
 export default function DashboardTopBar() {
   const { user, axios, getToken, navigate } = useAppContext();
   const [notifications, setNotifications]   = useState([]);
@@ -48,8 +51,9 @@ export default function DashboardTopBar() {
         <img src={assets.logoScrolled} alt="GOMCS" className="h-8 w-auto" />
       </Link>
 
-      {/* Controls */}
+           {/* Controls */}
       <div className="flex items-center gap-2">
+        <WorkspaceSwitcher variant="dark" />
         <LanguageToggle />
         <NotificationBell
           notifications={notifications}

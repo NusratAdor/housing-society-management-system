@@ -1,7 +1,7 @@
 // routes/noticeRoutes.js
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { isAdmin } from "../middleware/adminMiddleware.js";
+import { canManageContent } from "../middleware/staffMiddleware.js";
 import upload from "../middleware/uploadMiddleware.js";
 import {
   createNotice,
@@ -18,7 +18,7 @@ router.get("/", getNotices);
 router.get("/:id", getNoticeById);
 
 // Admin-only routes
-router.use(protect, isAdmin);
+router.use(protect, canManageContent);   
 router.post("/", upload.single("image"), createNotice);
 router.put("/:id", upload.single("image"), updateNotice);
 router.delete("/:id", deleteNotice);

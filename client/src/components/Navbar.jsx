@@ -41,10 +41,19 @@ import LanguageToggle from "./LanguageToggle";
 import NotificationBell from "./member/NotificationBell";
 import AnnouncementBar from "./AnnouncementBar";
 
+import WorkspaceSwitcher from "./WorkspaceSwitcher";
+
+
+
+
 const dropdownVariants = {
   hidden: { opacity: 0, y: -6 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.15, ease: "easeOut" } },
-  exit:    { opacity: 0, y: -4, transition: { duration: 0.1 } },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.15, ease: "easeOut" },
+  },
+  exit: { opacity: 0, y: -4, transition: { duration: 0.1 } },
 };
 
 const BAR_TRANSITION = { duration: 0.32, ease: [0.65, 0, 0.35, 1] };
@@ -81,22 +90,50 @@ const Navbar = () => {
       name: t("about"),
       path: "/about-us",
       submenu: [
-        { name: "About Society",             path: "/about-us",                              icon: BookOpen  },
-        { name: "Vision & Mission",           path: "/about-us/vision-mission",               icon: Target    },
-        { name: "Advisers",                  path: "/about-us/advisers",                     icon: Lightbulb },
-        { name: "Chairman",                  path: "/about-us/chairman",                     icon: Crown     },
-        { name: "General Secretary",         path: "/about-us/general-secretary",            icon: UserCog   },
-        { name: "Former Chairman",           path: "/about-us/former-chairman",              icon: History   },
-        { name: "Former General Secretary",  path: "/about-us/former-general-secretary",     icon: Archive   },
-        { name: "Executive Committee",       path: "/about-us/executive-committee",          icon: Users     },
+        { name: "About Society", path: "/about-us", icon: BookOpen },
+        {
+          name: "Vision & Mission",
+          path: "/about-us/vision-mission",
+          icon: Target,
+        },
+        { name: "Advisers", path: "/about-us/advisers", icon: Lightbulb },
+        { name: "Chairman", path: "/about-us/chairman", icon: Crown },
+        {
+          name: "General Secretary",
+          path: "/about-us/general-secretary",
+          icon: UserCog,
+        },
+        {
+          name: "Former Chairman",
+          path: "/about-us/former-chairman",
+          icon: History,
+        },
+        {
+          name: "Former General Secretary",
+          path: "/about-us/former-general-secretary",
+          icon: Archive,
+        },
+        {
+          name: "Executive Committee",
+          path: "/about-us/executive-committee",
+          icon: Users,
+        },
       ],
     },
     {
       name: t("services"),
       path: "/our-services",
       submenu: [
-        { name: "Swimming Pool",  path: "/our-services/swimming-pool",  icon: Waves    },
-        { name: "Member Support", path: "/our-services/member-support", icon: LifeBuoy },
+        {
+          name: "Swimming Pool",
+          path: "/our-services/swimming-pool",
+          icon: Waves,
+        },
+        {
+          name: "Member Support",
+          path: "/our-services/member-support",
+          icon: LifeBuoy,
+        },
       ],
     },
     { name: t("notices"), path: "/notices" },
@@ -110,7 +147,7 @@ const Navbar = () => {
   const [openDesktopMenu, setOpenDesktopMenu] = useState(null);
   const [openMobileSubmenu, setOpenMobileSubmenu] = useState(null);
 
-  const {
+    const {
     user,
     navigate,
     memberProfile,
@@ -118,10 +155,15 @@ const Navbar = () => {
     isAdmin,
     axios,
     getToken,
+    staffProfile,
+    loadingStaffProfile,
+    isSuperAdmin,
+    isContentManager,
+    availableWorkspaces,
   } = useAppContext();
 
   const location = useLocation();
-  const isHome   = location.pathname === "/";
+  const isHome = location.pathname === "/";
 
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
@@ -133,7 +175,9 @@ const Navbar = () => {
       if (data.success) {
         setNotifications(data.notifications ?? data.payments ?? []);
       }
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }, [user, axios, getToken]);
 
   useEffect(() => {
@@ -145,26 +189,14 @@ const Navbar = () => {
   useEffect(() => {
     const handleScroll = () => {
       if (!isHome) setIsScrolled(true);
-      else         setIsScrolled(window.scrollY > 10);
+      else setIsScrolled(window.scrollY > 10);
     };
     handleScroll();
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isHome]);
 
-  const handleMainButtonClick = () => {
-    if (isAdmin)       return navigate("/admin");
-    if (memberProfile) return navigate("/dashboard");
-    return navigate("/create-profile");
-  };
-
-  const mainButtonLabel = loadingProfile
-    ? null
-    : isAdmin
-    ? t("adminPanel")
-    : memberProfile
-    ? t("dashboard")
-    : t("createProfile");
+const handleCreateProfileClick = () => navigate("/create-profile");
 
   useEffect(() => {
     setIsMenuOpen(false);
@@ -174,7 +206,9 @@ const Navbar = () => {
 
   useEffect(() => {
     document.body.style.overflow = isMenuOpen ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [isMenuOpen]);
 
   const btnBase = `bg-gradient-to-r from-emerald-500 to-teal-600
@@ -199,18 +233,18 @@ const Navbar = () => {
 
   return (
     <>
-      <nav className={`fixed top-0 left-0 w-full z-[70] transition-all duration-500 ${
-        isScrolled
-          ? "bg-white shadow-md backdrop-blur-md"
-          : "bg-transparent"
-      }`}>
-               <AnnouncementBar />
+      <nav
+        className={`fixed top-0 left-0 w-full z-[70] transition-all duration-500 ${
+          isScrolled ? "bg-white shadow-md backdrop-blur-md" : "bg-transparent"
+        }`}
+      >
+        <AnnouncementBar />
 
-        <div className={`w-full max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 transition-all duration-500 ${
-          isScrolled ? "py-3 md:py-4" : "py-4 md:py-6"
-        }`}>
-
-
+        <div
+          className={`w-full max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 transition-all duration-500 ${
+            isScrolled ? "py-3 md:py-4" : "py-4 md:py-6"
+          }`}
+        >
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <img
               src={isScrolled ? assets.logoScrolled : assets.logo}
@@ -283,18 +317,36 @@ const Navbar = () => {
                 >
                   {link.name}
                 </Link>
-              )
+              ),
             )}
 
-            {user && !loadingProfile && mainButtonLabel && (
-              <button
-                onClick={handleMainButtonClick}
-                className={`${btnBase} ml-2 text-sm rounded-md px-5 py-1.5`}
-              >
-                {mainButtonLabel}
-              </button>
+                   {user && !loadingProfile && !loadingStaffProfile && (
+              availableWorkspaces.length === 0 ? (
+                <button
+                  onClick={handleCreateProfileClick}
+                  className={`${btnBase} ml-2 text-sm rounded-md px-5 py-1.5`}
+                >
+                  {t("createProfile")}
+                </button>
+              ) : availableWorkspaces.length === 1 ? (
+                <button
+                  onClick={() => navigate(availableWorkspaces[0].path)}
+                  className={`${btnBase} ml-2 text-sm rounded-md px-5 py-1.5`}
+                >
+                  {availableWorkspaces[0].soloLabel}
+                </button>
+                          ) : (
+                <div className="ml-2">
+                  <WorkspaceSwitcher variant="brand" />
+                </div>
+              )
             )}
           </div>
+
+
+
+
+
 
           <div className="hidden md:flex items-center gap-4">
             <div className={isScrolled ? "text-[#111827]" : "text-white"}>
@@ -305,7 +357,9 @@ const Navbar = () => {
               <NotificationBell
                 notifications={notifications}
                 iconClassName={isScrolled ? "text-gray-600" : "text-white"}
-                hoverBgClassName={isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"}
+                hoverBgClassName={
+                  isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"
+                }
               />
             )}
 
@@ -326,10 +380,14 @@ const Navbar = () => {
               <NotificationBell
                 notifications={notifications}
                 iconClassName={isScrolled ? "text-gray-600" : "text-white"}
-                hoverBgClassName={isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"}
+                hoverBgClassName={
+                  isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"
+                }
               />
             )}
-            {user && !isMenuOpen && <UserButton afterSignOut={() => navigate("/")} />}
+            {user && !isMenuOpen && (
+              <UserButton afterSignOut={() => navigate("/")} />
+            )}
             <MenuToggle
               open={isMenuOpen}
               onClick={() => setIsMenuOpen((v) => !v)}
@@ -351,14 +409,33 @@ const Navbar = () => {
           >
             <div className="h-16 shrink-0" />
 
-            <div className="flex items-center gap-2 px-5 pt-4">
-              {user && !loadingProfile && mainButtonLabel && (
-                <button
-                  onClick={() => { handleMainButtonClick(); setIsMenuOpen(false); }}
-                  className={`${btnBase} flex-1 rounded-md py-2.5 text-sm`}
-                >
-                  {mainButtonLabel}
-                </button>
+                                    <div className="flex items-center gap-2 px-5 pt-4">
+              {user && !loadingProfile && !loadingStaffProfile && (
+                availableWorkspaces.length === 0 ? (
+                  <button
+                    onClick={() => {
+                      handleCreateProfileClick();
+                      setIsMenuOpen(false);
+                    }}
+                    className={`${btnBase} flex-1 rounded-md py-2.5 text-sm`}
+                  >
+                    {t("createProfile")}
+                  </button>
+                ) : availableWorkspaces.length === 1 ? (
+                  <button
+                    onClick={() => {
+                      navigate(availableWorkspaces[0].path);
+                      setIsMenuOpen(false);
+                    }}
+                    className={`${btnBase} flex-1 rounded-md py-2.5 text-sm`}
+                  >
+                    {availableWorkspaces[0].soloLabel}
+                  </button>
+                               ) : (
+                  <div className="flex-1" onClick={() => setIsMenuOpen(false)}>
+                    <WorkspaceSwitcher variant="brand" />
+                  </div>
+                )
               )}
               <div className="shrink-0 text-white">
                 <LanguageToggle />
@@ -373,7 +450,9 @@ const Navbar = () => {
                     <div key={link.path} className="border-b border-white/10">
                       <button
                         onClick={() =>
-                          setOpenMobileSubmenu(openMobileSubmenu === link.path ? null : link.path)
+                          setOpenMobileSubmenu(
+                            openMobileSubmenu === link.path ? null : link.path,
+                          )
                         }
                         className={`flex w-full items-center justify-between py-4 text-base font-normal capitalize transition-colors ${
                           active ? "text-emerald-400" : "text-white/90"
@@ -419,7 +498,9 @@ const Navbar = () => {
                       to={link.path}
                       onClick={() => setIsMenuOpen(false)}
                       className={`border-b border-white/10 py-4 text-base font-normal capitalize transition-colors ${
-                        active ? "text-emerald-400" : "text-white/90 hover:text-emerald-300"
+                        active
+                          ? "text-emerald-400"
+                          : "text-white/90 hover:text-emerald-300"
                       }`}
                     >
                       {link.name}
@@ -432,7 +513,10 @@ const Navbar = () => {
             {!user && (
               <div className="px-5 pb-6 pt-2">
                 <button
-                  onClick={() => { navigate("/sign-in"); setIsMenuOpen(false); }}
+                  onClick={() => {
+                    navigate("/sign-in");
+                    setIsMenuOpen(false);
+                  }}
                   className={`${btnBase} w-full text-base rounded-md px-8 py-3`}
                 >
                   {t("signIn")}

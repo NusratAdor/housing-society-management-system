@@ -3,6 +3,8 @@ import { assets } from '../../assets/assets'
 import { UserButton } from "@clerk/clerk-react";
 import { Link, useNavigate } from "react-router-dom";
 
+import WorkspaceSwitcher from "../WorkspaceSwitcher";
+
 const Navbar = () => {
   const navigate = useNavigate();
 
@@ -11,15 +13,12 @@ const Navbar = () => {
       <Link to="/" className="flex items-center gap-2">
         <img src={assets.logoScrolled} alt="Logo" className="h-9 opacity-80" />
       </Link>
-      <div className="flex items-center gap-4">
-        <Link
-          to="/admin"
-          className="text-[var(--color-primary)] font-medium hover:text-blue-700 transition-all"
-        >
-          Dashboard
-        </Link>
+            <div className="flex items-center gap-4">
+        <WorkspaceSwitcher variant="dark" />
         <UserButton afterSignOut={() => navigate("/")} />
       </div>
+
+      
     </div>
   );
 };

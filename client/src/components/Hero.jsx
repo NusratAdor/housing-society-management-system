@@ -57,20 +57,24 @@ const Hero = () => {
   const navigate = useNavigate();
   const { user } = useUser();
   const { openSignIn } = useClerk();
-  const { memberProfile, loadingProfile, isAdmin } = useAppContext();
+    const { loadingProfile, loadingStaffProfile, availableWorkspaces } = useAppContext();
   const { t } = useTranslation();
 
+  const primaryWorkspace = availableWorkspaces[0] ?? null;
+
   const handleMainButtonClick = () => {
-    if (isAdmin) return navigate("/admin");
-    if (memberProfile) return navigate("/dashboard");
+    if (primaryWorkspace) return navigate(primaryWorkspace.path);
     if (!user) return openSignIn();
     return navigate("/create-profile");
   };
 
-  const mainButtonLabel = isAdmin
-    ? t("Admin Panel")
-    : memberProfile
-    ? t("Dashboard")
+  // Same soloLabel/switchLabel distinction as WorkspaceSwitcher: when
+  // this is the user's only workspace, use the solo wording ("Dashboard"
+  // for a plain Member) — when they have multiple, this button mirrors
+  // whatever WorkspaceSwitcher currently shows as its default, so use
+  // switchLabel to stay consistent with the navbar switcher's wording.
+  const mainButtonLabel = primaryWorkspace
+    ? (availableWorkspaces.length === 1 ? primaryWorkspace.soloLabel : primaryWorkspace.switchLabel)
     : !user
     ? t("Join or Log In to Get Started")
     : t("Create Profile");

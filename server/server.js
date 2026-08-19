@@ -29,6 +29,9 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 
 import reportRoutes from "./routes/reportRoutes.js";
 
+import staffRouter from "./routes/staffRoutes.js";
+import superAdminRouter from "./routes/superAdminRoutes.js";
+
 import testRoutes from "./routes/testRoutes.js";
 
 await connectDB();
@@ -82,6 +85,13 @@ const memberLimiter = rateLimit({
   max: 600,
   message: { success: false, message: "Too many actions in a short time. Please wait a moment." },
 });
+
+
+
+app.use("/api/staff", staffRouter);
+app.use("/api/super-admin", superAdminRouter);
+
+
 app.use("/api/members", memberLimiter, memberRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/notifications", notificationRouter);
@@ -96,6 +106,7 @@ app.use("/api/announcements", announcementRoutes); // <-- NEW: homepage banner
 app.use("/api/charges", chargeRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/reports", reportRoutes);
+
 
 // ── MOUNT REDIRECTS AT ROOT ──
 app.use("/payment", paymentRedirects);

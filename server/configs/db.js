@@ -6,12 +6,14 @@ const connectDB = async () => {
     return;
   }
 
+  const dbName = process.env.MONGODB_DB_NAME || "housing_society";
+
   try {
-    await mongoose.connect(`${process.env.MONGODB_URI}/housing_society`);
-    console.log("✅ Database Connected Successfully");
+    await mongoose.connect(`${process.env.MONGODB_URI}/${dbName}`);
+    console.log(`✅ Database Connected Successfully (${dbName})`);
   } catch (error) {
     console.error("❌ DB Connection Error:", error.message);
-    throw error; // prevents server from starting if DB fails
+    throw error;
   }
 };
 
