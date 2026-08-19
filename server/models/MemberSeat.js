@@ -41,11 +41,6 @@ const memberSeatSchema = new mongoose.Schema(
       trim:    true,
     },
 
-    designation: {
-      type:    String,
-      default: "",
-      trim:    true,
-    },
 
     // Optional — only drives "Member since" display. Falls back to
     // Member.createdAt (digital signup date) when not provided.

@@ -24,13 +24,13 @@ const run = async () => {
     console.log(`⚠️  Seat ADMIN-001 already exists (isClaimed: ${existingSeat.isClaimed}). Skipping creation.`);
   } else {
     await MemberSeat.create({
-      membershipNo: "ADMIN-001",
-      name: "Founding Admin",
-      plotNo: "N/A",
-      designation: "Administrator",
+      membershipNo: "123",
+      name: "Nusrat Jahan",
+      plotNo: "plot-1",
+      paidThroughMonth: "2026-03",
       isClaimed: false,
     });
-    console.log("✅ MemberSeat ADMIN-001 created.");
+    console.log("✅ MemberSeat 123 created.");
   }
 
   console.log("Next: sign up on the LIVE site using membershipNo ADMIN-001.");
