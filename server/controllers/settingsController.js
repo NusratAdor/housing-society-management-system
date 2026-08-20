@@ -21,7 +21,10 @@ export const getMonthlyFee = async (req, res) => {
     return res.status(200).json({ success: true, monthlyFee: fee });
   } catch (error) {
     console.error("getMonthlyFee error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(503).json({
+      success: false,
+      message: "Fee not yet configured. Please contact the administrator.",
+    });
   }
 };
 

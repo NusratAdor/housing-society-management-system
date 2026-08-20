@@ -11,7 +11,7 @@
 
 import FeeHistory from "../models/FeeHistory.js";
 
-const DEFAULT_FEE = 500; // fallback if no FeeHistory records exist yet
+
 
 // ─── getFeeForMonth ───────────────────────────────────────────────────────────
 // Returns the fee amount (in BDT) that was active for a given month and year.
@@ -45,13 +45,17 @@ export const getFeeForMonth = async (month, year) => {
     .lean();
 
   if (!record) {
-    // No fee has been configured yet.
-    // This should only happen in development before admin sets the first fee.
-    // In production, admin sets the fee before the first cron run.
-    console.warn(
-      `[FeeService] No FeeHistory found for ${month}/${year}. Using default: ${DEFAULT_FEE}`
+    // No fee configured for this month. This must never silently
+    // default — MonthlyCharge.amount is locked permanently at
+    // creation, so a guessed number here becomes a permanent,
+    // financially-incorrect record with no built-in way to correct it.
+    // Fail loud instead: abort charge creation and surface a clear,
+    // actionable error to whoever triggered this (cron log, or the
+    // member-registration flow, which logs and continues without
+    // creating the charge — see memberController.js).
+    throw new Error(
+      `No fee configured for ${month}/${year}. Run scripts/seedInitialFee.js or set a fee covering this month before generating charges.`
     );
-    return DEFAULT_FEE;
   }
 
   return record.amount;
@@ -70,9 +74,11 @@ export const getCurrentFee = async () => {
     .sort({ effectiveFrom: -1 })
     .lean();
 
+    
   if (!record) {
-    console.warn(`[FeeService] No FeeHistory found. Using default: ${DEFAULT_FEE}`);
-    return DEFAULT_FEE;
+    throw new Error(
+      "No fee has been configured yet. Run scripts/seedInitialFee.js before opening the site to members."
+    );
   }
 
   return record.amount;
