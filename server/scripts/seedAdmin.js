@@ -27,7 +27,7 @@ const run = async () => {
       membershipNo: "123",
       name: "Nusrat Jahan",
       plotNo: "plot-1",
-      paidThroughMonth: "2026-03",
+      paidThroughMonth: "2025-12",
       isClaimed: false,
     });
     console.log("✅ MemberSeat 123 created.");
