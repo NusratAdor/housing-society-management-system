@@ -75,10 +75,16 @@ export const createMemberProfile = async (req, res) => {
     });
 
     // ── Mark seat as claimed ──────────────────────────────────────────────
+       // ── Mark seat as claimed ──────────────────────────────────────────────
+    // joinDate is set here automatically, to the exact registration
+    // moment — never entered by admin, never in the CSV. This is the
+    // one and only place joinDate gets written.
     if (!seat.isClaimed) {
+      const now = new Date();
       seat.isClaimed        = true;
       seat.claimedByClerkId = clerkUserId;
-      seat.claimedAt        = new Date();
+      seat.claimedAt        = now;
+      seat.joinDate          = now;
       await seat.save();
     }
 
