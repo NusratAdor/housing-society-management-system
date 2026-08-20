@@ -1,8 +1,12 @@
 // client/src/pages/admin/ManageMemberSeats.jsx
 //
-// CHANGE (this pass): openingBalance/dueAmount column and table display
-// replaced with paidThroughMonth ("YYYY-MM"). Manual form gains a plain
-// month-input field; table shows it as a formatted label when present.
+// CHANGE (this pass): MemberSeat simplified to membershipNo +
+// paidThroughMonth only — name, plotNo, designation, joinDate are no
+// longer admin/CSV fields. name/plotNo/designation are supplied by the
+// member themselves at /create-profile (on the real Member document).
+// joinDate is set automatically at the exact moment a seat is claimed —
+// never admin-entered. Search now filters by membershipNo only, since
+// that's the only identifying field seats have anymore.
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { toast }   from "react-hot-toast";
@@ -16,20 +20,16 @@ import usePageTitle      from "../../hooks/usePageTitle";
 
 const EMPTY_FORM = {
   membershipNo:     "",
-  name:             "",
-  plotNo:           "",
-  designation:      "",
-  joinDate:         "",
   paidThroughMonth: "",
 };
 
 // Sample CSV content for download
-const SAMPLE_CSV = `membershipNo,name,plotNo,paidThroughMonth
-1234,Md. Kamal Hossain,"Plot-1, Plot-3",2026-03
-5443,Nasrin Begum,Plot-7,
-3245,Abdul Karim,Plot-12,2025-12
-7821,Fatema Khanam,"Plot-2, Plot-5",2026-01
-4432,Mohammad Rafiqul Islam,Plot-9,`;
+const SAMPLE_CSV = `membershipNo,paidThroughMonth
+1234,2026-03
+5443,
+3245,2025-12
+7821,2026-01
+4432,`;
 
 const monthLabel = (yyyyMm) => {
   if (!yyyyMm) return null;
@@ -90,12 +90,6 @@ export default function ManageMemberSeats() {
     setEditingSeat(seat);
     setForm({
       membershipNo:     seat.membershipNo,
-      name:             seat.name,
-      plotNo:           seat.plotNo || "",
-      designation:      seat.designation || "",
-      joinDate:         seat.joinDate
-        ? new Date(seat.joinDate).toISOString().slice(0, 10)
-        : "",
       paidThroughMonth: seat.paidThroughMonth || "",
     });
     setShowForm(true);
@@ -110,8 +104,8 @@ export default function ManageMemberSeats() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.membershipNo.trim()) { toast.error("Membership number is required"); return; }
-    if (!form.name.trim())         { toast.error("Name is required");              return; }
+    if (!form.membershipNo.trim())     { toast.error("Membership number is required"); return; }
+    if (!form.paidThroughMonth.trim()) { toast.error("Paid Through Month is required"); return; }
 
     setSaving(true);
     try {
@@ -144,7 +138,7 @@ export default function ManageMemberSeats() {
 
   const handleDelete = async (seat) => {
     if (seat.isClaimed) { toast.error("Cannot delete a claimed seat"); return; }
-    if (!window.confirm(`Delete seat for ${seat.membershipNo} (${seat.name})?`)) return;
+    if (!window.confirm(`Delete seat ${seat.membershipNo}?`)) return;
 
     setDeleting(seat._id);
     try {
@@ -232,10 +226,10 @@ export default function ManageMemberSeats() {
   };
 
   // ── Filter ────────────────────────────────────────────────────────────────
+  // Search by membershipNo only — seats no longer carry a name field.
 
   const filtered = seats.filter(s =>
-    s.membershipNo.toLowerCase().includes(search.toLowerCase()) ||
-    s.name.toLowerCase().includes(search.toLowerCase())
+    s.membershipNo.toLowerCase().includes(search.toLowerCase())
   );
 
   const claimed   = seats.filter(s =>  s.isClaimed).length;
@@ -253,7 +247,8 @@ export default function ManageMemberSeats() {
             Member Seats
           </h1>
           <p className="text-sm text-gray-400 mt-1 font-outfit">
-            Pre-register membership numbers. Only listed members can sign up.
+            Pre-register membership numbers. Only listed members can sign up —
+            name, plot, and designation are provided by the member at registration.
           </p>
           <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
             <span><span className="font-semibold text-gray-700">{seats.length}</span> total</span>
@@ -291,7 +286,8 @@ export default function ManageMemberSeats() {
               <h3 className="font-semibold text-gray-800">Bulk Import from CSV</h3>
               <p className="text-xs text-gray-500 mt-0.5">
                 Upload a CSV file to create or update multiple seats at once.
-                Existing seats are updated safely — claimed seats only update display fields.
+                Claimed seats are skipped and reported as errors — they can no
+                longer be modified.
               </p>
             </div>
             <button onClick={closeImport}
@@ -305,25 +301,19 @@ export default function ManageMemberSeats() {
           <div className="bg-white rounded-xl border border-blue-100 p-4 mb-4">
             <p className="text-xs font-semibold text-gray-600 mb-2">Required CSV columns:</p>
             <div className="flex flex-wrap gap-2">
-              {["membershipNo", "name", "plotNo"].map(col => (
+              {["membershipNo", "paidThroughMonth"].map(col => (
                 <span key={col} className="px-2 py-1 bg-blue-100 text-blue-700
                   text-[11px] font-mono rounded-lg">
                   {col}
                 </span>
               ))}
-              {["designation", "joinDate", "paidThroughMonth"].map(col => (
-                <span key={col} className="px-2 py-1 bg-gray-100 text-gray-500
-                  text-[11px] font-mono rounded-lg">
-                  {col} (optional)
-                </span>
-              ))}
             </div>
             <p className="text-[11px] text-gray-400 mt-2">
-              Required: membershipNo, name, plotNo &nbsp;·&nbsp;
-              Optional: designation, joinDate, paidThroughMonth &nbsp;·&nbsp;
-              Multiple plots: "Plot-1, Plot-3" (with quotes) &nbsp;·&nbsp;
-              paidThroughMonth: last month already settled outside the system,
-              format YYYY-MM (e.g. 2026-03) — leave blank if none
+              Both columns are required. paidThroughMonth: last month already
+              settled outside the system, format YYYY-MM (e.g. 2026-03) —
+              leave the cell blank if there's nothing to backfill. Name, plot
+              number, and designation are entered by the member themselves
+              when they register.
             </p>
           </div>
 
@@ -443,7 +433,7 @@ export default function ManageMemberSeats() {
             <div className="flex items-center gap-2 mb-4 px-3 py-2
               bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
               <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              Claimed seat — membership number, join date, and paid-through month are locked.
+              Claimed seat — membership number and paid-through month are locked.
             </div>
           )}
 
@@ -471,78 +461,7 @@ export default function ManageMemberSeats() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Full Name *
-                </label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Member's full name"
-                  className="w-full px-3 py-2 text-sm border border-gray-200
-                    rounded-xl outline-none focus:ring-2
-                    focus:ring-[var(--color-primary)]/20
-                    focus:border-[var(--color-primary)] bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Plot Number(s)
-                  <span className="text-gray-400 font-normal ml-1">
-                    — separate multiple with commas
-                  </span>
-                </label>
-                <input
-                  type="text"
-                  value={form.plotNo}
-                  onChange={e => setForm(f => ({ ...f, plotNo: e.target.value }))}
-                  placeholder='e.g. Plot-1  or  "Plot-1, Plot-3"'
-                  className="w-full px-3 py-2 text-sm border border-gray-200
-                    rounded-xl outline-none focus:ring-2
-                    focus:ring-[var(--color-primary)]/20
-                    focus:border-[var(--color-primary)] bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Designation
-                </label>
-                <input
-                  type="text"
-                  value={form.designation}
-                  onChange={e => setForm(f => ({ ...f, designation: e.target.value }))}
-                  placeholder="e.g. Deputy Secretary"
-                  className="w-full px-3 py-2 text-sm border border-gray-200
-                    rounded-xl outline-none focus:ring-2
-                    focus:ring-[var(--color-primary)]/20
-                    focus:border-[var(--color-primary)] bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Join Date
-                </label>
-                <input
-                  type="date"
-                  value={form.joinDate}
-                  onChange={e => setForm(f => ({ ...f, joinDate: e.target.value }))}
-                  readOnly={!!editingSeat?.isClaimed}
-                  max={new Date().toISOString().slice(0, 10)}
-                  className={`w-full px-3 py-2 text-sm border rounded-xl outline-none
-                    focus:ring-2 focus:ring-[var(--color-primary)]/20
-                    focus:border-[var(--color-primary)]
-                    ${editingSeat?.isClaimed
-                      ? "bg-gray-100 border-gray-200 text-gray-400 cursor-default"
-                      : "bg-white border-gray-200"
-                    }`}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                  Paid Through Month
+                  Paid Through Month *
                   <span className="text-gray-400 font-normal ml-1">
                     — last month already settled outside the system
                   </span>
@@ -596,7 +515,7 @@ export default function ManageMemberSeats() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <input
           type="text"
-          placeholder="Search by membership number or name…"
+          placeholder="Search by membership number…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl
@@ -619,14 +538,11 @@ export default function ManageMemberSeats() {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left min-w-[760px]">
+          <table className="w-full text-sm text-left min-w-[600px]">
             <thead className="text-xs uppercase text-gray-400 bg-gray-50
               border-b border-gray-100">
               <tr>
                 <th className="px-4 py-3 font-semibold">Membership No</th>
-                <th className="px-4 py-3 font-semibold">Name</th>
-                <th className="px-4 py-3 font-semibold">Plot(s)</th>
-                <th className="px-4 py-3 font-semibold">Join Date</th>
                 <th className="px-4 py-3 font-semibold">Paid Through</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Actions</th>
@@ -637,18 +553,6 @@ export default function ManageMemberSeats() {
                 <tr key={seat._id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-mono font-semibold text-gray-800">
                     {seat.membershipNo}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{seat.name}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {seat.plotNo || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {seat.joinDate
-                      ? new Date(seat.joinDate).toLocaleDateString("en-GB", {
-                          day: "numeric", month: "short", year: "numeric",
-                        })
-                      : "—"
-                    }
                   </td>
                   <td className="px-4 py-3">
                     {seat.paidThroughMonth ? (
