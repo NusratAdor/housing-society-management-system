@@ -92,22 +92,40 @@ export const createMemberProfile = async (req, res) => {
     // If the seat has a paidThroughMonth set, catch the member up with
     // real, individually-dated MonthlyCharge records from the following
     // month through the current month. No-op if paidThroughMonth is unset.
+       // ── Backfill historical monthly dues (first-time registration only) ──
+    // If the seat has a paidThroughMonth set, catch the member up with
+    // real, individually-dated MonthlyCharge records from the following
+    // month through the current month. No-op if paidThroughMonth is unset.
     if (isFirstTimeCreate) {
+      const paidThroughMonthToConsume = seat.paidThroughMonth;
       try {
         const result = await generateBackdatedCharges({
           memberId:         member._id,
-          paidThroughMonth: seat.paidThroughMonth,
+          paidThroughMonth: paidThroughMonthToConsume,
         });
         if (result.created > 0) {
           console.info(
             `[MemberSeat] Backfilled ${result.created} month(s) of dues for ${cleanMembership}`
           );
         }
+        // Consume paidThroughMonth now that it has been used — matches
+        // the "consumed once at claim time" contract documented on
+        // MemberSeat.js. Left untouched on failure below, so the value
+        // is not lost before a retry or manual admin reconciliation.
+        if (paidThroughMonthToConsume) {
+          seat.paidThroughMonth = null;
+          await seat.save();
+        }
       } catch (backfillError) {
-        // Non-fatal — log but do not fail registration
+        // Non-fatal — log but do not fail registration. paidThroughMonth
+        // is deliberately left in place here so an admin can retry or
+        // manually reconcile using the original value.
         console.error("[MemberSeat] Backdated charge creation failed:", backfillError.message);
       }
     }
+
+
+    
 
     return res.status(isFirstTimeCreate ? 201 : 200).json({
       success: true,
