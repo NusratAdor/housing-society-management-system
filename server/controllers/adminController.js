@@ -17,17 +17,30 @@
 import Member          from "../models/Member.js";
 import Payment         from "../models/Payment.js";
 import Charge          from "../models/ExtraCharge.js";
+import MonthlyCharge   from "../models/MonthlyCharge.js";
+import MemberSeat      from "../models/MemberSeat.js";
 import Notification    from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 // ─── Cascade delete helper ────────────────────────────────────────────────────
+// CHANGE: now also deletes MonthlyCharge (previously orphaned — a
+// separate model from Charge/ExtraCharge, missed in the original
+// cascade) and resets the linked MemberSeat back to unclaimed, so the
+// membership number isn't permanently stuck once its member is deleted.
 
-export const cascadeDeleteMember = async (memberId, clerkUserId) => {
+export const cascadeDeleteMember = async (memberId, clerkUserId, membershipNo) => {
   await Promise.all([
     Payment.deleteMany({ member: memberId }),
     Charge.deleteMany({ member: memberId }),
+    MonthlyCharge.deleteMany({ member: memberId }),
     Notification.deleteMany({ clerkUserId }),
+    membershipNo
+      ? MemberSeat.updateOne(
+          { membershipNo },
+          { $set: { isClaimed: false, claimedByClerkId: null, claimedAt: null, joinDate: null } }
+        )
+      : Promise.resolve(),
   ]);
 };
 
@@ -174,21 +187,21 @@ export const deleteMember = async (req, res) => {
       return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    await cascadeDeleteMember(id, member.clerkUserId);
+    await cascadeDeleteMember(id, member.clerkUserId, member.membershipNo);
 
     writeAuditLog({
       action:      "MEMBER_DELETED",
       performedBy: req.clerkUserId,
       targetId:    member._id,
       description:
-        `Admin deleted member ${member.name} (${member.membershipNo})`,
+        `Admin deleted member ${member.name} (${member.membershipNo}) — dues cleared, seat reset to unclaimed`,
       before: {
         name:         member.name,
         email:        member.email,
         membershipNo: member.membershipNo,
         role:         member.role,
       },
-      metadata: { cascadeDeleted: true },
+      metadata: { cascadeDeleted: true, seatReset: true },
     });
 
     return res.status(200).json({
