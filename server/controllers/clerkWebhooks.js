@@ -1,13 +1,15 @@
 // server/controllers/clerkWebhooks.js
-// user.deleted now writes an audit log after cascade deleting the member.
-// user.created and user.updated unchanged from previous step.
+// user.deleted now delegates to the shared cascadeDeleteMember helper
+// (adminController.js) instead of its own separate inline cascade —
+// this was previously duplicated logic that had drifted out of sync
+// with the admin-initiated delete path (missing MonthlyCharge cleanup
+// and MemberSeat unclaim). One shared function now backs both delete
+// paths, so a future fix to cascade behavior only needs to happen once.
 
 import Member          from "../models/Member.js";
-import Payment         from "../models/Payment.js";
-import ExtraCharge     from "../models/ExtraCharge.js";
-import Notification    from "../models/Notification.js";
 import { Webhook }     from "svix";
-import { writeAuditLog } from "../services/auditService.js";
+import { writeAuditLog }     from "../services/auditService.js";
+import { cascadeDeleteMember } from "./adminController.js";
 
 const clerkWebhooks = async (req, res) => {
   // ── Verify signature ──────────────────────────────────────────────────────
@@ -77,12 +79,10 @@ const clerkWebhooks = async (req, res) => {
         const member = await Member.findOneAndDelete({ clerkUserId: data.id });
 
         if (member) {
-          // Cascade delete
-          await Promise.all([
-            Payment.deleteMany({ member: member._id }),
-            ExtraCharge.deleteMany({ member: member._id }),
-            Notification.deleteMany({ clerkUserId: data.id }),
-          ]);
+          // Same cascade cleanup used by the admin-initiated delete
+          // path — Payment, ExtraCharge, MonthlyCharge, Notification,
+          // and MemberSeat unclaim, all in one shared function.
+          await cascadeDeleteMember(member._id, data.id, member.membershipNo);
 
           // Audit log — fire-and-forget
           writeAuditLog({
@@ -91,14 +91,14 @@ const clerkWebhooks = async (req, res) => {
             targetId:    member._id,
             description:
               `Clerk user.deleted webhook — removed member ${member.name} ` +
-              `(${member.membershipNo}) and all related records`,
+              `(${member.membershipNo}), cleared dues, and reset seat to unclaimed`,
             before: {
               name:         member.name,
               email:        member.email,
               membershipNo: member.membershipNo,
               clerkUserId:  data.id,
             },
-            metadata: { source: "clerk_webhook", cascadeDeleted: true },
+            metadata: { source: "clerk_webhook", cascadeDeleted: true, seatReset: true },
           });
 
           console.info(
