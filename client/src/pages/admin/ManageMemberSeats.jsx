@@ -18,6 +18,8 @@ import {
 import { useAppContext } from "../../context/AppContext";
 import usePageTitle      from "../../hooks/usePageTitle";
 
+import { Button } from "@/components/ui/button";
+
 const EMPTY_FORM = {
   membershipNo:     "",
   paidThroughMonth: "",
@@ -266,15 +268,10 @@ export default function ManageMemberSeats() {
             <Upload className="h-4 w-4" />
             Import CSV
           </button>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2
-              bg-[var(--color-primary)] hover:bg-blue-700
-              text-white text-sm font-semibold rounded-xl shadow-sm transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            Add Seat
-          </button>
+          <Button onClick={openAdd} className="gap-2">
+  <Plus className="h-4 w-4" />
+  Add Seat
+</Button>
         </div>
       </div>
 
@@ -343,19 +340,13 @@ export default function ManageMemberSeats() {
             </label>
 
             {csvFile && (
-              <button
-                onClick={handleImport}
-                disabled={importing}
-                className="flex items-center gap-2 px-5 py-2
-                  bg-[var(--color-primary)] hover:bg-blue-700
-                  text-white text-sm font-semibold rounded-xl
-                  transition-colors disabled:opacity-50"
-              >
+              <Button onClick={handleImport} disabled={importing} className="gap-2">
+
                 {importing
                   ? <><Loader2 className="h-4 w-4 animate-spin" /> Importing…</>
                   : <><Upload className="h-4 w-4" /> Import Now</>
                 }
-              </button>
+              </Button>
             )}
           </div>
 
@@ -484,19 +475,13 @@ export default function ManageMemberSeats() {
             </div>
 
             <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5
-                  bg-[var(--color-primary)] hover:bg-blue-700
-                  text-white text-sm font-semibold rounded-xl
-                  transition-colors disabled:opacity-50"
-              >
+              <Button type="submit" disabled={saving} className="gap-2">
+
                 {saving
                   ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
                   : editingSeat ? "Update Seat" : "Create Seat"
                 }
-              </button>
+              </Button>
               <button
                 type="button"
                 onClick={closeForm}

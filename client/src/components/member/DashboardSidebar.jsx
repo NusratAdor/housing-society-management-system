@@ -84,7 +84,7 @@ export default function DashboardSidebar({ memberProfile, joinDate }) {
                 rounded-xl text-sm transition-colors duration-150 text-left group
                 ${isActive
                   ? "bg-sidebar-accent text-sidebar-primary font-semibold"
-                  : "text-sidebar-foreground/60 font-medium hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  : "   text-sidebar-foreground-muted font-medium hover:bg-sidebar-accent hover:text-sidebar-foreground"
                 }
               `}
             >
@@ -98,7 +98,7 @@ export default function DashboardSidebar({ memberProfile, joinDate }) {
                     style={{ width: 16, height: 16 }}
                     strokeWidth={isActive ? 2.2 : 1.6}
                     className={`flex-shrink-0 transition-colors ${
-                      isActive ? "text-sidebar-primary" : "text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80"
+                         isActive ? "text-sidebar-primary" : "text-sidebar-icon-muted group-hover:text-sidebar-foreground"
                     }`}
                   />
                   <span className="truncate">{label}</span>
@@ -109,7 +109,7 @@ export default function DashboardSidebar({ memberProfile, joinDate }) {
         })}
 
         <div className="pt-2 pb-1">
-          <p className="text-[10px] text-sidebar-foreground/40 uppercase tracking-widest font-medium px-3">
+          <p className="text-[10px] text-sidebar-icon-muted uppercase tracking-widest font-medium px-3">
             Community
           </p>
         </div>
@@ -118,7 +118,7 @@ export default function DashboardSidebar({ memberProfile, joinDate }) {
           to="/gallery"
           className="relative w-full flex items-center gap-3 px-3 py-2.5
             rounded-xl text-sm transition-colors duration-150 text-left group
-            text-sidebar-foreground/60 font-medium hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            text-sidebar-foreground-muted font-medium hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
           <Image style={{ width: 16, height: 16 }} strokeWidth={1.6}
             className="flex-shrink-0 text-sidebar-foreground/40 group-hover:text-sidebar-foreground/80 transition-colors" />

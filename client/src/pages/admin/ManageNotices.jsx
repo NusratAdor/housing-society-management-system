@@ -20,6 +20,7 @@ import {
   Eye,
 } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
+import { Button } from "@/components/ui/button";
 
 const EMPTY_FORM = {
   title:   "",
@@ -222,15 +223,10 @@ export default function ManageNotices() {
             {notices.length} notice{notices.length !== 1 ? "s" : ""}
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2
-            bg-[var(--color-primary)] hover:bg-blue-700
-            text-white text-sm font-semibold rounded-xl shadow-sm transition-colors"
-        >
+        <Button onClick={openAdd} className="gap-2">
           <Plus className="h-4 w-4" />
           Add Notice
-        </button>
+        </Button>
       </div>
 
       {/* ── Form ─────────────────────────────────────────────────────────── */}
@@ -387,19 +383,13 @@ export default function ManageNotices() {
 
             {/* Actions */}
             <div className="flex gap-2 pt-1">
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5
-                  bg-[var(--color-primary)] hover:bg-blue-700 text-white
-                  text-sm font-semibold rounded-xl transition-colors
-                  disabled:opacity-50"
-              >
+              <Button type="submit" disabled={saving} className="gap-2">
+
                 {saving
                   ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
                   : editingNotice ? "Update Notice" : "Create Notice"
                 }
-              </button>
+              </Button>
               <button
                 type="button"
                 onClick={closeForm}

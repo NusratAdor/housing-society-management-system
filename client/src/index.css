@@ -9,10 +9,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --color-primary: #2563EB;
-  --color-secondary: #FBBF24;
-}
+/* Brand identity colors — deliberately named --color-brand-* rather
+   than --color-primary/--color-secondary. Those two names are owned by
+   shadcn's own alias system below (@theme inline -> var(--primary) /
+   var(--secondary)), and reusing them here is what caused buttons and
+   sidebar text to silently render the wrong color earlier — whichever
+   declaration came later in the file won, invisibly. Brand blue/gold
+   and shadcn's primary/secondary are two different concerns (brand
+   identity vs. button ink) and now have two different names, so they
+   can never collide again. */
 
 *{
   font-family: Outfit;
@@ -84,6 +89,8 @@ html[lang="bn"] {
   --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-foreground-muted: var(--sidebar-foreground-muted);
+  --color-sidebar-icon-muted: var(--sidebar-icon-muted);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
@@ -100,8 +107,16 @@ html[lang="bn"] {
   --card-foreground: oklch(0.13 0.028 261.692);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.13 0.028 261.692);
+
+  /* Button ink — deliberately near-black, not brand blue. This is the
+     color EVERY primary action button in the app should use, via
+     Button's default variant (bg-primary hover:bg-primary/90) — never
+     hardcoded per-file. Unchanged in value from shadcn's original
+     scaffold default; the fix here is architectural (no more name
+     collision with brand blue), not a new color. */
   --primary: oklch(0.21 0.034 264.665);
   --primary-foreground: oklch(0.985 0.002 247.839);
+
   --secondary: oklch(0.967 0.003 264.542);
   --secondary-foreground: oklch(0.21 0.034 264.665);
   --muted: oklch(0.967 0.003 264.542);
@@ -118,31 +133,31 @@ html[lang="bn"] {
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
 
+  /* Unrelated to the collision fix — left untouched, not yet confirmed
+     which components still consume these. */
+  --dashboard-accent: #15803D;
+  --dashboard-accent-dark: #14532D;
+  --dashboard-accent-border: #BBF7D0;
+  --illustration-primary: #BBF7D0;
+  --illustration-secondary: #4ADE80;
 
---dashboard-accent: #15803D;        /* green-700 — buttons, active nav */
-  --dashboard-accent-dark: #14532D;   /* green-900 — stronger elements */
-  --dashboard-accent-soft: #F0FDF4;   /* green-50  — hero gradient, active nav wash */
-  --dashboard-accent-soft-2: #DCFCE7; /* green-100 — hover states */
-  --dashboard-accent-border: #BBF7D0; /* green-200 — subtle borders */
+  /* Overview hero wash — light blue, flat, no gradient. */
+  --dashboard-accent-soft: #EFF6FF;
+  --dashboard-accent-soft-2: #DBEAFE;
 
-  /* Illustration colors — theme-aware via CSS variables instead of
-     hardcoded hex inside the SVG. Changing the hero's color scheme in
-     future only requires editing these two lines, never the component. */
-  --illustration-primary: #BBF7D0;    /* green-200 */
-  --illustration-secondary: #4ADE80;  /* green-400 */
-
-  /* ── Sidebar tokens — REVISED: light, monochromatic green, replacing
-     the earlier dark navy scheme. Monochromatic schemes read calmer
-     than the earlier navy+gold complementary pairing — see chat for
-     full color-theory reasoning. ── */
-  --sidebar: #FFFFFF;
-  --sidebar-foreground: #1E293B;
-  --sidebar-primary: var(--dashboard-accent);
+  /* ── Member dashboard sidebar — navy blue, using --color-brand-primary
+     (not --color-primary) so it can never silently break again if
+     shadcn's --primary changes for button-related reasons. ── */
+  --sidebar: #16233F;
+  --sidebar-foreground: #F8FAFC;
+  --sidebar-foreground-muted: #A9B6CC;
+  --sidebar-icon-muted: #7C8CA8;
+  --sidebar-primary: var(--color-brand-primary);
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: var(--dashboard-accent-soft);
-  --sidebar-accent-foreground: var(--dashboard-accent);
-  --sidebar-border: #E5E7EB;
-  --sidebar-ring: var(--dashboard-accent);
+  --sidebar-accent: #1E2F52;
+  --sidebar-accent-foreground: #FFFFFF;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: var(--color-brand-primary);
 }
 
 .dark {

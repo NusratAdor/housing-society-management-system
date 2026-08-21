@@ -366,13 +366,15 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("FAILED");
     }
 
-    let verificationResult;
+       let verificationResult;
     try {
       verificationResult = await verifySSLCommerzPayment({
-        valId:  val_id,
-        tranId: tran_id,
+        valId:          val_id,
+        tranId:         tran_id,
+        expectedAmount: payment.amount,
       });
     } catch (verifyError) {
+      
       console.error(`[IPN] Validation API error for ${tran_id}:`, verifyError.message);
       return res.status(500).send("VALIDATION_API_ERROR");
     }

@@ -23,6 +23,8 @@ import { formatDate }    from "../../utils/formatDate";
 import { useAppContext } from "../../context/AppContext";
 import usePageTitle      from "../../hooks/usePageTitle";
 
+import { Button } from "@/components/ui/button";
+
 const ManageFAQs = () => {
   const { axios, getToken } = useAppContext();
   usePageTitle("Manage FAQs");
@@ -269,14 +271,10 @@ const ManageFAQs = () => {
             </div>
 
             <div className="flex gap-2">
-              <button
-                type="submit"
-                className="flex-1 bg-[var(--color-primary)] hover:bg-blue-700
-                  text-white text-sm font-semibold rounded-xl py-2.5
-                  transition-colors"
-              >
-                {formData._id ? "Update Answer" : "Submit Answer"}
-              </button>
+              <Button type="submit" className="flex-1">
+  {formData._id ? "Update Answer" : "Submit Answer"}
+</Button>
+
               {(formData.question || formData.answer) && (
                 <button
                   type="button"

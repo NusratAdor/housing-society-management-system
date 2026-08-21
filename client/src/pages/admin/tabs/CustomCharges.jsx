@@ -398,7 +398,7 @@ export default function CustomCharges() {
             <Button
               type="submit"
               disabled={submitting}
-              className="w-full bg-[var(--color-primary)] hover:bg-blue-700 gap-2"
+              className="w-full gap-2"
             >
               {submitting ? (
                 <>

@@ -140,7 +140,7 @@ export default function FeeSettings() {
               value={amount}
               onChange={e => setAmount(e.target.value)}
               className="w-full p-2.5 border border-gray-300 rounded-lg text-sm
-                focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                focus:outline-none focus:ring-2 focus:ring-[var(--color-brand-primary)]"
               required
             />
           </div>
@@ -156,7 +156,7 @@ export default function FeeSettings() {
               onChange={e => setReason(e.target.value)}
               placeholder="e.g. Annual revision approved by committee"
               className="w-full p-2.5 border border-gray-300 rounded-lg text-sm
-                focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                focus:outline-none focus:ring-2 focus:ring-[var(--color-brand-primary)]"
             />
           </div>
 
@@ -184,13 +184,13 @@ export default function FeeSettings() {
                   className={`text-left p-3 rounded-xl border text-sm
                     transition-all ${
                     effectFrom === opt.value
-                      ? "border-[var(--color-primary)] bg-blue-50"
+                      ? "border-[var(--color-brand-primary)] bg-blue-50"
                       : "border-gray-200 hover:border-gray-300"
                   }`}
                 >
                   <p className={`font-semibold ${
                     effectFrom === opt.value
-                      ? "text-[var(--color-primary)]"
+                      ? "text-[var(--color-brand-primary)]"
                       : "text-gray-700"
                   }`}>
                     {opt.label}
@@ -216,7 +216,7 @@ export default function FeeSettings() {
           <Button
             type="submit"
             disabled={submitting}
-            className="w-full bg-[var(--color-primary)] hover:bg-blue-700 gap-2"
+            className="w-full gap-2"
           >
             {submitting
               ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>

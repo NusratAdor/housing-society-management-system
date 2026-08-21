@@ -25,8 +25,9 @@ import React, { useEffect, useCallback, useState, useMemo } from "react";
 import { motion }        from "framer-motion";
 import {
   AlertCircle, ArrowRight, Bell, CreditCard,
-  HelpCircle, ChevronRight, FileText,Activity,
+  HelpCircle, ChevronRight, FileText, Activity,
   Image as ImageIcon, CheckCircle2,
+  IdCard, MapPin, Briefcase,
 } from "lucide-react";
 import { Link }          from "react-router-dom";
 import { useAppContext } from "../../context/AppContext";
@@ -235,8 +236,8 @@ export default function OverviewCard({
        than competing with the sidebar for "dark and important." ── */}
 <div className="relative rounded-2xl overflow-hidden
   min-h-[160px] md:min-h-[180px]
-  bg-gradient-to-br from-blue-50 via-slate-50 to-white
-  border border-slate-100">
+  bg-[var(--dashboard-accent-soft)]
+  border border-blue-100">
 
   {/* Thin gold accent line — same motif as the sidebar's top accent bar.
       This is the one deliberate visual echo tying hero + sidebar
@@ -278,39 +279,56 @@ export default function OverviewCard({
         background is no longer dark enough to create contrast on
         its own. Same clean panel you asked for, adapted to a light
         backdrop. */}
-    <div className="flex-shrink-0 bg-white
-      border border-slate-100 shadow-md rounded-xl p-4 min-w-[155px]">
-      <div className="space-y-2.5">
-        <div>
-          <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
-            Member ID
-          </p>
-          <p className="text-xs font-semibold text-gray-800 leading-tight font-mono">
-            {memberProfile?.membershipNo ?? "—"}
-          </p>
-        </div>
-        {memberProfile?.plotNo && (
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
-              Plot
-            </p>
-            <p className="text-xs font-semibold text-gray-800 leading-tight">
-              Plot {memberProfile.plotNo}
-            </p>
-          </div>
-        )}
-        {memberProfile?.designation && (
-          <div>
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">
-              Designation
-            </p>
-            <p className="text-xs font-semibold text-gray-800 leading-tight">
-              {memberProfile.designation}
-            </p>
-          </div>
-        )}
+    <div className="flex-shrink-0 bg-white border border-blue-100
+  shadow-md rounded-lg p-4 min-w-[190px]">
+  <div className="space-y-3">
+    <div className="flex items-center gap-2.5">
+      <div className="p-1.5 rounded-md bg-blue-50 flex-shrink-0">
+        <IdCard className="h-3.5 w-3.5 text-blue-600" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+          Member ID
+        </p>
+        <p className="text-xs font-semibold text-gray-800 font-mono">
+          {memberProfile?.membershipNo ?? "—"}
+        </p>
       </div>
     </div>
+
+    {memberProfile?.plotNo && (
+      <div className="flex items-center gap-2.5">
+        <div className="p-1.5 rounded-md bg-blue-50 flex-shrink-0">
+          <MapPin className="h-3.5 w-3.5 text-blue-600" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+            Plot
+          </p>
+          <p className="text-xs font-semibold text-gray-800">
+            Plot {memberProfile.plotNo}
+          </p>
+        </div>
+      </div>
+    )}
+
+    {memberProfile?.designation && (
+      <div className="flex items-center gap-2.5">
+        <div className="p-1.5 rounded-md bg-blue-50 flex-shrink-0">
+          <Briefcase className="h-3.5 w-3.5 text-blue-600" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+            Designation
+          </p>
+          <p className="text-xs font-semibold text-gray-800">
+            {memberProfile.designation}
+          </p>
+        </div>
+      </div>
+    )}
+  </div>
+</div>
   </div>
 </div>
 
