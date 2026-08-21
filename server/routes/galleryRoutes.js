@@ -12,7 +12,7 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { canManageContent } from "../middleware/staffMiddleware.js";
-import upload from "../middleware/uploadMiddleware.js";
+import upload from "../middleware/imageUploadMiddleware.js";
 import {
   createGalleryItem,
   getGalleryItems,

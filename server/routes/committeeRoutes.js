@@ -2,7 +2,7 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { isAdmin } from "../middleware/adminMiddleware.js";
-import upload from "../middleware/uploadMiddleware.js";
+import upload from "../middleware/imageUploadMiddleware.js";
 import {
   getCommitteeMembers,
   getCommitteeMemberById,
