@@ -53,6 +53,9 @@ import Services       from "./pages/Services";
 import SwimmingPool   from "./pages/SwimmingPool";
 import MemberSupport  from "./pages/MemberSupport";
 
+import PrivacyPolicy   from "./pages/PrivacyPolicy";
+import TermsOfService  from "./pages/TermsOfService";
+
 import DashboardOverview from "./pages/dashboard/DashboardOverview";
 import DashboardPayment  from "./pages/dashboard/DashboardPayment";
 import DashboardProfile  from "./pages/dashboard/DashboardProfile";
@@ -327,6 +330,9 @@ const App = () => {
                 <Route path="/our-services"                  element={<Services />} />
                 <Route path="/our-services/swimming-pool"    element={<SwimmingPool />} />
                 <Route path="/our-services/member-support"   element={<MemberSupport />} />
+
+                <Route path="/privacy-policy"    element={<PrivacyPolicy />} />
+<Route path="/terms-of-service"  element={<TermsOfService />} />
 
                 <Route path="*"            element={<Navigate to="/" replace />} />
               </Routes>

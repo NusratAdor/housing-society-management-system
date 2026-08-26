@@ -1,5 +1,5 @@
 // scripts/promoteAdmin.js
-// Run AFTER you've registered ADMIN-001 through the real /create-profile
+// Run AFTER you've registered 123 through the real /create-profile
 // form on production. Promotes that Member to admin and writes an
 // AuditLog entry.
 // Usage: node scripts/promoteAdmin.js

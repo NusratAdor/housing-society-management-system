@@ -1,15 +1,14 @@
 // server/controllers/clerkWebhooks.js
-// user.deleted now delegates to the shared cascadeDeleteMember helper
-// (adminController.js) instead of its own separate inline cascade —
-// this was previously duplicated logic that had drifted out of sync
-// with the admin-initiated delete path (missing MonthlyCharge cleanup
-// and MemberSeat unclaim). One shared function now backs both delete
-// paths, so a future fix to cascade behavior only needs to happen once.
+// user.deleted delegates to the shared cascadeDeleteMember service
+// function (memberService.js) — the same one used by the
+// admin-initiated delete path in adminController.js. One shared
+// function backs both delete paths, so a future fix to cascade
+// behavior only needs to happen once.
 
 import Member          from "../models/Member.js";
 import { Webhook }     from "svix";
 import { writeAuditLog }     from "../services/auditService.js";
-import { cascadeDeleteMember } from "./adminController.js";
+import { cascadeDeleteMember } from "../services/memberService.js";
 
 const clerkWebhooks = async (req, res) => {
   // ── Verify signature ──────────────────────────────────────────────────────

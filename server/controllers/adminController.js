@@ -15,34 +15,12 @@
 // regardless of what any client sends.
 
 import Member          from "../models/Member.js";
-import Payment         from "../models/Payment.js";
-import Charge          from "../models/ExtraCharge.js";
-import MonthlyCharge   from "../models/MonthlyCharge.js";
-import MemberSeat      from "../models/MemberSeat.js";
 import Notification    from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
+import { cascadeDeleteMember } from "../services/memberService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
-// ─── Cascade delete helper ────────────────────────────────────────────────────
-// CHANGE: now also deletes MonthlyCharge (previously orphaned — a
-// separate model from Charge/ExtraCharge, missed in the original
-// cascade) and resets the linked MemberSeat back to unclaimed, so the
-// membership number isn't permanently stuck once its member is deleted.
 
-export const cascadeDeleteMember = async (memberId, clerkUserId, membershipNo) => {
-  await Promise.all([
-    Payment.deleteMany({ member: memberId }),
-    Charge.deleteMany({ member: memberId }),
-    MonthlyCharge.deleteMany({ member: memberId }),
-    Notification.deleteMany({ clerkUserId }),
-    membershipNo
-      ? MemberSeat.updateOne(
-          { membershipNo },
-          { $set: { isClaimed: false, claimedByClerkId: null, claimedAt: null, joinDate: null } }
-        )
-      : Promise.resolve(),
-  ]);
-};
 
 // ─── getAllMembers ─────────────────────────────────────────────────────────────
 

@@ -96,7 +96,7 @@ const Hero = () => {
       >
         <motion.h1
           variants={itemVariants}
-          className="font-outfit font-bold text-2xl sm:text-3xl md:text-4xl lg:text-[48px] lg:leading-[52px] lg:whitespace-nowrap text-white"
+          className="font-outfit font-bold text-2xl sm:text-3xl md:text-4xl lg:text-[52px] lg:leading-[52px] lg:whitespace-nowrap text-white"
         >
           <span>
             {t("Government Officer's Housing Scheme")}
@@ -128,7 +128,7 @@ const Hero = () => {
           className="
             mt-6
             flex items-center gap-2
-            rounded-md px-4 py-1.5
+            rounded-md px-4 py-2
             text-xs md:text-sm font-medium font-outfit
             bg-gradient-to-r from-emerald-500 to-teal-600
             hover:from-emerald-600 hover:to-teal-700

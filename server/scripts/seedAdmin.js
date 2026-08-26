@@ -19,21 +19,19 @@ const run = async () => {
     process.exit(1);
   }
 
-  const existingSeat = await MemberSeat.findOne({ membershipNo: "ADMIN-001" });
+  const existingSeat = await MemberSeat.findOne({ membershipNo: "123" });
   if (existingSeat) {
-    console.log(`⚠️  Seat ADMIN-001 already exists (isClaimed: ${existingSeat.isClaimed}). Skipping creation.`);
+    console.log(`⚠️  Seat 123 already exists (isClaimed: ${existingSeat.isClaimed}). Skipping creation.`);
   } else {
     await MemberSeat.create({
       membershipNo: "123",
-      name: "Nusrat Jahan",
-      plotNo: "plot-1",
       paidThroughMonth: "2025-12",
       isClaimed: false,
     });
     console.log("✅ MemberSeat 123 created.");
   }
 
-  console.log("Next: sign up on the LIVE site using membershipNo ADMIN-001.");
+  console.log("Next: sign up on the LIVE site using membershipNo 123.");
   console.log("Then run: node scripts/promoteAdmin.js");
   process.exit(0);
 };

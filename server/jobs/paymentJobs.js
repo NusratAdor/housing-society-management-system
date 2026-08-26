@@ -22,6 +22,8 @@ import {
   sendDueReminderEmail,
 } from "../services/emailService.js";
 
+import EmailQueueItem from "../models/EmailQueueItem.js";
+
 // ─── runDailyJobs ─────────────────────────────────────────────────────────────
 
 const runDailyJobs = () => {
@@ -104,26 +106,30 @@ const runDailyJobs = () => {
             );
           }
 
-          // Due reminder email
+                    // Enqueue reminder — NOT sent directly. A separate dispatcher
+          // (below) drains this queue within Resend's free-tier daily
+          // cap, carrying overflow to the next day instead of risking
+          // a rejected/dropped burst.
           try {
-            await sendDueReminderEmail({
-              to:              member.email,
-              name:            member.name,
-              totalDue:        breakdown.totalDue,
-              totalMonthlyDue: breakdown.totalMonthlyDue,
-              totalExtraDue:   breakdown.totalExtraDue,
-              unpaidMonths:    breakdown.unpaidMonthlyCharges,
-              unpaidCharges:   breakdown.unpaidExtraCharges,
+            await EmailQueueItem.create({
+              to:      member.email,
+              subject: `⏰ Payment Reminder — ৳${breakdown.totalDue.toLocaleString()} Due`,
+              type:    "due_reminder",
+              payload: {
+                name:            member.name,
+                totalDue:        breakdown.totalDue,
+                totalMonthlyDue: breakdown.totalMonthlyDue,
+                totalExtraDue:   breakdown.totalExtraDue,
+                unpaidMonths:    breakdown.unpaidMonthlyCharges,
+                unpaidCharges:   breakdown.unpaidExtraCharges,
+              },
             });
             reminded++;
-
-            // 120ms gap — stays under Resend's 10 emails/second rate limit
-            await new Promise(r => setTimeout(r, 120));
-          } catch (emailErr) {
+          } catch (queueErr) {
             emailFail++;
             console.error(
-              `[Cron] Reminder email failed for ${member.email}:`,
-              emailErr.message
+              `[Cron] Failed to queue reminder for ${member.email}:`,
+              queueErr.message
             );
           }
         }
@@ -137,6 +143,69 @@ const runDailyJobs = () => {
       }
     }
   });
+
+
+
+
+
+
+
+
+  // ─── Daily email queue dispatcher ──────────────────────────────────────────
+// Runs every day at a DIFFERENT time than the main job (10:00 AM, one
+// hour after the 09:00 job above) so a same-day reminder batch has
+// already been enqueued before this runs. Sends up to DAILY_EMAIL_BUDGET
+// items — a safety margin below Resend's 100/day free-tier cap, leaving
+// headroom for payment-confirmation emails (sent directly, not queued)
+// that may also fire on the same day.
+
+const DAILY_EMAIL_BUDGET = 80;
+
+cron.schedule("0 10 * * *", async () => {
+  try {
+    const pending = await EmailQueueItem
+      .find({ status: "pending" })
+      .sort({ createdAt: 1 })
+      .limit(DAILY_EMAIL_BUDGET)
+      .lean();
+
+    if (pending.length === 0) return;
+
+    console.info(`[EmailQueue] Dispatching ${pending.length} queued email(s)`);
+
+    let sent = 0, failed = 0;
+
+    for (const item of pending) {
+      try {
+        if (item.type === "due_reminder") {
+          await sendDueReminderEmail({ to: item.to, ...item.payload });
+        }
+        await EmailQueueItem.updateOne(
+          { _id: item._id },
+          { $set: { status: "sent", sentAt: new Date() } }
+        );
+        sent++;
+      } catch (err) {
+        await EmailQueueItem.updateOne(
+          { _id: item._id },
+          { $set: { status: "failed", error: err.message } }
+        );
+        failed++;
+        console.error(`[EmailQueue] Send failed for ${item.to}:`, err.message);
+      }
+      // 120ms gap — same rate-limit safety margin as before
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    console.info(`[EmailQueue] Dispatch complete: sent=${sent}, failed=${failed}`);
+  } catch (error) {
+    console.error("[EmailQueue] Dispatcher failed:", error.message);
+  }
+});
+
+
+
+
 
   console.info("[Cron] Daily payment jobs registered — runs at 09:00 AM");
 };
