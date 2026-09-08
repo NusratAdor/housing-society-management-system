@@ -30,7 +30,6 @@
     "pdfkit": "^0.19.1",
     "resend": "^6.12.4",
     "sharp": "^0.34.5",
-    "socket.io": "^4.8.1",
     "sslcommerz-lts": "^1.2.0",
     "streamifier": "^0.1.1",
     "svix": "^1.76.1",

@@ -49,7 +49,6 @@ app.use(
       process.env.FRONTEND_URL,
       "http://localhost:5173",
     ],
-    credentials: true,
   })
 );
 app.use(express.json());
@@ -78,7 +77,7 @@ app.use(globalLimiter);
 app.use("/api/clerk", clerkWebhooks);
 
 
-app.get("/", (req, res) => res.send("Housing Society API is running smoothly!"));
+app.get("/", (req, res) => res.send("GOHS API is running smoothly!"));
 
 const memberLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
