@@ -17,7 +17,7 @@ const staffAccountSchema = new mongoose.Schema(
     clerkUserId: {
       type: String,
       trim: true,
-      default: null,
+     
     },
     email: {
       type: String,

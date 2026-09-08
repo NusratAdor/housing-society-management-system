@@ -35,7 +35,7 @@ export const getStaffProfile = async (req, res) => {
 
     const pending = await StaffAccount.findOne({
       email: primaryEmail.emailAddress.toLowerCase(),
-      clerkUserId: null,
+      clerkUserId: { $exists: false }, 
       active: true,
     });
 

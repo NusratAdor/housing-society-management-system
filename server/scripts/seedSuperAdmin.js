@@ -29,7 +29,6 @@ const run = async () => {
     role: "super_admin",
     assignedBy: "SYSTEM_SEED",
     active: true,
-    clerkUserId: null,
   });
 
   await writeAuditLog({
