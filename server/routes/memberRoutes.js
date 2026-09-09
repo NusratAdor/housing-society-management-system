@@ -1,23 +1,27 @@
 // routes/memberRoutes.js
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
+import { requireActiveMember } from "../middleware/memberStatusMiddleware.js";
 import {
   createMemberProfile,
   getMemberProfile,
-  requestAdmin, // New import
+  requestAdmin,
+  getMemberSeat,
 } from "../controllers/memberController.js";
-
-import { getMemberSeat } from "../controllers/memberController.js";
-
 
 const router = express.Router();
 
-// Member routes
+// Unguarded by requireActiveMember, deliberately:
+//   - POST / already has its own removed-member check inside
+//     createMemberProfile itself (blocks re-registration)
+//   - GET /me must stay reachable so the frontend can read status and
+//     show a clear "removed" message, rather than the request being
+//     blocked outright with no explanation
 router.post("/", protect, createMemberProfile);
 router.get("/me", protect, getMemberProfile);
-router.post("/request-admin", protect, requestAdmin); // New route
 
-// Add alongside existing member routes:
-router.get("/seat", protect, getMemberSeat);
+// Self-service actions — active members only
+router.post("/request-admin", protect, requireActiveMember, requestAdmin);
+router.get("/seat", protect, requireActiveMember, getMemberSeat);
 
 export default router;

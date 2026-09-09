@@ -1,6 +1,10 @@
 // server/middleware/adminMiddleware.js
-// Confirms the authenticated user has role "admin" in the Member collection.
-// Must run after protect middleware because it relies on req.clerkUserId.
+// Confirms the authenticated user has role "admin" AND is still an
+// active member. The status check closes a real gap: if an admin's
+// own Member document is ever soft-deleted (deactivateMember), this
+// previously only checked role, not status — meaning a removed admin
+// would retain full admin power indefinitely. Consistent with
+// requireActiveMember's reasoning for regular members.
 //
 // The ADMIN_CLERK_ID env-variable shortcut has been intentionally removed.
 // Reasons:
@@ -23,9 +27,6 @@ export const isAdmin = async (req, res, next) => {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    // Reuse req.member if protect already loaded it — avoids a second DB query
-    // on every admin request. If protect did not find a member (new user),
-    // req.member is undefined and we query here.
     const member = req.member ?? await Member.findOne({ clerkUserId });
 
     if (!member || member.role !== "admin") {
@@ -35,7 +36,13 @@ export const isAdmin = async (req, res, next) => {
       });
     }
 
-    // Ensure req.member is always the real Mongoose document
+    if (member.status !== "active") {
+      return res.status(403).json({
+        success: false,
+        message: "This account has been removed and no longer has admin access.",
+      });
+    }
+
     req.member = member;
     next();
   } catch (error) {

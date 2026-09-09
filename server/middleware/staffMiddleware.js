@@ -1,15 +1,14 @@
 // server/middleware/staffMiddleware.js
 // Authorization guards for the StaffAccount system. Must run after
-// protect. Neither guard modifies or depends on the other — Admin is
-// always checked via req.member.role, Content Manager/Super Admin
-// always via req.staff.role. Membership and staff authorization stay
-// fully decoupled, matching the data model.
+// protect. The Admin branch of canManageContent now also checks
+// status, same reasoning as isAdmin.js — a removed admin should not
+// retain content-management access either. The Content Manager branch
+// needs no equivalent change: protect only ever attaches req.staff
+// when StaffAccount.active is true, so that path is already correctly
+// enforced at the source.
 
-// Admin (Member.role === "admin") retains full access, per requirement.
-// Content Manager gets exactly this slice — notices/gallery/
-// announcements/FAQ-answering routes only.
 export const canManageContent = (req, res, next) => {
-  const isAdmin = req.member?.role === "admin";
+  const isAdmin = req.member?.role === "admin" && req.member?.status === "active";
   const isContentManager = req.staff?.role === "content_manager";
 
   if (!isAdmin && !isContentManager) {

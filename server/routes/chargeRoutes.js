@@ -3,6 +3,7 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { isAdmin }  from "../middleware/adminMiddleware.js";
+import { requireActiveMember } from "../middleware/memberStatusMiddleware.js";
 import {
   createCharge,
   getAllCharges,
@@ -13,14 +14,13 @@ import {
 
 const router = express.Router();
 
-// ── Member routes (authenticated, any role) ───────────────────────────────────
-// Member reads their own unpaid charges — shown in PaymentSection
-router.get("/me", protect, getMemberCharges);
+// ── Member routes (active members only) ────────────────────────────────────
+router.get("/me", protect, requireActiveMember, getMemberCharges);
 
 // ── Admin routes ──────────────────────────────────────────────────────────────
-router.post("/",     protect, isAdmin, createCharge);     // create charge(s)
-router.get("/",      protect, isAdmin, getAllCharges);     // all charges with filters
-router.get("/:id",   protect, isAdmin, getChargeById);    // single charge + batch info
-router.delete("/:id", protect, isAdmin, cancelCharge);    // cancel (not delete)
+router.post("/",     protect, isAdmin, createCharge);
+router.get("/",      protect, isAdmin, getAllCharges);
+router.get("/:id",   protect, isAdmin, getChargeById);
+router.delete("/:id", protect, isAdmin, cancelCharge);
 
 export default router;
