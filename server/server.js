@@ -18,9 +18,8 @@ import galleryRoutes from "./routes/galleryRoutes.js";
 import eventRoutes from "./routes/eventRoutes.js";
 import faqRoutes from "./routes/faqRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
-import committeeRoutes from "./routes/committeeRoutes.js"; // <-- NEW: About Us / committee
-import announcementRoutes from "./routes/announcementRoutes.js"; // <-- NEW: homepage banner
-
+import committeeRoutes from "./routes/committeeRoutes.js";
+import announcementRoutes from "./routes/announcementRoutes.js";
 
 import paymentRedirects from "./routes/paymentRedirects.js";
 
@@ -51,12 +50,23 @@ app.use(
     ],
   })
 );
+
+// Clerk webhook — must be mounted before express.json() so
+// verifyWebhook() receives the raw request body.
+// Keep this endpoint outside the generic application rate limiter;
+// webhook delivery is handled separately from normal API traffic.
+app.post(
+  "/api/clerk",
+  express.raw({ type: "application/json" }),
+  clerkWebhooks
+);
+
+// ── Normal body parsers — everything else in the app uses these ────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
   clerkMiddleware({
-
     onError: (error) => ({
       status: 401,
       message: "Unauthorized request",
@@ -74,9 +84,6 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-app.use("/api/clerk", clerkWebhooks);
-
-
 app.get("/", (req, res) => res.send("GOHS API is running smoothly!"));
 
 const memberLimiter = rateLimit({
@@ -85,11 +92,8 @@ const memberLimiter = rateLimit({
   message: { success: false, message: "Too many actions in a short time. Please wait a moment." },
 });
 
-
-
 app.use("/api/staff", staffRouter);
 app.use("/api/super-admin", superAdminRouter);
-
 
 app.use("/api/members", memberLimiter, memberRouter);
 app.use("/api/admin", adminRouter);
@@ -99,15 +103,13 @@ app.use("/api/gallery", galleryRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/faqs", faqRoutes);
 app.use("/api/payments", paymentRoutes);
-app.use("/api/committee", committeeRoutes); // <-- NEW: About Us / committee
-app.use("/api/announcements", announcementRoutes); // <-- NEW: homepage banner
+app.use("/api/committee", committeeRoutes);
+app.use("/api/announcements", announcementRoutes);
 
 app.use("/api/charges", chargeRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/reports", reportRoutes);
 
-
-// ── MOUNT REDIRECTS AT ROOT ──
 app.use("/payment", paymentRedirects);
 app.use("/test", testRoutes);
 

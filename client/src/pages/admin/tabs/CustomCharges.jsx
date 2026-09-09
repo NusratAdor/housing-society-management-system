@@ -5,6 +5,15 @@
 // ADDED: search over the charge list (label, member name, amount).
 // Search is purely client-side over the already-fetched `charges` array —
 // no new API calls, no change to fetch/create/cancel logic.
+//
+// FIX: the member picker below (for "single"/"multiple" charge targets)
+// now only lists ACTIVE members. /api/admin/members intentionally
+// returns every member, including removed ones (ManageMembers.jsx needs
+// that full list to show its "Removed" badge) — so the filter belongs
+// here, not on that shared endpoint. memberNameById still reads from
+// the full `members` list, since it's just a label lookup for chips
+// already selected, not a place where a removed member could newly
+// get picked.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -51,6 +60,8 @@ export default function CustomCharges() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
 
+
+
   const [form, setForm] = useState({
     label: "",
     purpose: "",
@@ -59,6 +70,8 @@ export default function CustomCharges() {
     targetType: "all",
     memberIds: [],
   });
+
+
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchCharges = useCallback(async () => {
@@ -82,6 +95,14 @@ export default function CustomCharges() {
   useEffect(() => {
     fetchCharges();
   }, [fetchCharges]);
+
+  // ── Active members only ─────────────────────────────────────────────────
+  // Used ONLY for the "who can I pick to charge" dropdown below. A
+  // removed member's membership is retired — they must never be able
+  // to receive a new charge. `members` itself stays the full list
+  // (unchanged) since memberNameById below still needs it for chips
+  // that were selected earlier in this session.
+  const activeMembers = members.filter((m) => m.status === "active");
 
   // ── Submit new charge ─────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
@@ -361,7 +382,7 @@ export default function CustomCharges() {
                     focus:ring-[var(--color-primary)]"
                 >
                   <option value="">— Choose a member —</option>
-                  {members
+                  {activeMembers
                     .filter((m) => !form.memberIds.includes(m._id))
                     .map((m) => (
                       <option key={m._id} value={m._id}>

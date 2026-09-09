@@ -98,7 +98,7 @@ export const AppProvider = ({ children }) => {
 
       if (data.success) {
         setMemberProfile(data.member);
-        setIsAdmin(data.member.role === "admin");
+        setIsAdmin(data.member.role === "admin" && data.member.status === "active");
       } else {
         setMemberProfile(null);
         setIsAdmin(false);

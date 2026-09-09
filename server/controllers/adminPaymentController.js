@@ -245,7 +245,7 @@ export const rejectPayment = async (req, res) => {
 
     return res.status(200).json({ success: true, message: "Payment rejected" });
 } catch (error) {
-    console.error("approvePayment error:", error.message);
+    console.error("rejectPayment error:", error.message);
 
     // allocatePayment throws this specific message when a charge in this
     // payment's selection was already cleared by another payment — the

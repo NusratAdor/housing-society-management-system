@@ -47,7 +47,7 @@ export const createExtraCharges = async ({
 
   if (targetType === "all") {
     targetMembers = await Member
-      .find({})
+      .find({ status: "active" })
       .select("_id clerkUserId name")
       .lean();
   } else if (targetType === "single" || targetType === "multiple") {
@@ -55,7 +55,7 @@ export const createExtraCharges = async ({
       throw new Error("memberIds is required for single and multiple targetType");
     }
     targetMembers = await Member
-      .find({ _id: { $in: memberIds } })
+      .find({ _id: { $in: memberIds }, status: "active"  })
       .select("_id clerkUserId name")
       .lean();
 

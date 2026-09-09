@@ -1,30 +1,31 @@
 // server/controllers/clerkWebhooks.js
-// user.deleted delegates to the shared cascadeDeleteMember service
-// function (memberService.js) — the same one used by the
-// admin-initiated delete path in adminController.js. One shared
-// function backs both delete paths, so a future fix to cascade
-// behavior only needs to happen once.
+//
+// Verifies every incoming Clerk webhook using Clerk's own official
+// helper (verifyWebhook) instead of manually checking the signature.
+// This needs the RAW, unprocessed request body — see server.js for
+// where that raw body is set up for this route.
+//
+// user.deleted uses the shared deactivateMember() function — the same
+// one the admin "remove member" button uses — so both ways a member
+// can be removed behave exactly the same, forever, with no risk of
+// the two ways drifting apart over time.
 
-import Member          from "../models/Member.js";
-import { Webhook }     from "svix";
-import { writeAuditLog }     from "../services/auditService.js";
+import Member from "../models/Member.js";
+import { verifyWebhook } from "@clerk/express/webhooks";
+import { writeAuditLog } from "../services/auditService.js";
 import { deactivateMember } from "../services/memberService.js";
 
 const clerkWebhooks = async (req, res) => {
-  // ── Verify signature ──────────────────────────────────────────────────────
-  const wh = new Webhook(process.env.CLERK_WEBHOOK_SECRET);
+  // ── Verify this request really came from Clerk ────────────────────────
+  let evt;
   try {
-    await wh.verify(JSON.stringify(req.body), {
-      "svix-id":        req.headers["svix-id"],
-      "svix-timestamp": req.headers["svix-timestamp"],
-      "svix-signature": req.headers["svix-signature"],
-    });
+    evt = await verifyWebhook(req);
   } catch (err) {
     console.error("[Webhook] Signature verification failed:", err.message);
     return res.status(400).json({ success: false, message: "Invalid signature" });
   }
 
-  const { data, type } = req.body;
+  const { data, type } = evt;
 
   try {
     switch (type) {
@@ -74,10 +75,13 @@ const clerkWebhooks = async (req, res) => {
         break;
       }
 
-            case "user.deleted": {
+      case "user.deleted": {
         // Find, do NOT delete — the Member record is preserved (soft
         // delete), matching the same policy as the admin-initiated
-        // removal path.
+        // removal path. The status check also protects against Clerk
+        // sending the same event more than once (Clerk explicitly warns
+        // this can happen) — a second delivery simply finds the member
+        // already removed and does nothing more.
         const member = await Member.findOne({ clerkUserId: data.id });
 
         if (member && member.status !== "removed") {
