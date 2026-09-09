@@ -14,13 +14,11 @@
 // (see ManageMembers.jsx), but this endpoint must reject/ignore it
 // regardless of what any client sends.
 
-import Member          from "../models/Member.js";
-import Notification    from "../models/Notification.js";
+import Member from "../models/Member.js";
+import Notification from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
-import { cascadeDeleteMember } from "../services/memberService.js";
+import { deactivateMember } from "../services/memberService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
-
-
 
 // ─── getAllMembers ─────────────────────────────────────────────────────────────
 
@@ -40,8 +38,13 @@ export const updateMemberProfile = async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      name, phone, address, designation,
-      plotNo, role, pendingAdmin,
+      name,
+      phone,
+      address,
+      designation,
+      plotNo,
+      role,
+      pendingAdmin,
       // membershipNo intentionally NOT destructured/used — see file header.
       // Any membershipNo present in the request body is silently ignored,
       // never validated, never written. This field is permanently locked
@@ -50,7 +53,9 @@ export const updateMemberProfile = async (req, res) => {
 
     // Validation
     if (phone && !isValidPhone(phone)) {
-      return res.status(400).json({ success: false, message: "Invalid phone number" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid phone number" });
     }
 
     const validRoles = ["member", "admin"];
@@ -60,18 +65,20 @@ export const updateMemberProfile = async (req, res) => {
 
     const oldMember = await Member.findById(id);
     if (!oldMember) {
-      return res.status(404).json({ success: false, message: "Member not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
     }
 
     // Snapshot before state for audit
     const beforeSnapshot = {
-      name:         oldMember.name,
-      phone:        oldMember.phone,
-      address:      oldMember.address,
-      designation:  oldMember.designation,
+      name: oldMember.name,
+      phone: oldMember.phone,
+      address: oldMember.address,
+      designation: oldMember.designation,
       membershipNo: oldMember.membershipNo,
-      plotNo:       oldMember.plotNo,
-      role:         oldMember.role,
+      plotNo: oldMember.plotNo,
+      role: oldMember.role,
       pendingAdmin: oldMember.pendingAdmin,
     };
 
@@ -79,34 +86,36 @@ export const updateMemberProfile = async (req, res) => {
     // deliberately absent from this list, so it is never part of the
     // $set payload regardless of what the request body contains.
     const updateData = {
-      ...(name         !== undefined && { name:         name.trim() }),
-      ...(phone        !== undefined && { phone:        normalizePhone(phone) }),
-      ...(address      !== undefined && { address:      address.trim() }),
-      ...(designation  !== undefined && { designation:  designation.trim() }),
-      ...(plotNo       !== undefined && { plotNo:       plotNo.trim() }),
-      ...(role         !== undefined && { role }),
+      ...(name !== undefined && { name: name.trim() }),
+      ...(phone !== undefined && { phone: normalizePhone(phone) }),
+      ...(address !== undefined && { address: address.trim() }),
+      ...(designation !== undefined && { designation: designation.trim() }),
+      ...(plotNo !== undefined && { plotNo: plotNo.trim() }),
+      ...(role !== undefined && { role }),
       ...(pendingAdmin !== undefined && { pendingAdmin }),
     };
 
     const updated = await Member.findByIdAndUpdate(
       id,
       { $set: updateData },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     if (!updated) {
-      return res.status(404).json({ success: false, message: "Member not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
     }
 
     // Snapshot after state
     const afterSnapshot = {
-      name:         updated.name,
-      phone:        updated.phone,
-      address:      updated.address,
-      designation:  updated.designation,
+      name: updated.name,
+      phone: updated.phone,
+      address: updated.address,
+      designation: updated.designation,
       membershipNo: updated.membershipNo,
-      plotNo:       updated.plotNo,
-      role:         updated.role,
+      plotNo: updated.plotNo,
+      role: updated.role,
       pendingAdmin: updated.pendingAdmin,
     };
 
@@ -114,12 +123,12 @@ export const updateMemberProfile = async (req, res) => {
     // membershipNo remains in this map purely for audit-log readability —
     // it will simply never show a diff, since it can no longer change.
     const fieldLabels = {
-      name:         "name",
-      phone:        "phone",
-      address:      "address",
-      designation:  "designation",
-      plotNo:       "plot number",
-      role:         "role",
+      name: "name",
+      phone: "phone",
+      address: "address",
+      designation: "designation",
+      plotNo: "plot number",
+      role: "role",
     };
 
     const changes = Object.entries(fieldLabels)
@@ -129,22 +138,22 @@ export const updateMemberProfile = async (req, res) => {
     // In-app notification for the member
     if (changes.length > 0 && oldMember.clerkUserId) {
       await Notification.create({
-        type:        "MemberUpdate",
-        content:     `Your profile was updated by admin: ${changes.join(", ")}.`,
+        type: "MemberUpdate",
+        content: `Your profile was updated by admin: ${changes.join(", ")}.`,
         clerkUserId: oldMember.clerkUserId,
-        adminOnly:   false,
+        adminOnly: false,
       });
     }
 
     // Audit log — fire-and-forget
     writeAuditLog({
-      action:      "MEMBER_UPDATED",
+      action: "MEMBER_UPDATED",
       performedBy: req.clerkUserId,
-      targetId:    updated._id,
+      targetId: updated._id,
       description: `Admin updated member ${updated.name} (${updated.membershipNo})`,
-      before:      beforeSnapshot,
-      after:       afterSnapshot,
-      metadata:    { changes },
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: { changes },
     });
 
     return res.status(200).json({ success: true, member: updated });
@@ -160,31 +169,46 @@ export const deleteMember = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const member = await Member.findByIdAndDelete(id);
+    const member = await Member.findById(id);
     if (!member) {
-      return res.status(404).json({ success: false, message: "Member not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
+    }
+    if (member.status === "removed") {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "This member has already been removed",
+        });
     }
 
-    await cascadeDeleteMember(id, member.clerkUserId, member.membershipNo);
+    await deactivateMember(
+      member._id,
+      member.clerkUserId,
+      member.membershipNo,
+      req.clerkUserId,
+    );
 
     writeAuditLog({
-      action:      "MEMBER_DELETED",
+      action: "MEMBER_DELETED",
       performedBy: req.clerkUserId,
-      targetId:    member._id,
-      description:
-        `Admin deleted member ${member.name} (${member.membershipNo}) — dues cleared, seat reset to unclaimed`,
-      before: {
-        name:         member.name,
-        email:        member.email,
+      targetId: member._id,
+      description: `Admin removed member ${member.name} (${member.membershipNo}) — membership number permanently retired, financial records preserved`,
+      before: { status: "active" },
+      after: { status: "removed" },
+      metadata: {
         membershipNo: member.membershipNo,
-        role:         member.role,
+        dataPreserved: true,
+        seatRetired: true,
       },
-      metadata: { cascadeDeleted: true, seatReset: true },
     });
 
     return res.status(200).json({
       success: true,
-      message: "Member and all related data deleted",
+      message:
+        "Member removed. The membership number is now permanently retired, and all historical records have been preserved.",
     });
   } catch (error) {
     console.error("deleteMember error:", error.message);
@@ -200,32 +224,34 @@ export const approveAdmin = async (req, res) => {
 
     const oldMember = await Member.findById(id);
     if (!oldMember) {
-      return res.status(404).json({ success: false, message: "Member not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
     }
 
     const updated = await Member.findByIdAndUpdate(
       id,
       { $set: { role: "admin", pendingAdmin: false } },
-      { new: true }
+      { new: true },
     );
 
     if (updated.clerkUserId) {
       await Notification.create({
-        type:        "AdminApproved",
-        content:     "Congratulations! Your admin access request has been approved.",
+        type: "AdminApproved",
+        content:
+          "Congratulations! Your admin access request has been approved.",
         clerkUserId: updated.clerkUserId,
-        adminOnly:   false,
+        adminOnly: false,
       });
     }
 
     writeAuditLog({
-      action:      "MEMBER_ROLE_CHANGED",
+      action: "MEMBER_ROLE_CHANGED",
       performedBy: req.clerkUserId,
-      targetId:    updated._id,
-      description:
-        `Admin approved admin role for ${updated.name} (${updated.membershipNo})`,
+      targetId: updated._id,
+      description: `Admin approved admin role for ${updated.name} (${updated.membershipNo})`,
       before: { role: oldMember.role, pendingAdmin: oldMember.pendingAdmin },
-      after:  { role: "admin",        pendingAdmin: false },
+      after: { role: "admin", pendingAdmin: false },
     });
 
     return res.status(200).json({ success: true, member: updated });
@@ -239,25 +265,27 @@ export const approveAdmin = async (req, res) => {
 
 export const rejectAdminRequest = async (req, res) => {
   try {
-    const { id }     = req.params;
+    const { id } = req.params;
     const { reason } = req.body;
 
     const oldMember = await Member.findById(id);
     if (!oldMember) {
-      return res.status(404).json({ success: false, message: "Member not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
     }
 
     if (!oldMember.pendingAdmin) {
       return res.status(400).json({
         success: false,
-        message:  "This member has no pending admin request",
+        message: "This member has no pending admin request",
       });
     }
 
     const updated = await Member.findByIdAndUpdate(
       id,
       { $set: { pendingAdmin: false } },
-      { new: true }
+      { new: true },
     );
 
     if (updated.clerkUserId) {
@@ -267,22 +295,23 @@ export const rejectAdminRequest = async (req, res) => {
         : `${baseMessage} You may submit a new request at any time.`;
 
       await Notification.create({
-        type:        "AdminRejected",
+        type: "AdminRejected",
         content,
         clerkUserId: updated.clerkUserId,
-        adminOnly:   false,
+        adminOnly: false,
       });
     }
 
     writeAuditLog({
-      action:      "MEMBER_ROLE_CHANGED",
+      action: "MEMBER_ROLE_CHANGED",
       performedBy: req.clerkUserId,
-      targetId:    updated._id,
+      targetId: updated._id,
       description:
         `Admin rejected admin-access request from ${updated.name} ` +
-        `(${updated.membershipNo})` + (reason?.trim() ? ` — ${reason.trim()}` : ""),
-      before: { pendingAdmin: true,  role: oldMember.role },
-      after:  { pendingAdmin: false, role: oldMember.role },
+        `(${updated.membershipNo})` +
+        (reason?.trim() ? ` — ${reason.trim()}` : ""),
+      before: { pendingAdmin: true, role: oldMember.role },
+      after: { pendingAdmin: false, role: oldMember.role },
       metadata: { decision: "rejected", reason: reason?.trim() || null },
     });
 
@@ -297,7 +326,9 @@ export const rejectAdminRequest = async (req, res) => {
 
 export const triggerMonthlyDue = async (req, res) => {
   if (process.env.NODE_ENV === "production") {
-    return res.status(403).json({ success: false, message: "Not available in production" });
+    return res
+      .status(403)
+      .json({ success: false, message: "Not available in production" });
   }
 
   try {

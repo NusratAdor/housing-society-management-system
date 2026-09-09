@@ -69,6 +69,26 @@ const memberSeatSchema = new mongoose.Schema(
     claimedAt: {
       type: Date,
     },
+
+    // ── Retirement ──────────────────────────────────────────────────────
+    // Set when the member holding this seat is removed. A retired seat
+    // is permanently locked: it can never be claimed by a new
+    // registration, edited, or deleted — the membership number is
+    // retired forever, exactly as the seat's isClaimed/claimedByClerkId/
+    // claimedAt are deliberately left untouched (not reset), preserving
+    // the historical record of who held this number and when.
+    isRetired: {
+      type:    Boolean,
+      default: false,
+    },
+
+    retiredAt: {
+      type:    Date,
+      default: null,
+    },
+
+
+
   },
   {
     timestamps: true,
@@ -76,5 +96,6 @@ const memberSeatSchema = new mongoose.Schema(
 );
 
 memberSeatSchema.index({ isClaimed: 1 });
+memberSeatSchema.index({ isRetired: 1 });
 
 export default mongoose.model("MemberSeat", memberSeatSchema);

@@ -285,10 +285,13 @@ const ManageMembers = () => {
       const { data } = await axios.delete(`/api/admin/members/${id}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (data.success) {
-        setMembers((prev) => prev.filter((m) => m._id !== id));
+          if (data.success) {
+        // Removed member stays in the list (backend keeps their soft-
+        // deleted record) — refetch instead of filtering it out, so
+        // the row correctly updates to show its new "Removed" status.
+        fetchMembers();
         setConfirmDelete(null);
-        toast.success("Member and related records deleted");
+        toast.success("Member removed — records preserved, membership number retired");
       } else {
         toast.error(data.message || "Failed to delete member");
       }
@@ -631,21 +634,29 @@ const ManageMembers = () => {
                     </td>
 
                     {/* ── Actions ── */}
-                    <td className="p-3 flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleEdit(member)}
-                      >
-                        <Edit className="h-4 w-4 mr-1" /> Edit
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setConfirmDelete(member)}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" /> Delete
-                      </Button>
+                                        <td className="p-3">
+                      {member.status === "removed" ? (
+                        <Badge variant="secondary" className="font-medium">
+                          Removed
+                        </Badge>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleEdit(member)}
+                          >
+                            <Edit className="h-4 w-4 mr-1" /> Edit
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setConfirmDelete(member)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" /> Delete
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </motion.tr>
                 );
@@ -803,7 +814,7 @@ const ManageMembers = () => {
         </div>
       )}
 
-      {/* ── Confirm Delete Modal ─────────────────────────────────────────── */}
+       {/* ── Confirm Delete Modal ───────────────────────────────────────────  */}
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <motion.div
@@ -815,12 +826,16 @@ const ManageMembers = () => {
             <h2 className="text-lg font-semibold text-gray-800 mb-2">
               Confirm Deletion
             </h2>
-            <p className="text-gray-600 mb-4">
-              Are you sure you want to delete{" "}
-              <span className="font-semibold">{confirmDelete.name}</span>? This
-              will permanently remove their payment history, charges, and
-              notifications as well.
+                        <p className="text-gray-600 mb-4">
+              Are you sure you want to remove{" "}
+              <span className="font-semibold">{confirmDelete.name}</span>?
+              Their profile and payment history will be preserved for your
+              records, and their membership number{" "}
+              <span className="font-mono font-semibold">{confirmDelete.membershipNo}</span>{" "}
+              will be permanently retired — it can never be used to register again.
             </p>
+
+            
             <div className="flex justify-end gap-3">
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>
                 Cancel

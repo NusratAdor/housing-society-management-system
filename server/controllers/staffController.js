@@ -50,7 +50,7 @@ export const getStaffProfile = async (req, res) => {
     await pending.save();
 
     writeAuditLog({
-      action: "STAFF_ROLE_CHANGED",
+      action: "STAFF_ACTIVATED",
       performedBy: "SYSTEM_STAFF_ACTIVATION",
       targetId: pending._id,
       description: `Staff account activated for ${pending.email} (${pending.role})`,

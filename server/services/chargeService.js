@@ -47,10 +47,17 @@ export const createMonthlyChargesForMonth = async ({
 
   // Step 2 — Fetch all current members
   // We only need _id for the charge creation — no need for full documents
+  // Only active members get new monthly charges. A removed member's
+  // Member document is preserved (soft delete), but they must never
+  // keep accumulating new dues after being removed — that would defeat
+  // the entire purpose of removing them.
   const allMembers = await Member
-    .find({})
+    .find({ status: "active" })
     .select("_id")
     .lean();
+
+
+    
 
   if (allMembers.length === 0) {
     return { created: 0, skipped: 0, fee, month, year };

@@ -8,8 +8,8 @@
 // needed. Any one-off amount owed outside monthly dues is added
 // afterward via the existing custom-charges admin feature, unchanged.
 
-import Member        from "../models/Member.js";
-import MemberSeat    from "../models/MemberSeat.js";
+import Member from "../models/Member.js";
+import MemberSeat from "../models/MemberSeat.js";
 import {
   createOrUpdateMember,
   findMemberByClerkId,
@@ -22,20 +22,31 @@ import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 export const createMemberProfile = async (req, res) => {
   try {
-    const { name, email, phone, address, designation, membershipNo, plotNo } = req.body;
+    const { name, email, phone, address, designation, membershipNo, plotNo } =
+      req.body;
     const { clerkUserId } = req;
 
-    if (!clerkUserId) return res.status(400).json({ success: false, message: "User ID missing" });
-    if (!email)       return res.status(400).json({ success: false, message: "Email required" });
+    if (!clerkUserId)
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID missing" });
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, message: "Email required" });
 
     if (!isValidPhone(phone)) {
-      return res.status(400).json({ success: false, message: "Invalid Bangladeshi phone number" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid Bangladeshi phone number" });
     }
     const normalizedPhone = normalizePhone(phone);
 
     const cleanMembership = membershipNo?.trim().toUpperCase();
     if (!cleanMembership) {
-      return res.status(400).json({ success: false, message: "Membership number is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Membership number is required" });
     }
 
     // ── MemberSeat validation ─────────────────────────────────────────────
@@ -44,47 +55,72 @@ export const createMemberProfile = async (req, res) => {
     if (!seat) {
       return res.status(400).json({
         success: false,
-        message: "Membership number not found. Please contact the admin to verify your membership.",
+        message:
+          "Membership number not found. Please contact the admin to verify your membership.",
+      });
+    }
+
+    if (seat.isRetired) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This membership number has been retired and can no longer be used. Please contact the admin.",
       });
     }
 
     if (seat.isClaimed && seat.claimedByClerkId !== clerkUserId) {
       return res.status(400).json({
         success: false,
-        message: "This membership number has already been registered. Contact admin if this is an error.",
+        message:
+          "This membership number has already been registered. Contact admin if this is an error.",
       });
     }
 
-    const existingMembership = await Member.findOne({ membershipNo: cleanMembership });
+    const existingMembership = await Member.findOne({
+      membershipNo: cleanMembership,
+    });
     if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
-      return res.status(400).json({ success: false, message: "Membership number already in use" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Membership number already in use" });
     }
 
-    const existingMember    = await findMemberByClerkId(clerkUserId);
+      const existingMember = await findMemberByClerkId(clerkUserId);
+
+    // A removed member must never be silently resurrected by
+    // re-submitting the registration form — their old, now-inactive
+    // profile stays exactly as it was for the historical record.
+    if (existingMember && existingMember.status === "removed") {
+      return res.status(400).json({
+        success: false,
+        message: "This account has been removed. Please contact the admin.",
+      });
+    }
+
     const isFirstTimeCreate = !existingMember;
 
     const member = await createOrUpdateMember(clerkUserId, {
-      name:         name?.trim(),
-      email:        email.trim().toLowerCase(),
-      phone:        normalizedPhone,
-      address:      address?.trim(),
-      designation:  designation?.trim(),
+      name: name?.trim(),
+      email: email.trim().toLowerCase(),
+      phone: normalizedPhone,
+      address: address?.trim(),
+      designation: designation?.trim(),
       membershipNo: cleanMembership,
-      plotNo:       plotNo?.trim(),
-      role:         existingMember?.role || "member",
+      plotNo: plotNo?.trim(),
+      role: existingMember?.role || "member",
     });
 
     // ── Mark seat as claimed ──────────────────────────────────────────────
-       // ── Mark seat as claimed ──────────────────────────────────────────────
+    // ── Mark seat as claimed ──────────────────────────────────────────────
     // joinDate is set here automatically, to the exact registration
     // moment — never entered by admin, never in the CSV. This is the
     // one and only place joinDate gets written.
     if (!seat.isClaimed) {
       const now = new Date();
-      seat.isClaimed        = true;
+      seat.isClaimed = true;
       seat.claimedByClerkId = clerkUserId;
-      seat.claimedAt        = now;
-      seat.joinDate          = now;
+      seat.claimedAt = now;
+      seat.joinDate = now;
       await seat.save();
     }
 
@@ -92,7 +128,7 @@ export const createMemberProfile = async (req, res) => {
     // If the seat has a paidThroughMonth set, catch the member up with
     // real, individually-dated MonthlyCharge records from the following
     // month through the current month. No-op if paidThroughMonth is unset.
-       // ── Backfill historical monthly dues (first-time registration only) ──
+    // ── Backfill historical monthly dues (first-time registration only) ──
     // If the seat has a paidThroughMonth set, catch the member up with
     // real, individually-dated MonthlyCharge records from the following
     // month through the current month. No-op if paidThroughMonth is unset.
@@ -100,12 +136,12 @@ export const createMemberProfile = async (req, res) => {
       const paidThroughMonthToConsume = seat.paidThroughMonth;
       try {
         const result = await generateBackdatedCharges({
-          memberId:         member._id,
+          memberId: member._id,
           paidThroughMonth: paidThroughMonthToConsume,
         });
         if (result.created > 0) {
           console.info(
-            `[MemberSeat] Backfilled ${result.created} month(s) of dues for ${cleanMembership}`
+            `[MemberSeat] Backfilled ${result.created} month(s) of dues for ${cleanMembership}`,
           );
         }
         // Consume paidThroughMonth now that it has been used — matches
@@ -120,12 +156,12 @@ export const createMemberProfile = async (req, res) => {
         // Non-fatal — log but do not fail registration. paidThroughMonth
         // is deliberately left in place here so an admin can retry or
         // manually reconcile using the original value.
-        console.error("[MemberSeat] Backdated charge creation failed:", backfillError.message);
+        console.error(
+          "[MemberSeat] Backdated charge creation failed:",
+          backfillError.message,
+        );
       }
     }
-
-
-    
 
     return res.status(isFirstTimeCreate ? 201 : 200).json({
       success: true,
@@ -143,7 +179,10 @@ export const createMemberProfile = async (req, res) => {
 export const getMemberProfile = async (req, res) => {
   try {
     const member = await findMemberByClerkId(req.clerkUserId);
-    if (!member) return res.status(404).json({ success: false, message: "Profile not found" });
+    if (!member)
+      return res
+        .status(404)
+        .json({ success: false, message: "Profile not found" });
     return res.status(200).json({ success: true, member });
   } catch (error) {
     console.error("getMemberProfile error:", error.message);
@@ -156,13 +195,18 @@ export const getMemberProfile = async (req, res) => {
 export const getMemberSeat = async (req, res) => {
   try {
     const member = await findMemberByClerkId(req.clerkUserId);
-    if (!member) return res.status(404).json({ success: false, message: "Member not found" });
+    if (!member)
+      return res
+        .status(404)
+        .json({ success: false, message: "Member not found" });
 
     const seat = await MemberSeat.findOne({ membershipNo: member.membershipNo })
       .select("joinDate membershipNo")
       .lean();
 
-    return res.status(200).json({ success: true, joinDate: seat?.joinDate ?? null });
+    return res
+      .status(200)
+      .json({ success: true, joinDate: seat?.joinDate ?? null });
   } catch (error) {
     console.error("getMemberSeat error:", error.message);
     return res.status(500).json({ success: false, message: "Server error" });
@@ -174,10 +218,17 @@ export const getMemberSeat = async (req, res) => {
 export const requestAdmin = async (req, res) => {
   try {
     const member = await requestAdminAccess(req.clerkUserId);
-    return res.status(200).json({ success: true, message: "Admin request submitted", member });
+    return res
+      .status(200)
+      .json({ success: true, message: "Admin request submitted", member });
   } catch (error) {
-    const isBusinessError = ["Profile not found","already an admin","already pending"]
-      .some(msg => error.message.includes(msg));
-    return res.status(isBusinessError ? 400 : 500).json({ success: false, message: error.message });
+    const isBusinessError = [
+      "Profile not found",
+      "already an admin",
+      "already pending",
+    ].some((msg) => error.message.includes(msg));
+    return res
+      .status(isBusinessError ? 400 : 500)
+      .json({ success: false, message: error.message });
   }
 };

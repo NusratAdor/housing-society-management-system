@@ -8,7 +8,7 @@
 import Member          from "../models/Member.js";
 import { Webhook }     from "svix";
 import { writeAuditLog }     from "../services/auditService.js";
-import { cascadeDeleteMember } from "../services/memberService.js";
+import { deactivateMember } from "../services/memberService.js";
 
 const clerkWebhooks = async (req, res) => {
   // ── Verify signature ──────────────────────────────────────────────────────
@@ -74,38 +74,33 @@ const clerkWebhooks = async (req, res) => {
         break;
       }
 
-      case "user.deleted": {
-        const member = await Member.findOneAndDelete({ clerkUserId: data.id });
+            case "user.deleted": {
+        // Find, do NOT delete — the Member record is preserved (soft
+        // delete), matching the same policy as the admin-initiated
+        // removal path.
+        const member = await Member.findOne({ clerkUserId: data.id });
 
-        if (member) {
-          // Same cascade cleanup used by the admin-initiated delete
-          // path — Payment, ExtraCharge, MonthlyCharge, Notification,
-          // and MemberSeat unclaim, all in one shared function.
-          await cascadeDeleteMember(member._id, data.id, member.membershipNo);
+        if (member && member.status !== "removed") {
+          await deactivateMember(member._id, data.id, member.membershipNo, "SYSTEM_CLERK_WEBHOOK");
 
-          // Audit log — fire-and-forget
           writeAuditLog({
             action:      "MEMBER_DELETED",
             performedBy: "SYSTEM_CLERK_WEBHOOK",
             targetId:    member._id,
             description:
               `Clerk user.deleted webhook — removed member ${member.name} ` +
-              `(${member.membershipNo}), cleared dues, and reset seat to unclaimed`,
-            before: {
-              name:         member.name,
-              email:        member.email,
-              membershipNo: member.membershipNo,
-              clerkUserId:  data.id,
-            },
-            metadata: { source: "clerk_webhook", cascadeDeleted: true, seatReset: true },
+              `(${member.membershipNo}), membership number retired, records preserved`,
+            before: { status: "active" },
+            after:  { status: "removed" },
+            metadata: { source: "clerk_webhook", dataPreserved: true, seatRetired: true },
           });
 
           console.info(
-            `[Webhook] user.deleted — removed member + data for ${data.id}`
+            `[Webhook] user.deleted — deactivated member + retired seat for ${data.id}`
           );
         } else {
           console.info(
-            `[Webhook] user.deleted — no Member for ${data.id}. Skipped.`
+            `[Webhook] user.deleted — no active Member for ${data.id}. Skipped.`
           );
         }
         break;

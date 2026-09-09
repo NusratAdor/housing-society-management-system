@@ -88,6 +88,36 @@ const memberSchema = new mongoose.Schema(
       type:    Boolean,
       default: false,
     },
+
+
+    // ── Soft delete ─────────────────────────────────────────────────────
+    // A member is never actually deleted from this collection. "Removing"
+    // a member only ever sets status to "removed" — their profile and
+    // every financial record tied to them (Payment, MonthlyCharge,
+    // ExtraCharge) stays intact, permanently, for historical/audit
+    // purposes. See memberService.deactivateMember.
+    status: {
+      type:    String,
+      enum:    ["active", "removed"],
+      default: "active",
+    },
+
+    removedAt: {
+      type:    Date,
+      default: null,
+    },
+
+    // Clerk userId of the admin who removed this member, or
+    // "SYSTEM_CLERK_WEBHOOK" if the member deleted their own account.
+    removedBy: {
+      type:    String,
+      default: null,
+    },
+
+
+
+
+
   },
   {
     timestamps: true,
@@ -96,5 +126,9 @@ const memberSchema = new mongoose.Schema(
 
 // Used by isAdmin middleware for every authenticated admin request
 memberSchema.index({ role: 1 });
+
+// Used to filter active vs removed members (dashboards, monthly cron,
+// admin listings)
+memberSchema.index({ status: 1 });
 
 export default mongoose.model("Member", memberSchema);
