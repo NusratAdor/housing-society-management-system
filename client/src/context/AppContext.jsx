@@ -1,13 +1,16 @@
 // client/src/context/AppContext.jsx
 //
-// CHANGE (this pass): added a second, fully independent profile fetch —
-// staffProfile (StaffAccount) — following the EXACT same shape as the
-// existing memberProfile fetch: own ref-stabilized navigate/getToken,
-// own retry/backoff counter, own loading flag. This is deliberate, not
-// a shortcut — a user can be a Member, staff, both, or neither, and
-// conflating the two fetches into one function would break that
-// distinction. Nothing about the existing memberProfile fetch logic,
-// retry behavior, or error handling changes.
+// FIX (this pass): availableWorkspaces now only includes the member
+// workspace when memberProfile.status is "active". A removed member's
+// profile is still returned by GET /me (by design — see
+// requireActiveMember's reasoning), so checking "memberProfile exists"
+// alone was wrong: it kept showing the "Dashboard" button on the
+// homepage/navbar even after removal. Also added isRemovedMember, a
+// simple flag Navbar.jsx and Hero.jsx use to show a clear
+// "Membership Removed" message instead of a misleading button.
+//
+// (Also includes the earlier fix: isAdmin now checks
+// memberProfile.status === "active" too, for the same reason.)
 
 import axiosInstance from "../utils/axiosInstance.js";
 import {
@@ -20,7 +23,6 @@ import { toast } from "react-hot-toast";
 
 const AppContext = createContext();
 
-// Retry config for Render free-tier cold starts
 const MAX_RETRIES   = 4;
 const RETRY_BASE_MS = 2000;
 
@@ -33,7 +35,6 @@ export const AppProvider = ({ children }) => {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [isAdmin,        setIsAdmin]        = useState(false);
 
-  // NEW — staff identity, fully independent of member identity.
   const [staffProfile,        setStaffProfile]        = useState(null);
   const [loadingStaffProfile, setLoadingStaffProfile]  = useState(true);
   const [isSuperAdmin,        setIsSuperAdmin]         = useState(false);
@@ -42,8 +43,6 @@ export const AppProvider = ({ children }) => {
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef(null);
 
-  // Separate retry state for the staff fetch — must not share a counter
-  // with the member fetch, since the two requests fail/succeed independently.
   const staffRetryCountRef = useRef(0);
   const staffRetryTimerRef = useRef(null);
 
@@ -98,6 +97,8 @@ export const AppProvider = ({ children }) => {
 
       if (data.success) {
         setMemberProfile(data.member);
+        // FIX: a removed member's role should never count as active
+        // admin power — status must be active too.
         setIsAdmin(data.member.role === "admin" && data.member.status === "active");
       } else {
         setMemberProfile(null);
@@ -157,11 +158,6 @@ export const AppProvider = ({ children }) => {
     }
   }, [isLoaded, user, clearRetryTimer]);
 
-  // NEW — staff profile fetch. Deliberately silent on 404 (most users are
-  // not staff — that is the expected, common case, not an error worth
-  // surfacing) and deliberately does NOT redirect on session expiry itself,
-  // since fetchMemberProfile already owns that responsibility. This fetch
-  // only ever sets staff-related state.
   const fetchStaffProfile = useCallback(async () => {
     if (!isLoaded) {
       return;
@@ -208,8 +204,6 @@ export const AppProvider = ({ children }) => {
       const isNetworkError = !error.response;
       const isNoToken      = error.message === "NO_TOKEN";
 
-      // 404 = not staff. This is the normal case for the vast majority
-      // of users — no toast, no retry, just an empty staff identity.
       if (status === 404) {
         staffRetryCountRef.current = 0;
         clearStaffRetryTimer();
@@ -230,8 +224,6 @@ export const AppProvider = ({ children }) => {
         return;
       }
 
-      // Fail closed and quietly — a broken staff-status check should
-      // never block a regular member from using the app normally.
       staffRetryCountRef.current = 0;
       clearStaffRetryTimer();
       setStaffProfile(null);
@@ -255,14 +247,12 @@ export const AppProvider = ({ children }) => {
     return () => clearStaffRetryTimer();
   }, [fetchStaffProfile, clearStaffRetryTimer]);
 
-  
-  // Computed once here — the single source of truth for which contexts
-  // this user can switch between. Every component that needs to know
-  // "where can this user go" (Navbar, WorkspaceSwitcher, etc.) reads
-  // THIS instead of re-deriving isAdmin/isContentManager/memberProfile
-  // logic independently — that duplication is what caused the Content
-  // Manager "Create Profile" button bug.
-const availableWorkspaces = useMemo(() => {
+  // FIX: only include the member workspace when the member is still
+  // active. Without this check, a removed member's still-truthy
+  // memberProfile kept the "Dashboard" entry in this list, which is
+  // what caused the Navbar and Hero CTA buttons to still say
+  // "Dashboard" after removal.
+  const availableWorkspaces = useMemo(() => {
     const workspaces = [];
     if (isSuperAdmin) {
       workspaces.push({ key: "super-admin", path: "/super-admin", soloLabel: "Super Admin", switchLabel: "Super Admin" });
@@ -270,14 +260,19 @@ const availableWorkspaces = useMemo(() => {
     if (isAdmin || isContentManager) {
       workspaces.push({ key: "admin", path: "/admin", soloLabel: "Admin Panel", switchLabel: "Admin Panel" });
     }
-    if (memberProfile) {
+    if (memberProfile && memberProfile.status === "active") {
       workspaces.push({ key: "member", path: "/dashboard", soloLabel: "Dashboard", switchLabel: "My Membership" });
     }
     return workspaces;
   }, [isSuperAdmin, isAdmin, isContentManager, memberProfile]);
 
+  // NEW — a simple, explicit flag so any component (Navbar, Hero, etc.)
+  // can show a clear "membership removed" message instead of just
+  // silently falling back to a generic "Create Profile" button, which
+  // would be misleading for someone who already had a membership.
+  const isRemovedMember = memberProfile?.status === "removed";
 
-     const value = useMemo(() => ({
+  const value = useMemo(() => ({
     navigate,
     user,
     getToken,
@@ -292,16 +287,15 @@ const availableWorkspaces = useMemo(() => {
     loadingStaffProfile,
     isSuperAdmin,
     isContentManager,
-    // NEW
     availableWorkspaces,
+    // NEW
+    isRemovedMember,
   }), [
     navigate, user, getToken,
     memberProfile, fetchMemberProfile, loadingProfile, isAdmin,
     staffProfile, fetchStaffProfile, loadingStaffProfile, isSuperAdmin, isContentManager,
-    availableWorkspaces,
+    availableWorkspaces, isRemovedMember,
   ]);
-
-
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

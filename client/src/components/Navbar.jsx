@@ -43,9 +43,6 @@ import AnnouncementBar from "./AnnouncementBar";
 
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 
-
-
-
 const dropdownVariants = {
   hidden: { opacity: 0, y: -6 },
   visible: {
@@ -147,7 +144,7 @@ const Navbar = () => {
   const [openDesktopMenu, setOpenDesktopMenu] = useState(null);
   const [openMobileSubmenu, setOpenMobileSubmenu] = useState(null);
 
-    const {
+  const {
     user,
     navigate,
     memberProfile,
@@ -160,8 +157,8 @@ const Navbar = () => {
     isSuperAdmin,
     isContentManager,
     availableWorkspaces,
+    isRemovedMember, // NEW
   } = useAppContext();
-
   const location = useLocation();
   const isHome = location.pathname === "/";
 
@@ -196,7 +193,7 @@ const Navbar = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isHome]);
 
-const handleCreateProfileClick = () => navigate("/create-profile");
+  const handleCreateProfileClick = () => navigate("/create-profile");
 
   useEffect(() => {
     setIsMenuOpen(false);
@@ -320,8 +317,20 @@ const handleCreateProfileClick = () => navigate("/create-profile");
               ),
             )}
 
-                   {user && !loadingProfile && !loadingStaffProfile && (
-              availableWorkspaces.length === 0 ? (
+            {/* Desktop CTA */}
+            {user &&
+              !loadingProfile &&
+              !loadingStaffProfile &&
+              (isRemovedMember ? (
+                <button
+                  onClick={() => navigate("/contact")}
+                  className="ml-2 text-sm rounded-md px-5 py-1.5 bg-gray-200 text-gray-600
+        font-outfit font-medium hover:bg-gray-300 transition-all duration-300"
+                  title="Your membership has been removed — contact the Society office"
+                >
+                  Membership Removed
+                </button>
+              ) : availableWorkspaces.length === 0 ? (
                 <button
                   onClick={handleCreateProfileClick}
                   className={`${btnBase} ml-2 text-sm rounded-md px-5 py-1.5`}
@@ -335,18 +344,12 @@ const handleCreateProfileClick = () => navigate("/create-profile");
                 >
                   {availableWorkspaces[0].soloLabel}
                 </button>
-                          ) : (
+              ) : (
                 <div className="ml-2">
                   <WorkspaceSwitcher variant="brand" />
                 </div>
-              )
-            )}
+              ))}
           </div>
-
-
-
-
-
 
           <div className="hidden md:flex items-center gap-4">
             <div className={isScrolled ? "text-[#111827]" : "text-white"}>
@@ -409,9 +412,22 @@ const handleCreateProfileClick = () => navigate("/create-profile");
           >
             <div className="h-16 shrink-0" />
 
-                                    <div className="flex items-center gap-2 px-5 pt-4">
-              {user && !loadingProfile && !loadingStaffProfile && (
-                availableWorkspaces.length === 0 ? (
+            <div className="flex items-center gap-2 px-5 pt-4">
+              {/* Mobile menu CTA */}
+              {user &&
+                !loadingProfile &&
+                !loadingStaffProfile &&
+                (isRemovedMember ? (
+                  <button
+                    onClick={() => {
+                      navigate("/contact");
+                      setIsMenuOpen(false);
+                    }}
+                    className="flex-1 rounded-md py-2.5 text-sm bg-gray-200 text-gray-600 font-outfit font-medium"
+                  >
+                    Membership Removed
+                  </button>
+                ) : availableWorkspaces.length === 0 ? (
                   <button
                     onClick={() => {
                       handleCreateProfileClick();
@@ -431,12 +447,11 @@ const handleCreateProfileClick = () => navigate("/create-profile");
                   >
                     {availableWorkspaces[0].soloLabel}
                   </button>
-                               ) : (
+                ) : (
                   <div className="flex-1" onClick={() => setIsMenuOpen(false)}>
                     <WorkspaceSwitcher variant="brand" />
                   </div>
-                )
-              )}
+                ))}
               <div className="shrink-0 text-white">
                 <LanguageToggle />
               </div>

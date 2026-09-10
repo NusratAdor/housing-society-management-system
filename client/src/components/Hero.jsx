@@ -57,27 +57,25 @@ const Hero = () => {
   const navigate = useNavigate();
   const { user } = useUser();
   const { openSignIn } = useClerk();
-    const { loadingProfile, loadingStaffProfile, availableWorkspaces } = useAppContext();
-  const { t } = useTranslation();
+const { loadingProfile, loadingStaffProfile, availableWorkspaces, isRemovedMember } = useAppContext();  // added isRemovedMember
+const { t } = useTranslation();
 
-  const primaryWorkspace = availableWorkspaces[0] ?? null;
+const primaryWorkspace = availableWorkspaces[0] ?? null;
 
-  const handleMainButtonClick = () => {
-    if (primaryWorkspace) return navigate(primaryWorkspace.path);
-    if (!user) return openSignIn();
-    return navigate("/create-profile");
-  };
+const handleMainButtonClick = () => {
+  if (isRemovedMember) return navigate("/contact");   // NEW — check this first
+  if (primaryWorkspace) return navigate(primaryWorkspace.path);
+  if (!user) return openSignIn();
+  return navigate("/create-profile");
+};
 
-  // Same soloLabel/switchLabel distinction as WorkspaceSwitcher: when
-  // this is the user's only workspace, use the solo wording ("Dashboard"
-  // for a plain Member) — when they have multiple, this button mirrors
-  // whatever WorkspaceSwitcher currently shows as its default, so use
-  // switchLabel to stay consistent with the navbar switcher's wording.
-  const mainButtonLabel = primaryWorkspace
-    ? (availableWorkspaces.length === 1 ? primaryWorkspace.soloLabel : primaryWorkspace.switchLabel)
-    : !user
-    ? t("Join or Log In to Get Started")
-    : t("Create Profile");
+const mainButtonLabel = isRemovedMember
+  ? "Membership Removed"
+  : primaryWorkspace
+  ? (availableWorkspaces.length === 1 ? primaryWorkspace.soloLabel : primaryWorkspace.switchLabel)
+  : !user
+  ? t("Join or Log In to Get Started")
+  : t("Create Profile");
 
   return (
     <div className="relative h-screen w-full overflow-hidden">
