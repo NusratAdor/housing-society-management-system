@@ -186,10 +186,10 @@ export const createPaymentSession = async (req, res) => {
     // rather than trying to detect and reconcile conflicts after the
     // fact (at admin-confirm time, where it previously surfaced as a
     // confusing 500), it is prevented at the point of creation.
-    const existingActive = await Payment
+     const existingActive = await Payment
       .findOne({
         member: member._id,
-        status: { $in: ["pending", "verified"] },
+        status: { $in: ["pending", "verified", "processing"] },
       })
       .select("_id status")
       .lean();
@@ -197,9 +197,9 @@ export const createPaymentSession = async (req, res) => {
     if (existingActive) {
       return res.status(409).json({
         success: false,
-        message: existingActive.status === "verified"
-          ? "You already have a payment awaiting admin confirmation. Please wait for it to be confirmed before starting a new one."
-          : "You already have a payment in progress. Please complete it, or wait a moment and try again, before starting a new one.",
+        message: existingActive.status === "pending"
+          ? "You already have a payment in progress. Please complete it, or wait a moment and try again, before starting a new one."
+          : "You already have a payment awaiting admin confirmation. Please wait for it to be confirmed before starting a new one.",
       });
     }
 
@@ -330,10 +330,15 @@ export const createPaymentSession = async (req, res) => {
 };
 
 // ─── POST /api/payments/callback ─────────────────────────────────────────────
-// IPN handler — UNCHANGED. advanceAmount is fixed on the Payment document
-// at creation time, so nothing here needs to know about it; this endpoint
-// only ever concerns itself with the charges selection and marking the
-// payment "verified".
+// CHANGE (this pass): every status transition this handler makes is
+// now a conditional, atomic findOneAndUpdate — never a read-then-save.
+// This closes a real race: previously, a gateway callback could
+// overwrite a payment an admin had already rejected in the meantime
+// (rejected -> verified "resurrection"). Now every write here only
+// ever succeeds FROM "pending" — if the payment has moved to
+// "rejected", "completed", or "processing" by the time this callback
+// runs, the conditional update simply matches nothing and this
+// handler safely does nothing further, exactly as intended.
 
 export const paymentCallback = async (req, res) => {
   const { tran_id, status, val_id, value_a, value_b } = req.body;
@@ -353,20 +358,26 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("PAYMENT_NOT_FOUND");
     }
 
-    if (payment.status === "completed" || payment.status === "verified") {
-      console.info(`[IPN] Payment ${tran_id} already ${payment.status} — ignoring duplicate`);
+    if (payment.status !== "pending") {
+      // Already moved on — completed, verified, rejected, processing,
+      // or already failed. Nothing for this callback to do.
+      console.info(`[IPN] Payment ${tran_id} is "${payment.status}", not "pending" — ignoring`);
       return res.status(200).send("OK");
     }
 
     const successStatuses = ["VALID", "VALIDATED"];
     if (!successStatuses.includes(status)) {
-      payment.status = "failed";
-      await payment.save();
-      console.info(`[IPN] Payment ${tran_id} failed with gateway status: ${status}`);
+      const updated = await Payment.findOneAndUpdate(
+        { _id: payment._id, status: "pending" },
+        { $set: { status: "failed" } }
+      );
+      if (updated) {
+        console.info(`[IPN] Payment ${tran_id} failed with gateway status: ${status}`);
+      }
       return res.status(200).send("FAILED");
     }
 
-       let verificationResult;
+    let verificationResult;
     try {
       verificationResult = await verifySSLCommerzPayment({
         valId:          val_id,
@@ -374,18 +385,21 @@ export const paymentCallback = async (req, res) => {
         expectedAmount: payment.amount,
       });
     } catch (verifyError) {
-      
       console.error(`[IPN] Validation API error for ${tran_id}:`, verifyError.message);
       return res.status(500).send("VALIDATION_API_ERROR");
     }
 
     if (!verificationResult.isValid) {
-      payment.status = "failed";
-      await payment.save();
-      console.warn(
-        `[IPN] Payment ${tran_id} failed validation:`,
-        verificationResult.reason || verificationResult.validationData?.status
+      const updated = await Payment.findOneAndUpdate(
+        { _id: payment._id, status: "pending" },
+        { $set: { status: "failed" } }
       );
+      if (updated) {
+        console.warn(
+          `[IPN] Payment ${tran_id} failed validation:`,
+          verificationResult.reason || verificationResult.validationData?.status
+        );
+      }
       return res.status(200).send("VALIDATION_FAILED");
     }
 
@@ -395,8 +409,10 @@ export const paymentCallback = async (req, res) => {
       selectionData = JSON.parse(decoded || "{}");
     } catch {
       console.error(`[IPN] Could not parse value_b for tran_id ${tran_id}:`, value_b);
-      payment.status = "failed";
-      await payment.save();
+      await Payment.findOneAndUpdate(
+        { _id: payment._id, status: "pending" },
+        { $set: { status: "failed" } }
+      );
       return res.status(200).send("INVALID_SELECTION_DATA");
     }
 
@@ -412,22 +428,35 @@ export const paymentCallback = async (req, res) => {
         `[IPN] Payment ID mismatch. tran_id: ${tran_id}, ` +
         `DB payment: ${payment._id}, value_b payment: ${storedPaymentId}`
       );
-      payment.status = "failed";
-      await payment.save();
+      await Payment.findOneAndUpdate(
+        { _id: payment._id, status: "pending" },
+        { $set: { status: "failed" } }
+      );
       return res.status(200).send("PAYMENT_ID_MISMATCH");
     }
 
-    payment.gatewayValidationId = val_id;
-    payment.status              = "verified";
-    payment.verifiedAt          = new Date();
-    payment.pendingMonthlyIds   = monthlyIds;
-    payment.pendingExtraIds     = extraIds;
-    payment.pendingExtraAmounts = extraChargeAmounts;
-    await payment.save();
-
-    console.info(
-      `[IPN] Payment ${tran_id} verified by gateway — awaiting admin confirmation`
+    const verified = await Payment.findOneAndUpdate(
+      { _id: payment._id, status: "pending" },
+      {
+        $set: {
+          gatewayValidationId: val_id,
+          status:              "verified",
+          verifiedAt:          new Date(),
+          pendingMonthlyIds:   monthlyIds,
+          pendingExtraIds:     extraIds,
+          pendingExtraAmounts: extraChargeAmounts,
+        },
+      }
     );
+
+    if (verified) {
+      console.info(`[IPN] Payment ${tran_id} verified by gateway — awaiting admin confirmation`);
+    } else {
+      // Lost the race — payment moved off "pending" between our
+      // initial read and this write (e.g. an admin rejected it in
+      // the meantime). Correctly do nothing further.
+      console.info(`[IPN] Payment ${tran_id} was no longer "pending" at verification time — skipped`);
+    }
 
     return res.status(200).send("OK");
   } catch (error) {

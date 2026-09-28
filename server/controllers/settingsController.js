@@ -55,7 +55,6 @@ export const updateMonthlyFee = async (req, res) => {
   try {
     const { amount, reason, effectFrom } = req.body;
 
-    // Validation
     if (!amount || isNaN(amount) || Number(amount) < 1) {
       return res.status(400).json({
         success: false,
@@ -72,14 +71,38 @@ export const updateMonthlyFee = async (req, res) => {
 
     const previousFee = await getCurrentFee();
 
-    const record = await createFeeRecord({
-      amount:         Number(amount),
-      reason:         reason?.trim() || "",
-      createdBy:      req.clerkUserId,
-      effectFromNext: effectFrom !== "current", // default: next month
-    });
+    // ── Append-only conflict handling ──────────────────────────────────
+    // createFeeRecord() throws a specific error when a fee is already
+    // recorded for this effective date (see feeService.js — this is
+    // deliberate, FeeHistory is append-only). A genuine simultaneous
+    // submission from two admins can also hit the underlying unique
+    // index directly as a raw Mongo E11000 error. Both are a real
+    // business conflict (409), not a server failure (500) — the
+    // previous code collapsed both into a generic 500 and the admin
+    // never saw the actual, useful message.
+    let record;
+    try {
+      record = await createFeeRecord({
+        amount:         Number(amount),
+        reason:         reason?.trim() || "",
+        createdBy:      req.clerkUserId,
+        effectFromNext: effectFrom !== "current",
+      });
+    } catch (createError) {
+      const isDuplicateKey       = createError.code === 11000;
+      const isAppendOnlyConflict = createError.message?.includes("already recorded");
 
-    // Audit log — record what changed, from what to what, and when
+      if (isDuplicateKey || isAppendOnlyConflict) {
+        return res.status(409).json({
+          success: false,
+          message: isAppendOnlyConflict
+            ? createError.message
+            : "A fee change is already recorded for this effective date.",
+        });
+      }
+      throw createError;
+    }
+
     await AuditLog.create({
       action:      "FEE_CHANGED",
       performedBy: req.clerkUserId,

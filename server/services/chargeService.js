@@ -15,7 +15,8 @@ import MonthlyCharge   from "../models/MonthlyCharge.js";
 import AuditLog        from "../models/AuditLog.js";
 import { getFeeForMonth } from "./feeService.js";
 import Payment from "../models/Payment.js";
-import { applyCreditToMonthlyCharge } from "./creditService.js";
+
+import { reconcileMemberCredit } from "./creditService.js";   // was: applyCreditToMonthlyCharge
 
 // ─── createMonthlyChargesForMonth ─────────────────────────────────────────────
 // Creates one MonthlyCharge per member for the given month/year,
@@ -122,22 +123,23 @@ export const createMonthlyChargesForMonth = async ({
   // balance on every monthly run.
   try {
     const memberIdsWithCredit = await Payment.distinct("member", {
-  advanceAmount: { $gt: 0 },
-  status:        "completed",
-});
+      advanceAmount: { $gt: 0 },
+      status:        "completed",
+    });
 
     if (memberIdsWithCredit.length > 0) {
       const creditMemberSet = new Set(memberIdsWithCredit.map(String));
-      const chargesToCheck = insertResult.filter(
-        charge => creditMemberSet.has(String(charge.member))
-      );
+      const membersToReconcile = insertResult
+        .filter(charge => creditMemberSet.has(String(charge.member)))
+        .map(charge => String(charge.member));
+      const uniqueMemberIds = [...new Set(membersToReconcile)];
 
-      for (const charge of chargesToCheck) {
+      for (const memberId of uniqueMemberIds) {
         try {
-          await applyCreditToMonthlyCharge(charge.member, charge._id);
+          await reconcileMemberCredit(memberId);
         } catch (creditError) {
           console.error(
-            `[MonthlyCharge] Credit auto-apply failed for member ${charge.member}:`,
+            `[MonthlyCharge] Credit reconciliation failed for member ${memberId}:`,
             creditError.message
           );
         }

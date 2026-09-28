@@ -28,45 +28,54 @@ import mongoose from "mongoose";
 const paymentSchema = new mongoose.Schema(
   {
     member: {
-      type:     mongoose.Schema.Types.ObjectId,
-      ref:      "Member",
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Member",
       required: true,
     },
 
     // Total amount received from the gateway — verified by SSLCommerz
     amount: {
-      type:     Number,
+      type: Number,
       required: true,
-      min:      [1, "Payment amount must be at least 1 BDT"],
+      min: [1, "Payment amount must be at least 1 BDT"],
     },
 
     // Unique transaction ID — from SSLCommerz for gateway payments,
     // manually generated for admin-approved payments
     transactionId: {
-      type:     String,
+      type: String,
       required: true,
-      unique:   true,
-      trim:     true,
+      unique: true,
+      trim: true,
     },
 
-    // "pending"   → initiated, awaiting gateway confirmation
-    // "verified"  → gateway (IPN + validation API) confirmed money was
-    //               received — dues NOT yet marked Paid, member NOT yet
-    //               notified. Awaiting admin confirmation.
-    // "completed" → admin confirmed. Dues marked Paid, receipt issued,
-    //               member notified — via approvePayment.
-    // "failed"    → gateway reported failure
-    // "rejected"  → admin manually rejected (from "pending" or "verified")
+    // "pending"    → initiated, awaiting gateway confirmation
+    // "verified"   → gateway confirmed money was received — awaiting
+    //                admin confirmation
+    // "processing" → an admin has claimed this payment for confirmation;
+    //                a real, exclusive lock (see approvePayment) —
+    //                prevents two concurrent confirm clicks from both
+    //                proceeding to allocation
+    // "completed"  → admin confirmed. Dues marked Paid, receipt issued.
+    // "failed"     → gateway reported failure
+    // "rejected"   → admin manually rejected (from "pending" or "verified")
     status: {
-      type:    String,
-      enum:    ["pending", "verified", "completed", "failed", "rejected"],
+      type: String,
+      enum: [
+        "pending",
+        "verified",
+        "processing",
+        "completed",
+        "failed",
+        "rejected",
+      ],
       default: "pending",
     },
 
     // Payment method used
     gateway: {
-      type:    String,
-      enum:    ["sslcommerz", "manual"],
+      type: String,
+      enum: ["sslcommerz", "manual"],
       default: "sslcommerz",
     },
 
@@ -83,7 +92,7 @@ const paymentSchema = new mongoose.Schema(
     // Format: RCP-YYYY-NNNNNN (e.g. RCP-2025-000123)
     // Unique, sparse — null until confirmed.
     receiptNumber: {
-      type:   String,
+      type: String,
       unique: true,
       sparse: true,
     },
@@ -100,16 +109,20 @@ const paymentSchema = new mongoose.Schema(
     // The charge selection confirmed by the gateway at IPN time.
     // Stored here (not re-derived) so admin confirmation allocates
     // exactly what was actually paid for.
-    pendingMonthlyIds: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref:  "MonthlyCharge",
-    }],
-    pendingExtraIds: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref:  "ExtraCharge",
-    }],
+    pendingMonthlyIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "MonthlyCharge",
+      },
+    ],
+    pendingExtraIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ExtraCharge",
+      },
+    ],
     pendingExtraAmounts: {
-      type:    mongoose.Schema.Types.Mixed,
+      type: mongoose.Schema.Types.Mixed,
       default: {},
     },
 
@@ -127,9 +140,9 @@ const paymentSchema = new mongoose.Schema(
     },
 
     rejectedReason: {
-      type:    String,
+      type: String,
       default: "",
-      trim:    true,
+      trim: true,
     },
 
     // Clerk userId of admin who rejected (if applicable)
@@ -137,22 +150,33 @@ const paymentSchema = new mongoose.Schema(
       type: String,
     },
 
-  // The portion of `amount` that is banked as credit for future dues,
-// rather than tied to a specific selected charge. 0 for an ordinary
-// payment. A single payment can be PARTLY charges and PARTLY credit —
-// e.g. clearing this month's due while also prepaying two months ahead
-// — which is why this is a portion of the total, not an all-or-nothing
-// flag on the whole payment.
-advanceAmount: {
-  type:    Number,
-  default: 0,
-  min:     [0, "Advance amount cannot be negative"],
-},
-    
+    // The portion of `amount` that is banked as credit for future dues,
+    // rather than tied to a specific selected charge. 0 for an ordinary
+    // payment. A single payment can be PARTLY charges and PARTLY credit —
+    // e.g. clearing this month's due while also prepaying two months ahead
+    // — which is why this is a portion of the total, not an all-or-nothing
+    // flag on the whole payment.
+    advanceAmount: {
+      type: Number,
+      default: 0,
+      min: [0, "Advance amount cannot be negative"],
+      validate: {
+        validator: function (value) {
+          // 'this' is the document being validated — amount must already
+          // be set (it always is, both are set together at creation).
+          return value <= this.amount;
+        },
+        message: "Advance amount cannot exceed the total payment amount",
+      },
+    },
+
+     processingAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Common query: all payments for a member by status

@@ -1,4 +1,11 @@
 // server/services/adminDashboardService.js
+//
+// A monthly charge is either Unpaid or Paid — no partial state — so
+// "who owes how much on monthly dues" is a plain sum of Unpaid charge
+// amounts per member. Kept as a shared helper (getMonthlyDueByMemberMap)
+// so this calculation lives in exactly one place instead of being
+// duplicated across getCollectionMetrics, getOutstandingMembersList,
+// and getAllMembersWithDueStatus.
 
 import mongoose      from "mongoose";
 import Member        from "../models/Member.js";
@@ -6,26 +13,37 @@ import MonthlyCharge from "../models/MonthlyCharge.js";
 import ExtraCharge   from "../models/ExtraCharge.js";
 import Payment       from "../models/Payment.js";
 
-// ─── getCollectionMetrics ─────────────────────────────────────────────────────
+// ─── getMonthlyDueByMemberMap ──────────────────────────────────────────────
+
+const getMonthlyDueByMemberMap = async () => {
+  const agg = await MonthlyCharge.aggregate([
+    { $match: { status: "Unpaid" } },
+    { $group: { _id: "$member", total: { $sum: "$amount" } } },
+  ]);
+
+  const dueByMember = {};
+  for (const r of agg) {
+    dueByMember[String(r._id)] = r.total;
+  }
+  return dueByMember;
+};
+
+// ─── getCollectionMetrics ─────────────────────────────────────────────────
 
 export const getCollectionMetrics = async () => {
   const now              = new Date();
   const startOfToday     = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  // Run every independent query in parallel
   const [
     allTimeAgg,
     thisMonthAgg,
     todayAgg,
-    outstandingMonthlyAgg,
+    monthlyDueByMember,
     outstandingExtraAgg,
     totalMembersCount,
-    // Members-with-dues calculation done with .distinct() below —
-    // two lightweight queries instead of one heavy $lookup pipeline
-    unpaidMonthlyMembers,
     unpaidExtraMembers,
-    allMemberIds,   
+    allMemberIds,
   ] = await Promise.all([
 
     Payment.aggregate([
@@ -43,62 +61,46 @@ export const getCollectionMetrics = async () => {
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]),
 
-    MonthlyCharge.aggregate([
-      { $match: { status: "Unpaid" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]),
+    getMonthlyDueByMemberMap(),
 
     ExtraCharge.aggregate([
       { $match: { status: "Unpaid" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]),
-    // "Total Members" now correctly means active members only.
+
     Member.countDocuments({ status: "active" }),
 
-    // Returns array of ObjectIds — one per member with an unpaid monthly charge
-    MonthlyCharge.distinct("member", { status: "Unpaid" }),
-
-    // Returns array of ObjectIds — one per member with an unpaid extra charge
     ExtraCharge.distinct("member", { status: "Unpaid" }),
 
-    // Only active member IDs — this is what makes membersWithDuesCount
-    // below correctly exclude removed members, without needing a
-    // separate filter step.
     Member.distinct("_id", { status: "active" }),
   ]);
 
-  
- // Build a set of real member ID strings for O(1) lookup
   const realMemberIds = new Set(allMemberIds.map(String));
 
-  // Union of all members who have unpaid charges —
-  // filtered to only IDs that exist in the Member collection right now.
-  // This excludes orphan charge records from deleted test members.
   const membersWithDuesSet = new Set([
-    ...unpaidMonthlyMembers.map(String).filter(id => realMemberIds.has(id)),
+    ...Object.keys(monthlyDueByMember).filter(id => realMemberIds.has(id)),
     ...unpaidExtraMembers.map(String).filter(id => realMemberIds.has(id)),
   ]);
 
- const membersWithDuesCount = membersWithDuesSet.size;
+  const membersWithDuesCount = membersWithDuesSet.size;
 
-  const totalOutstanding =
-    (outstandingMonthlyAgg[0]?.total || 0) +
-    (outstandingExtraAgg[0]?.total   || 0);
+  const outstandingMonthlyTotal = Object.values(monthlyDueByMember).reduce((s, v) => s + v, 0);
+  const totalOutstanding = outstandingMonthlyTotal + (outstandingExtraAgg[0]?.total || 0);
 
-return {
+  return {
     totalCollection:     allTimeAgg[0]?.total     || 0,
     thisMonthCollection: thisMonthAgg[0]?.total    || 0,
     todayCollection:     todayAgg[0]?.total        || 0,
     totalOutstanding,
-    outstandingMonthly:  outstandingMonthlyAgg[0]?.total || 0,
-    outstandingExtra:    outstandingExtraAgg[0]?.total   || 0,
+    outstandingMonthly:  outstandingMonthlyTotal,
+    outstandingExtra:    outstandingExtraAgg[0]?.total || 0,
     membersWithDues:     membersWithDuesCount,
     membersPaid:         totalMembersCount - membersWithDuesCount,
     totalMembers:        totalMembersCount,
   };
 };
 
-// ─── getMonthlyCollectionTrend ────────────────────────────────────────────────
+// ─── getMonthlyCollectionTrend ─── (unchanged)
 
 export const getMonthlyCollectionTrend = async (months = 12) => {
   const now    = new Date();
@@ -116,7 +118,6 @@ export const getMonthlyCollectionTrend = async (months = 12) => {
     { $sort: { "_id.year": 1, "_id.month": 1 } },
   ]);
 
-  // Fill every month in the range — even months with zero payments
   const result = [];
   for (let i = months - 1; i >= 0; i--) {
     const targetDate  = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -138,22 +139,15 @@ export const getMonthlyCollectionTrend = async (months = 12) => {
   return result;
 };
 
-// ─── getOutstandingMembersList ────────────────────────────────────────────────
+// ─── getOutstandingMembersList ────────────────────────────────────────────
 
 export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) => {
-  const [monthlyDuePerMember, extraDuePerMember, activeMemberIds] = await Promise.all([
-    MonthlyCharge.aggregate([
-      { $match: { status: "Unpaid" } },
-      { $group: { _id: "$member", monthlyDue: { $sum: "$amount" } } },
-    ]),
+  const [monthlyDueByMember, extraDuePerMember, activeMemberIds] = await Promise.all([
+    getMonthlyDueByMemberMap(),
     ExtraCharge.aggregate([
       { $match: { status: "Unpaid" } },
       { $group: { _id: "$member", extraDue: { $sum: "$amount" } } },
     ]),
-    // A removed member's unpaid charges are preserved (historical
-    // record), but they should never show up in the live "who still
-    // needs to pay" collections list — this set is used to filter
-    // them out below.
     Member.distinct("_id", { status: "active" }),
   ]);
 
@@ -161,11 +155,9 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
 
   const dueMap = {};
 
-
-    for (const r of monthlyDuePerMember) {
-    const id = String(r._id);
-    if (!activeIdSet.has(id)) continue;
-    dueMap[id] = { ...dueMap[id], monthlyDue: r.monthlyDue };
+  for (const [memberId, monthlyDue] of Object.entries(monthlyDueByMember)) {
+    if (!activeIdSet.has(memberId)) continue;
+    dueMap[memberId] = { ...dueMap[memberId], monthlyDue };
   }
   for (const r of extraDuePerMember) {
     const id = String(r._id);
@@ -182,8 +174,8 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
     }))
     .sort((a, b) => b.totalDue - a.totalDue);
 
-  const total      = sorted.length;
-  const pageItems  = sorted.slice((page - 1) * limit, (page - 1) * limit + limit);
+  const total     = sorted.length;
+  const pageItems = sorted.slice((page - 1) * limit, (page - 1) * limit + limit);
 
   const memberIds     = pageItems.map(item => new mongoose.Types.ObjectId(item.memberId));
   const memberDetails = await Member
@@ -202,7 +194,7 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
   };
 };
 
-// ─── getExtraChargeAnalytics ──────────────────────────────────────────────────
+// ─── getExtraChargeAnalytics ─── (unchanged)
 
 export const getExtraChargeAnalytics = async () => {
   const analytics = await ExtraCharge.aggregate([
@@ -236,7 +228,7 @@ export const getExtraChargeAnalytics = async () => {
   }));
 };
 
-// ─── getRecentPayments ────────────────────────────────────────────────────────
+// ─── getRecentPayments / getPendingPaymentsCount ─── (unchanged)
 
 export const getRecentPayments = async (limit = 10) => {
   return Payment
@@ -247,40 +239,26 @@ export const getRecentPayments = async (limit = 10) => {
     .lean();
 };
 
-// ─── getPendingPaymentsCount ──────────────────────────────────────────────────
-
 export const getPendingPaymentsCount = async () => {
   return Payment.countDocuments({ status: "pending", gateway: "sslcommerz" });
 };
 
-
+// ─── getAllMembersWithDueStatus ────────────────────────────────────────────
 
 export const getAllMembersWithDueStatus = async () => {
-  const [allMembers, monthlyDuePerMember, extraDuePerMember] = await Promise.all([
+  const [allMembers, monthlyMap, extraDuePerMember] = await Promise.all([
     Member.find({ status: "active" }).select("_id").lean(),
-
-    MonthlyCharge.aggregate([
-      { $match: { status: "Unpaid" } },
-      { $group: { _id: "$member", monthlyDue: { $sum: "$amount" } } },
-    ]),
-
+    getMonthlyDueByMemberMap(),
     ExtraCharge.aggregate([
       { $match: { status: "Unpaid" } },
       { $group: { _id: "$member", extraDue: { $sum: "$amount" } } },
     ]),
   ]);
 
-  const monthlyMap = Object.fromEntries(
-    monthlyDuePerMember.map(r => [String(r._id), r.monthlyDue])
-  );
   const extraMap = Object.fromEntries(
     extraDuePerMember.map(r => [String(r._id), r.extraDue])
   );
 
-  // Start from EVERY member, not just members that appear in the
-  // unpaid-charges aggregations — this is the key difference from
-  // getOutstandingMembersList, which starts from the dueMap and therefore
-  // can only ever contain members who owe something.
   return allMembers.map(({ _id }) => {
     const memberId   = String(_id);
     const monthlyDue = monthlyMap[memberId] || 0;

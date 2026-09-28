@@ -8,49 +8,74 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
-import { CheckCircle2, XCircle, AlertCircle, Loader2, RefreshCw } from "lucide-react";
-import { Button }       from "@/components/ui/button";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAppContext } from "../../../context/AppContext";
 
 const MONTH_NAMES = [
-  "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  "",
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
 export default function PendingPayments({ onCountChange }) {
   const { axios, getToken } = useAppContext();
 
-  const [payments,        setPayments]        = useState([]);
-  const [loading,         setLoading]         = useState(true);
-  const [refreshing,      setRefreshing]      = useState(false);
-  const [rejectDialog,    setRejectDialog]    = useState(null); // { paymentId, memberName }
-  const [rejectReason,    setRejectReason]    = useState("");
-  const [rejecting,       setRejecting]       = useState(false);
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [rejectDialog, setRejectDialog] = useState(null); // { paymentId, memberName }
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
-  const fetchPending = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    else         setRefreshing(true);
-    try {
-      const token = await getToken();
-      const { data } = await axios.get("/api/payments/pending", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (data.success) {
-        setPayments(data.payments);
-        onCountChange?.(data.payments.length);
+  const fetchPending = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      else setRefreshing(true);
+      try {
+        const token = await getToken();
+        const { data } = await axios.get("/api/payments/pending", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (data.success) {
+          setPayments(data.payments);
+          onCountChange?.(data.payments.length);
+        }
+      } catch {
+        if (!silent) toast.error("Failed to load pending payments");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch {
-      if (!silent) toast.error("Failed to load pending payments");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [axios, getToken, onCountChange]);
+    },
+    [axios, getToken, onCountChange],
+  );
 
   useEffect(() => {
     fetchPending(false);
@@ -60,9 +85,9 @@ export default function PendingPayments({ onCountChange }) {
 
   const openReject = (payment) => {
     setRejectDialog({
-      paymentId:  payment._id,
+      paymentId: payment._id,
       memberName: payment.member?.name || "this member",
-      amount:     payment.amount,
+      amount: payment.amount,
     });
     setRejectReason("");
   };
@@ -78,11 +103,14 @@ export default function PendingPayments({ onCountChange }) {
       const { data } = await axios.put(
         `/api/payments/${rejectDialog.paymentId}/reject`,
         { rejectedReason: rejectReason.trim() },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } },
       );
       if (data.success) {
-        setPayments(prev => prev.filter(p => p._id !== rejectDialog.paymentId));
-        onCountChange?.(payments.length - 1);
+        setPayments((prev) => {
+          const next = prev.filter((p) => p._id !== rejectDialog.paymentId);
+          onCountChange?.(next.length);
+          return next;
+        });
         toast.success("Payment rejected");
         setRejectDialog(null);
       } else {
@@ -90,6 +118,7 @@ export default function PendingPayments({ onCountChange }) {
       }
     } catch (e) {
       toast.error(e.response?.data?.message || "Error rejecting payment");
+      fetchPending(true);
     } finally {
       setRejecting(false);
     }
@@ -98,7 +127,7 @@ export default function PendingPayments({ onCountChange }) {
   if (loading) {
     return (
       <div className="mt-6 space-y-3">
-        {[1, 2, 3].map(i => (
+        {[1, 2, 3].map((i) => (
           <div key={i} className="h-20 rounded-xl bg-gray-100 animate-pulse" />
         ))}
       </div>
@@ -125,19 +154,26 @@ export default function PendingPayments({ onCountChange }) {
           disabled={refreshing}
           className="gap-1.5"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
 
-   {/* Info banner */}
-      <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200
-        rounded-xl mb-4 text-sm text-blue-700">
+      {/* Info banner */}
+      <div
+        className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200
+        rounded-xl mb-4 text-sm text-blue-700"
+      >
         <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5 text-blue-500" />
         <p>
           These are payment sessions still awaiting a response from the gateway.
-          They normally move to the <strong>Verified Payments</strong> tab within
-          moments. Use Reject only for a session that appears permanently stuck.
+          They normally move to the <strong>Verified Payments</strong> tab
+          within moments. Use Reject only for a session that appears permanently
+          stuck — and check the SSLCommerz merchant panel for this transaction
+          first, because rejecting a payment the gateway already collected is
+          not automatically reversed.
         </p>
       </div>
 
@@ -150,7 +186,7 @@ export default function PendingPayments({ onCountChange }) {
       ) : (
         <div className="space-y-3">
           <AnimatePresence>
-            {payments.map(payment => (
+            {payments.map((payment) => (
               <motion.div
                 key={payment._id}
                 layout
@@ -196,21 +232,23 @@ export default function PendingPayments({ onCountChange }) {
       {/* Reject dialog */}
       <AlertDialog
         open={!!rejectDialog}
-        onOpenChange={open => { if (!open) setRejectDialog(null); }}
+        onOpenChange={(open) => {
+          if (!open) setRejectDialog(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Payment</AlertDialogTitle>
             <AlertDialogDescription>
               Reject ৳{rejectDialog?.amount?.toLocaleString()} payment from{" "}
-              <strong>{rejectDialog?.memberName}</strong>?
-              A rejection reason is required and will be shown to the member.
+              <strong>{rejectDialog?.memberName}</strong>? A rejection reason is
+              required and will be shown to the member.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="px-6 pb-2">
             <textarea
               value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
+              onChange={(e) => setRejectReason(e.target.value)}
               placeholder="Enter rejection reason (required)..."
               className="w-full p-3 border border-gray-300 rounded-lg text-sm
                 focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"

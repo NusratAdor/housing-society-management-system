@@ -81,4 +81,9 @@ paymentAllocationSchema.index({ member: 1, allocatedAt: -1 });
 // Look up which payment cleared a specific charge — used for audit
 paymentAllocationSchema.index({ chargeId: 1 });
 
+paymentAllocationSchema.index(
+  { payment: 1, chargeType: 1, chargeId: 1 },
+  { unique: true }
+);
+
 export default mongoose.model("PaymentAllocation", paymentAllocationSchema);

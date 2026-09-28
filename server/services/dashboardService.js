@@ -1,19 +1,11 @@
 // server/services/dashboardService.js
 //
 // Aggregates all data the member dashboard needs into single service calls.
+// This powers /api/payments/me/breakdown.
 //
-// CHANGE (this pass):
-//   - Opening Balance split logic removed entirely (partialPaymentAllowed
-//     no longer exists on ExtraCharge — that feature has been replaced by
-//     real backdated MonthlyCharge generation at registration time).
-//   - Added paidThroughMonth — a computed (never stored) indicator of
-//     "dues current through <month/year>", derived the same way for every
-//     member: the most recent month in an unbroken PAID streak counting
-//     backward from the current month. null if the member has no paid
-//     months yet, or if the current/most-recent month itself is unpaid.
+// A monthly charge is either Unpaid or Paid — no partial state.
 
 import mongoose          from "mongoose";
-import Member            from "../models/Member.js";
 import MonthlyCharge     from "../models/MonthlyCharge.js";
 import ExtraCharge       from "../models/ExtraCharge.js";
 import Payment           from "../models/Payment.js";
@@ -27,12 +19,8 @@ const MONTH_NAMES = [
 ];
 
 // ─── computePaidThroughMonth ───────────────────────────────────────────────
-// Walks the member's monthly charge history backward from the newest
-// month, counting how far back an unbroken "Paid" streak goes. Returns
-// { month, year, label } for the oldest month in that streak's most
-// recent edge (i.e. the newest fully-paid point), or null if there is no
-// such streak (e.g. the most recent month on record is unpaid, or there
-// are no monthly charges at all yet).
+// Checks whether the single newest month on record is fully "Paid" — if
+// so, dues are current through that month. Returns null otherwise.
 
 const computePaidThroughMonth = (last12MonthsDescending) => {
   if (last12MonthsDescending.length === 0) return null;
@@ -40,10 +28,6 @@ const computePaidThroughMonth = (last12MonthsDescending) => {
   const newest = last12MonthsDescending[0];
   if (newest.status !== "Paid") return null;
 
-  // The streak by definition starts at the newest record — if it's
-  // Paid, dues are current through that month. No need to walk the
-  // list further; walking backward and reassigning was the bug that
-  // reported the OLDEST month in the streak instead of the newest.
   return {
     month: newest.month,
     year:  newest.year,
@@ -51,7 +35,7 @@ const computePaidThroughMonth = (last12MonthsDescending) => {
   };
 };
 
-// ─── getMemberFullDashboardData ───────────────────────────────────────────────
+// ─── getMemberFullDashboardData ───────────────────────────────────────────
 
 export const getMemberFullDashboardData = async (memberId) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
@@ -106,8 +90,8 @@ export const getMemberFullDashboardData = async (memberId) => {
       .select("_id amount createdAt transactionId")
       .lean(),
 
-    Payment
-      .findOne({ member: memberObjectId, status: "verified" })
+        Payment
+      .findOne({ member: memberObjectId, status: { $in: ["verified", "processing"] } })
       .sort({ verifiedAt: -1 })
       .select("_id amount verifiedAt transactionId")
       .lean(),
@@ -150,9 +134,9 @@ export const getMemberFullDashboardData = async (memberId) => {
 
     pendingPayment: pendingPayment
       ? {
-          paymentId:  String(pendingPayment._id),
-          amount:     pendingPayment.amount,
-          createdAt:  pendingPayment.createdAt,
+          paymentId: String(pendingPayment._id),
+          amount:    pendingPayment.amount,
+          createdAt: pendingPayment.createdAt,
         }
       : null,
 
@@ -173,7 +157,7 @@ export const getMemberFullDashboardData = async (memberId) => {
   };
 };
 
-// ─── getMemberTransactionHistory ─────────────────────────────────────────────
+// ─── getMemberTransactionHistory ─────────────────────────────────────────
 // UNCHANGED.
 
 export const getMemberTransactionHistory = async (memberId, limit = 24) => {

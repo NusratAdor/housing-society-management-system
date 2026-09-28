@@ -114,8 +114,10 @@ const memberSchema = new mongoose.Schema(
       default: null,
     },
 
-
-
+ creditVersion: {
+      type:    Number,
+      default: 0,
+    },
 
 
   },

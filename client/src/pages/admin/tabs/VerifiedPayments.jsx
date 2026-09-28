@@ -68,7 +68,7 @@ export default function VerifiedPayments({ onCountChange }) {
         setPayments(prev => prev.filter(p => p._id !== payment._id));
         onCountChange?.(payments.length - 1);
         toast.success(data.message || "Payment confirmed");
-        if (!data.emailSent) {
+        if (!data.emailSent && !data.alreadyProcessed) {
           toast(
             "Confirmation email could not be sent — you may want to notify the member directly.",
             { icon: "⚠️", duration: 6000 }
@@ -77,8 +77,9 @@ export default function VerifiedPayments({ onCountChange }) {
       } else {
         toast.error(data.message || "Failed to confirm payment");
       }
-    } catch (e) {
+   } catch (e) {
       toast.error(e.response?.data?.message || "Error confirming payment");
+      fetchVerified(true);   // list may be stale, e.g. another admin already confirmed it
     } finally {
       setConfirming(null);
     }
@@ -116,6 +117,7 @@ export default function VerifiedPayments({ onCountChange }) {
       }
     } catch (e) {
       toast.error(e.response?.data?.message || "Error rejecting payment");
+      fetchVerified(true);   
     } finally {
       setRejecting(false);
     }

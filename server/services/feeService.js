@@ -68,13 +68,16 @@ export const getFeeForMonth = async (month, year) => {
 // Equivalent to getFeeForMonth(currentMonth, currentYear) but reads
 // the latest record directly without needing a target date.
 
+// server/services/feeService.js — only getCurrentFee changes
+
 export const getCurrentFee = async () => {
+  const now = new Date();
+
   const record = await FeeHistory
-    .findOne()
+    .findOne({ effectiveFrom: { $lte: now } })
     .sort({ effectiveFrom: -1 })
     .lean();
 
-    
   if (!record) {
     throw new Error(
       "No fee has been configured yet. Run scripts/seedInitialFee.js before opening the site to members."
@@ -110,6 +113,8 @@ export const getFeeHistory = async () => {
 //   Exception: admin can override to "current month" when setting the fee
 //   for the first time, or when correcting an error in the same month.
 
+// server/services/feeService.js — only createFeeRecord changes
+
 export const createFeeRecord = async ({
   amount,
   reason,
@@ -120,24 +125,23 @@ export const createFeeRecord = async ({
 
   let effectiveFrom;
   if (effectFromNext) {
-    // First day of next month at midnight UTC
     effectiveFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
   } else {
-    // First day of current month at midnight UTC
     effectiveFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   }
 
-  // Check if a record already exists for this effective date
-  // (prevents duplicate effective dates which would make fee lookup ambiguous)
+  // CHANGE (this pass): a fee record for this effective date is now
+  // REJECTED, not silently overwritten — matching the "append-only,
+  // never updated" guarantee this file's header comment already
+  // promised but the old code didn't actually keep.
   const existing = await FeeHistory.findOne({ effectiveFrom });
   if (existing) {
-    // Update the existing record for this month rather than creating a duplicate
-    // This handles the case where admin sets the fee twice in the same month
-    existing.amount    = amount;
-    existing.createdBy = createdBy;
-    existing.reason    = reason || "";
-    await existing.save();
-    return existing;
+    throw new Error(
+      `A fee change is already recorded effective ${effectiveFrom.toISOString().slice(0, 10)} ` +
+      `(৳${existing.amount}). FeeHistory is append-only. To correct a mistake, set the ` +
+      `corrected amount effective next month, or make a deliberate, manually-audited ` +
+      `correction directly if this one truly needs to change.`
+    );
   }
 
   const record = await FeeHistory.create({
@@ -149,3 +153,6 @@ export const createFeeRecord = async ({
 
   return record;
 };
+
+
+

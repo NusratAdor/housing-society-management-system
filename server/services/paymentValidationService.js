@@ -1,21 +1,23 @@
 // server/services/paymentValidationService.js
 //
 // Validates a payment selection before creating a gateway session.
-// This is security-critical code — it prevents:
-//   1. Members paying arbitrary amounts
-//   2. Members paying months out of order (skipping older dues)
-//   3. Members paying charges that belong to other members
-//   4. Members paying charges that are already paid
-//   5. Empty payment attempts (unless offset by a valid advance amount)
-//   6. Members paying a partial amount on a charge that doesn't allow it,
-//      or a partial amount that is invalid or exceeds the outstanding balance
-//   7. Members prepaying ahead while real unpaid months still exist — the
-//      frontend disables this in the UI, but it is NEVER trusted alone;
-//      this is the actual, authoritative enforcement of that rule.
+// This is security-critical code.
 //
-// Why validation lives in a service and not the controller:
-//   The IPN callback also needs to re-validate before allocating.
-//   One validation function, two callers — no duplication and no divergence.
+// CHANGE (this pass):
+//   1. Removed the "must clear all unpaid months before any advance"
+//      rule. That rule existed to stop banked credit from skipping
+//      ahead of an older unpaid month — but reconcileMemberCredit()
+//      (creditService.js) already enforces that guarantee itself,
+//      strictly oldest-first and all-or-nothing, no matter when or how
+//      credit arrives. With that enforcement in place at the point
+//      credit is actually APPLIED, restricting it at the point credit
+//      is DEPOSITED is redundant and blocks a legitimate case: a
+//      member topping up existing insufficient credit (e.g. ৳800
+//      banked, adds ৳200) so their oldest outstanding month can finally
+//      be fully covered.
+//   2. Added explicit numeric validation for advanceAmount — no longer
+//      silently coerces invalid input to 0.
+//   3. Added explicit duplicate-ID rejection for both selection arrays.
 
 import mongoose      from "mongoose";
 import MonthlyCharge from "../models/MonthlyCharge.js";
@@ -28,10 +30,24 @@ export const validatePaymentSelection = async ({
   partialAmounts     = {},
   advanceAmount      = 0,
 }) => {
+  // ── Advance amount: strict numeric validation ──────────────────────────
+  if (advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== 0) {
+    if (!Number.isFinite(Number(advanceAmount))) {
+      throw new Error("Advance amount must be a valid number");
+    }
+  }
   const advanceAmt = Number(advanceAmount) || 0;
 
   if (advanceAmt < 0) {
     throw new Error("Advance amount cannot be negative");
+  }
+
+  // ── Reject duplicate IDs outright — financial input, no ambiguity allowed
+  if (new Set(selectedMonthlyIds.map(String)).size !== selectedMonthlyIds.length) {
+    throw new Error("Duplicate monthly charge selected");
+  }
+  if (new Set(selectedExtraIds.map(String)).size !== selectedExtraIds.length) {
+    throw new Error("Duplicate extra charge selected");
   }
 
   const hasChargeSelection = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
@@ -42,16 +58,12 @@ export const validatePaymentSelection = async ({
 
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
 
-  // Fetched unconditionally (not just when selectedMonthlyIds.length > 0)
-  // because it's also needed to enforce the "all real dues must be
-  // covered before prepaying ahead" rule below, regardless of whether
-  // any real months were selected at all.
   const allUnpaidMonthly = await MonthlyCharge
     .find({ member: memberObjectId, status: "Unpaid" })
     .sort({ year: 1, month: 1 })
     .lean();
 
-  // ── Validate monthly charge selection ────────────────────────────────────
+  // ── Validate monthly charge selection ────────────────────────────────
   let selectedMonthly = [];
 
   if (selectedMonthlyIds.length > 0) {
@@ -96,15 +108,12 @@ export const validatePaymentSelection = async ({
     selectedMonthly = allUnpaidMonthly.slice(0, selectedMonthlyIds.length);
   }
 
-  // ── Prepay-ahead requires every real unpaid month to be covered ──────────
-  // Mirrors the disabled dropdown in PaymentSection.jsx, but this is the
-  // actual enforcement point — the client-side gate is only a convenience,
-  // never a security boundary.
-  if (advanceAmt > 0 && selectedMonthlyIds.length < allUnpaidMonthly.length) {
-    throw new Error("Please clear all unpaid months before prepaying ahead");
-  }
+  // NOTE: the old "advanceAmt > 0 requires all unpaid months cleared"
+  // check has been intentionally removed — see file header comment.
+  // Order-safety is now guaranteed at credit-application time by
+  // reconcileMemberCredit(), not at deposit time here.
 
-  // ── Validate extra charge selection ──────────────────────────────────────
+  // ── Validate extra charge selection ─────────────────────────────────────
   let selectedExtra = [];
 
   if (selectedExtraIds.length > 0) {
@@ -127,7 +136,7 @@ export const validatePaymentSelection = async ({
     }
   }
 
-  // ── Resolve the actual amount being collected per extra charge ───────────
+  // ── Extra charges: full amount only ─────────────────────────────────────
   const partialKeys = Object.keys(partialAmounts);
   for (const key of partialKeys) {
     if (!selectedExtraIds.map(String).includes(String(key))) {
@@ -139,33 +148,21 @@ export const validatePaymentSelection = async ({
   for (const charge of selectedExtra) {
     const cid = String(charge._id);
     if (Object.prototype.hasOwnProperty.call(partialAmounts, cid)) {
-      if (!charge.partialPaymentAllowed) {
-        throw new Error(`"${charge.label}" does not support partial payment`);
-      }
-      const requested = Number(partialAmounts[cid]);
-      if (!Number.isFinite(requested) || requested <= 0) {
-        throw new Error(`Invalid partial payment amount for "${charge.label}"`);
-      }
-      if (requested > charge.amount) {
-        throw new Error(
-          `Partial payment for "${charge.label}" cannot exceed the outstanding ৳${charge.amount}`
-        );
-      }
-      extraChargeAmounts[cid] = Math.round(requested);
-    } else {
-      extraChargeAmounts[cid] = charge.amount;
+      throw new Error(`"${charge.label}" does not support partial payment`);
     }
+    extraChargeAmounts[cid] = charge.amount;
   }
 
-  // ── Compute verified total from database records ──────────────────────────
+  // ── Compute verified total from database records ────────────────────────
   const totalAmount =
     selectedMonthly.reduce((sum, c) => sum + c.amount, 0) +
     Object.values(extraChargeAmounts).reduce((sum, amt) => sum + amt, 0) +
     advanceAmt;
 
-  if (totalAmount < 1) {
+   if (totalAmount < 1) {
     throw new Error("Computed payment amount must be at least 1 BDT");
   }
+
 
   return {
     totalAmount,
