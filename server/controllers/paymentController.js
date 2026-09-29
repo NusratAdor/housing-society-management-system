@@ -238,24 +238,20 @@ export const createPaymentSession = async (req, res) => {
     }
 
     const tranId = `TX-${Date.now()}-${String(member._id).slice(-6)}`;
+payment = await Payment.create({
+  member:              member._id,
+  amount:              totalAmount,
+  advanceAmount:       verifiedAdvanceAmount,
+  transactionId:       tranId,
+  status:              "pending",
+  gateway:              "sslcommerz",
 
-    payment = await Payment.create({
-      member:        member._id,
-      amount:        totalAmount,
-      advanceAmount: verifiedAdvanceAmount,
-      transactionId: tranId,
-      status:        "pending",
-      gateway:       "sslcommerz",
-    });
+  pendingMonthlyIds:   selectedMonthly.map(c => c._id),
+  pendingExtraIds:     selectedExtra.map(c => c._id),
+  pendingExtraAmounts: extraChargeAmounts,
+});
 
-    const selectionPayload = Buffer.from(
-      JSON.stringify({
-        paymentId:          String(payment._id),
-        selectedMonthlyIds: selectedMonthly.map(c => String(c._id)),
-        selectedExtraIds:   selectedExtra.map(c => String(c._id)),
-        extraChargeAmounts,
-      })
-    ).toString("base64");
+
 
     const isLive = process.env.SSLCOMMERZ_IS_LIVE === "true";
     const sslGatewayUrl = isLive
@@ -264,30 +260,31 @@ export const createPaymentSession = async (req, res) => {
 
     const BACKEND = process.env.BACKEND_URL;
 
-    const fields = [
-      `store_id=${storeId}`,
-      `store_passwd=${encodeURIComponent(storePass)}`,
-      `total_amount=${totalAmount.toFixed(2)}`,
-      `currency=BDT`,
-      `tran_id=${tranId}`,
-      `success_url=${BACKEND}/payment/success`,
-      `fail_url=${BACKEND}/payment/failed`,
-      `cancel_url=${BACKEND}/payment/cancel`,
-      `ipn_url=${BACKEND}/api/payments/callback`,
-      `product_name=Society+Maintenance+Dues`,
-      `product_category=Membership`,
-      `product_profile=general`,
-      `shipping_method=NO`,
-      `num_of_item=${Math.max(selectedMonthly.length + selectedExtra.length, 1)}`,
-      `cus_name=${encodeURIComponent(member.name)}`,
-      `cus_email=${encodeURIComponent(member.email)}`,
-      `cus_phone=${encodeURIComponent(member.phone || "")}`,
-      `cus_add1=${encodeURIComponent(member.address || "Dhaka")}`,
-      `cus_city=Dhaka`,
-      `cus_country=Bangladesh`,
-      `value_a=${req.clerkUserId}`,
-      `value_b=${encodeURIComponent(selectionPayload)}`,
-    ].join("&");
+ const fields = [
+  `store_id=${storeId}`,
+  `store_passwd=${encodeURIComponent(storePass)}`,
+  `total_amount=${totalAmount.toFixed(2)}`,
+  `currency=BDT`,
+  `tran_id=${tranId}`,
+  `success_url=${BACKEND}/payment/success`,
+  `fail_url=${BACKEND}/payment/failed`,
+  `cancel_url=${BACKEND}/payment/cancel`,
+  `ipn_url=${BACKEND}/api/payments/callback`,
+  `product_name=Society+Maintenance+Dues`,
+  `product_category=Membership`,
+  `product_profile=general`,
+  `shipping_method=NO`,
+  `num_of_item=${Math.max(
+    selectedMonthly.length + selectedExtra.length,
+    1
+  )}`,
+  `cus_name=${encodeURIComponent(member.name)}`,
+  `cus_email=${encodeURIComponent(member.email)}`,
+  `cus_phone=${encodeURIComponent(member.phone || "")}`,
+  `cus_add1=${encodeURIComponent(member.address || "Dhaka")}`,
+  `cus_city=Dhaka`,
+  `cus_country=Bangladesh`,
+].join("&");
 
     const sslResponse = await axiosLib.post(
       sslGatewayUrl,
@@ -403,51 +400,20 @@ export const paymentCallback = async (req, res) => {
       return res.status(200).send("VALIDATION_FAILED");
     }
 
-    let selectionData;
-    try {
-      const decoded = Buffer.from(value_b || "", "base64").toString("utf8");
-      selectionData = JSON.parse(decoded || "{}");
-    } catch {
-      console.error(`[IPN] Could not parse value_b for tran_id ${tran_id}:`, value_b);
-      await Payment.findOneAndUpdate(
-        { _id: payment._id, status: "pending" },
-        { $set: { status: "failed" } }
-      );
-      return res.status(200).send("INVALID_SELECTION_DATA");
-    }
 
-    const {
-      paymentId:          storedPaymentId,
-      selectedMonthlyIds: monthlyIds = [],
-      selectedExtraIds:   extraIds   = [],
-      extraChargeAmounts  = {},
-    } = selectionData;
 
-    if (String(payment._id) !== String(storedPaymentId)) {
-      console.error(
-        `[IPN] Payment ID mismatch. tran_id: ${tran_id}, ` +
-        `DB payment: ${payment._id}, value_b payment: ${storedPaymentId}`
-      );
-      await Payment.findOneAndUpdate(
-        { _id: payment._id, status: "pending" },
-        { $set: { status: "failed" } }
-      );
-      return res.status(200).send("PAYMENT_ID_MISMATCH");
-    }
 
-    const verified = await Payment.findOneAndUpdate(
-      { _id: payment._id, status: "pending" },
-      {
-        $set: {
-          gatewayValidationId: val_id,
-          status:              "verified",
-          verifiedAt:          new Date(),
-          pendingMonthlyIds:   monthlyIds,
-          pendingExtraIds:     extraIds,
-          pendingExtraAmounts: extraChargeAmounts,
-        },
-      }
-    );
+  const verified = await Payment.findOneAndUpdate(
+  { _id: payment._id, status: "pending" },
+  {
+    $set: {
+      gatewayValidationId: val_id,
+      status: "verified",
+      verifiedAt: new Date(),
+    },
+  },
+  { new: true }
+);
 
     if (verified) {
       console.info(`[IPN] Payment ${tran_id} verified by gateway — awaiting admin confirmation`);
