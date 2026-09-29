@@ -9,45 +9,59 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
-import { CheckCircle2, XCircle, ShieldCheck, Loader2, RefreshCw } from "lucide-react";
+import {
+  CheckCircle2,
+  XCircle,
+  ShieldCheck,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAppContext } from "../../../context/AppContext";
 
 export default function VerifiedPayments({ onCountChange }) {
   const { axios, getToken } = useAppContext();
 
-  const [payments,     setPayments]     = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [refreshing,   setRefreshing]   = useState(false);
-  const [confirming,   setConfirming]   = useState(null); // paymentId
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [confirming, setConfirming] = useState(null); // paymentId
   const [rejectDialog, setRejectDialog] = useState(null); // { paymentId, memberName, amount }
   const [rejectReason, setRejectReason] = useState("");
-  const [rejecting,    setRejecting]    = useState(false);
+  const [rejecting, setRejecting] = useState(false);
 
-  const fetchVerified = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    else         setRefreshing(true);
-    try {
-      const token = await getToken();
-      const { data } = await axios.get("/api/payments/verified", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (data.success) {
-        setPayments(data.payments);
-        onCountChange?.(data.payments.length);
+  const fetchVerified = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      else setRefreshing(true);
+      try {
+        const token = await getToken();
+        const { data } = await axios.get("/api/payments/verified", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (data.success) {
+          setPayments(data.payments);
+          onCountChange?.(data.payments.length);
+        }
+      } catch {
+        if (!silent) toast.error("Failed to load verified payments");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch {
-      if (!silent) toast.error("Failed to load verified payments");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [axios, getToken, onCountChange]);
+    },
+    [axios, getToken, onCountChange],
+  );
 
   useEffect(() => {
     fetchVerified(false);
@@ -62,24 +76,27 @@ export default function VerifiedPayments({ onCountChange }) {
       const { data } = await axios.put(
         `/api/payments/${payment._id}/confirm`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } },
       );
       if (data.success) {
-        setPayments(prev => prev.filter(p => p._id !== payment._id));
-        onCountChange?.(payments.length - 1);
+        setPayments((prev) => {
+          const next = prev.filter((p) => p._id !== payment._id);
+          onCountChange?.(next.length);
+          return next;
+        });
         toast.success(data.message || "Payment confirmed");
         if (!data.emailSent && !data.alreadyProcessed) {
           toast(
-            "Confirmation email could not be sent — you may want to notify the member directly.",
-            { icon: "⚠️", duration: 6000 }
+            "Confirmation email could not be queued — you may want to notify the member directly.",
+            { icon: "⚠️", duration: 6000 },
           );
         }
       } else {
         toast.error(data.message || "Failed to confirm payment");
       }
-   } catch (e) {
+    } catch (e) {
       toast.error(e.response?.data?.message || "Error confirming payment");
-      fetchVerified(true);   // list may be stale, e.g. another admin already confirmed it
+      fetchVerified(true); // list may be stale, e.g. another admin already confirmed it
     } finally {
       setConfirming(null);
     }
@@ -87,9 +104,9 @@ export default function VerifiedPayments({ onCountChange }) {
 
   const openReject = (payment) => {
     setRejectDialog({
-      paymentId:  payment._id,
+      paymentId: payment._id,
       memberName: payment.member?.name || "this member",
-      amount:     payment.amount,
+      amount: payment.amount,
     });
     setRejectReason("");
   };
@@ -105,11 +122,15 @@ export default function VerifiedPayments({ onCountChange }) {
       const { data } = await axios.put(
         `/api/payments/${rejectDialog.paymentId}/reject`,
         { rejectedReason: rejectReason.trim() },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` } },
       );
       if (data.success) {
-        setPayments(prev => prev.filter(p => p._id !== rejectDialog.paymentId));
-        onCountChange?.(payments.length - 1);
+        setPayments((prev) => {
+          const next = prev.filter((p) => p._id !== rejectDialog.paymentId);
+          onCountChange?.(next.length);
+          return next;
+        });
+
         toast.success("Payment rejected");
         setRejectDialog(null);
       } else {
@@ -117,7 +138,7 @@ export default function VerifiedPayments({ onCountChange }) {
       }
     } catch (e) {
       toast.error(e.response?.data?.message || "Error rejecting payment");
-      fetchVerified(true);   
+      fetchVerified(true);
     } finally {
       setRejecting(false);
     }
@@ -126,7 +147,7 @@ export default function VerifiedPayments({ onCountChange }) {
   if (loading) {
     return (
       <div className="mt-6 space-y-3">
-        {[1, 2, 3].map(i => (
+        {[1, 2, 3].map((i) => (
           <div key={i} className="h-20 rounded-xl bg-gray-100 animate-pulse" />
         ))}
       </div>
@@ -141,8 +162,8 @@ export default function VerifiedPayments({ onCountChange }) {
             Verified Payments
           </h3>
           <p className="text-xs text-gray-400 mt-0.5">
-            {payments.length} payment{payments.length !== 1 ? "s" : ""} confirmed by
-            the gateway, awaiting your review
+            {payments.length} payment{payments.length !== 1 ? "s" : ""}{" "}
+            confirmed by the gateway, awaiting your review
           </p>
         </div>
         <Button
@@ -152,13 +173,17 @@ export default function VerifiedPayments({ onCountChange }) {
           disabled={refreshing}
           className="gap-1.5"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
 
-      <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200
-        rounded-xl mb-4 text-sm text-emerald-700">
+      <div
+        className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200
+        rounded-xl mb-4 text-sm text-emerald-700"
+      >
         <ShieldCheck className="h-4 w-4 flex-shrink-0 mt-0.5 text-emerald-600" />
         <p>
           The payment gateway has confirmed these transactions. Confirming here
@@ -171,12 +196,14 @@ export default function VerifiedPayments({ onCountChange }) {
         <div className="text-center py-16 text-gray-400">
           <CheckCircle2 className="h-10 w-10 mx-auto mb-3 text-gray-200" />
           <p className="font-medium">Nothing awaiting confirmation</p>
-          <p className="text-sm mt-1">All verified payments have been reviewed</p>
+          <p className="text-sm mt-1">
+            All verified payments have been reviewed
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
           <AnimatePresence>
-            {payments.map(payment => (
+            {payments.map((payment) => (
               <motion.div
                 key={payment._id}
                 layout
@@ -221,10 +248,11 @@ export default function VerifiedPayments({ onCountChange }) {
                     disabled={confirming === payment._id}
                     className="bg-emerald-600 hover:bg-emerald-700 gap-1.5"
                   >
-                    {confirming === payment._id
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : <CheckCircle2 className="h-3.5 w-3.5" />
-                    }
+                    {confirming === payment._id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
                     Confirm
                   </Button>
                 </div>
@@ -236,21 +264,23 @@ export default function VerifiedPayments({ onCountChange }) {
 
       <AlertDialog
         open={!!rejectDialog}
-        onOpenChange={open => { if (!open) setRejectDialog(null); }}
+        onOpenChange={(open) => {
+          if (!open) setRejectDialog(null);
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Reject Payment</AlertDialogTitle>
             <AlertDialogDescription>
               Reject ৳{rejectDialog?.amount?.toLocaleString()} payment from{" "}
-              <strong>{rejectDialog?.memberName}</strong>?
-              A rejection reason is required and will be shown to the member.
+              <strong>{rejectDialog?.memberName}</strong>? A rejection reason is
+              required and will be shown to the member.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="px-6 pb-2">
             <textarea
               value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
+              onChange={(e) => setRejectReason(e.target.value)}
               placeholder="Enter rejection reason (required)..."
               className="w-full p-3 border border-gray-300 rounded-lg text-sm
                 focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"

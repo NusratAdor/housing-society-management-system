@@ -19,7 +19,7 @@ import Notification    from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
 import { createMonthlyChargesForMonth } from "../services/chargeService.js";
 import { allocatePayment } from "../services/allocationService.js";
-import { sendPaymentConfirmationEmail } from "../services/emailService.js";
+import { enqueueEmail } from "../services/emailQueueService.js";   // was: sendPaymentConfirmationEmail from emailService.js
 import { getMemberDueSummary } from "../services/paymentService.js";
 import { getMemberCreditBalance, reconcileMemberCredit } from "../services/creditService.js";
 

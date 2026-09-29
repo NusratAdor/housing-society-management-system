@@ -534,30 +534,6 @@ export default function PaymentSection({ onPaymentSuccess }) {
     return selectedFutureCount * (breakdown.currentFee || 0);
   }, [breakdown, selectedFutureCount]);
 
-  // How many whole future months the member's EXISTING credit balance
-  // already covers, at today's fee. Used to keep the prepay dropdown from
-  // re-offering months that are already effectively paid for — selecting
-  // one of those would silently waste money by banking duplicate credit
-  // for a month that's already covered.
-  const creditCoveredMonths = useMemo(() => {
-    if (!breakdown?.currentFee) return 0;
-    return Math.floor((breakdown.creditBalance || 0) / breakdown.currentFee);
-  }, [breakdown]);
-
-  // Human-readable label for the last month the existing credit balance
-  // covers — e.g. "Dec 2026" — shown so the member understands why the
-  // prepay dropdown starts after that point.
-  const creditCoveredThroughLabel = useMemo(() => {
-    if (creditCoveredMonths <= 0) return null;
-    const covered = displayMonths.slice(
-      realMonthCount,
-      realMonthCount + creditCoveredMonths,
-    );
-    if (covered.length === 0) return null;
-    const last = covered[covered.length - 1];
-    return `${monthName(last.month, "short")} ${last.year}`;
-  }, [displayMonths, realMonthCount, creditCoveredMonths]);
-
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
     return breakdown.unpaidExtraCharges
@@ -831,9 +807,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
               </span>
             </p>
             <p className="text-gray-500 text-xs mt-0.5">
-              {creditCoveredThroughLabel
-                ? `Covers dues through ${creditCoveredThroughLabel}`
-                : "Applied automatically to future dues"}
+              Applied automatically to future dues
             </p>
           </div>
         </div>
@@ -1089,26 +1063,18 @@ export default function PaymentSection({ onPaymentSuccess }) {
         disabled:cursor-not-allowed"
               >
                 <option value={0}>None</option>
-                {displayMonths
-                  .slice(realMonthCount + creditCoveredMonths)
-                  .map((m, i) => {
-                    const cumulativeCost =
-                      (i + 1) * (breakdown?.currentFee || 0);
-                    return (
-                      <option key={m.id} value={i + 1}>
-                        {monthName(m.month, "short")} {m.year} — {i + 1} month
-                        {i > 0 ? "s" : ""}, ~৳{cumulativeCost.toLocaleString()}
-                      </option>
-                    );
-                  })}
+                {displayMonths.slice(realMonthCount).map((m, i) => {
+                  const cumulativeCost = (i + 1) * (breakdown?.currentFee || 0);
+                  return (
+                    <option key={m.id} value={i + 1}>
+                      {monthName(m.month, "short")} {m.year} — {i + 1} month
+                      {i > 0 ? "s" : ""}, ~৳{cumulativeCost.toLocaleString()}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
-            {allRealMonthsSelected && creditCoveredMonths > 0 && (
-              <p className="text-[11px] text-gray-400 mt-2">
-                Credit covers through {creditCoveredThroughLabel}
-              </p>
-            )}
             {!allRealMonthsSelected && (
               <p className="text-[11px] text-gray-400 mt-2">
                 Clear current dues to unlock prepay
