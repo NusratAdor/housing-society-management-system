@@ -29,12 +29,12 @@
 // document to write to, so MongoDB's transaction conflict detection
 // has something real to catch; the loser is retried automatically.
 
-import mongoose          from "mongoose";
-import Payment           from "../models/Payment.js";
+import mongoose from "mongoose";
+import Payment from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
-import MonthlyCharge     from "../models/MonthlyCharge.js";
-import Member             from "../models/Member.js";
-import Notification       from "../models/Notification.js";
+import MonthlyCharge from "../models/MonthlyCharge.js";
+import Member from "../models/Member.js";
+import Notification from "../models/Notification.js";
 import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
 
 // ─── getAvailableCreditDeposits ─────────────────────────────────────────────
@@ -45,8 +45,11 @@ import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
 const getAvailableCreditDeposits = async (memberId, session = null) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
 
-  const depositQuery = Payment
-    .find({ member: memberObjectId, advanceAmount: { $gt: 0 }, status: "completed" })
+  const depositQuery = Payment.find({
+    member: memberObjectId,
+    advanceAmount: { $gt: 0 },
+    status: "completed",
+  })
     .sort({ paidAt: 1 })
     .select("amount advanceAmount paidAt");
   if (session) depositQuery.session(session);
@@ -54,7 +57,7 @@ const getAvailableCreditDeposits = async (memberId, session = null) => {
 
   if (deposits.length === 0) return [];
 
-  const depositIds = deposits.map(d => d._id);
+  const depositIds = deposits.map((d) => d._id);
 
   const allocationTotalsAgg = PaymentAllocation.aggregate([
     { $match: { payment: { $in: depositIds } } },
@@ -64,18 +67,18 @@ const getAvailableCreditDeposits = async (memberId, session = null) => {
   const allocationTotals = await allocationTotalsAgg;
 
   const allocatedByPayment = Object.fromEntries(
-    allocationTotals.map(a => [String(a._id), a.total])
+    allocationTotals.map((a) => [String(a._id), a.total]),
   );
 
   return deposits
-    .map(deposit => {
-      const chargesPortion    = deposit.amount - deposit.advanceAmount;
-      const totalAllocated    = allocatedByPayment[String(deposit._id)] || 0;
+    .map((deposit) => {
+      const chargesPortion = deposit.amount - deposit.advanceAmount;
+      const totalAllocated = allocatedByPayment[String(deposit._id)] || 0;
       const appliedFromCredit = Math.max(0, totalAllocated - chargesPortion);
-      const remaining         = deposit.advanceAmount - appliedFromCredit;
+      const remaining = deposit.advanceAmount - appliedFromCredit;
       return { paymentId: deposit._id, remaining };
     })
-    .filter(d => d.remaining > 0);
+    .filter((d) => d.remaining > 0);
 };
 
 // ─── getMemberCreditBalance ───────────────────────────────────────────────
@@ -104,7 +107,7 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
     await Member.updateOne(
       { _id: memberId },
       { $inc: { creditVersion: 1 } },
-      { session }
+      { session },
     );
 
     const charge = await MonthlyCharge.findById(chargeId).session(session);
@@ -113,15 +116,15 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
       return { applied: false };
     }
 
-    const deposits       = await getAvailableCreditDeposits(memberId, session);
+    const deposits = await getAvailableCreditDeposits(memberId, session);
     const totalAvailable = deposits.reduce((sum, d) => sum + d.remaining, 0);
 
     if (totalAvailable < charge.amount) {
       // Not enough credit to fully cover this charge — apply nothing.
       return {
-        applied:      false,
-        shortfall:    totalAvailable > 0,
-        available:    totalAvailable,
+        applied: false,
+        shortfall: totalAvailable > 0,
+        available: totalAvailable,
         chargeAmount: charge.amount,
       };
     }
@@ -132,21 +135,27 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
 
     for (const deposit of deposits) {
       if (remainingToCover <= 0) break;
-      const amountFromThisDeposit = Math.min(deposit.remaining, remainingToCover);
+      const amountFromThisDeposit = Math.min(
+        deposit.remaining,
+        remainingToCover,
+      );
 
       allocationDocs.push({
-        payment:     deposit.paymentId,
-        member:      charge.member,
-        chargeType:  "monthly",
-        chargeId:    charge._id,
-        amount:      amountFromThisDeposit,
+        payment: deposit.paymentId,
+        member: charge.member,
+        chargeType: "monthly",
+        chargeId: charge._id,
+        amount: amountFromThisDeposit,
         allocatedAt: now,
       });
 
       remainingToCover -= amountFromThisDeposit;
     }
 
-    await PaymentAllocation.insertMany(allocationDocs, { session, ordered: true });
+    await PaymentAllocation.insertMany(allocationDocs, {
+      session,
+      ordered: true,
+    });
 
     charge.status = "Paid";
     charge.paidAt = now;
@@ -162,31 +171,31 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
   // informational — no money moves, no charge status changes.
   if (!outcome.applied && outcome.shortfall) {
     try {
-      const member = await Member.findById(memberId).select("clerkUserId name").lean();
+      const member = await Member.findById(memberId)
+        .select("clerkUserId name")
+        .lean();
       if (member?.clerkUserId) {
         await Notification.create({
-          type:        "Payment",
+          type: "Payment",
           content:
             `Your prepaid credit (৳${outcome.available.toLocaleString()}) does not fully ` +
             `cover this month's due of ৳${outcome.chargeAmount.toLocaleString()}. ` +
-            `Your credit has not been applied — please contact the office, or a ` +
-            `fee-adjustment charge may be added to reconcile the difference.`,
+            `Your credit is safe and unchanged. Add ৳${(outcome.chargeAmount - outcome.available).toLocaleString()} ` +
+            `from the Payment page and it will be applied automatically once confirmed.`,
           clerkUserId: member.clerkUserId,
-          adminOnly:   false,
+          adminOnly: false,
         });
       }
     } catch (notifErr) {
       console.error(
         `[CreditService] Shortfall notification failed for member ${memberId}:`,
-        notifErr.message
+        notifErr.message,
       );
     }
   }
 
   return outcome.applied;
 };
-
-
 
 // ─── reconcileMemberCredit ───────────────────────────────────────────────
 // Re-attempts credit application for a member's outstanding monthly
@@ -204,8 +213,10 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
 // Returns the list of MonthlyCharge _ids that were newly cleared.
 
 export const reconcileMemberCredit = async (memberId) => {
-  const outstandingCharges = await MonthlyCharge
-    .find({ member: memberId, status: "Unpaid" })
+  const outstandingCharges = await MonthlyCharge.find({
+    member: memberId,
+    status: "Unpaid",
+  })
     .sort({ year: 1, month: 1 })
     .select("_id")
     .lean();

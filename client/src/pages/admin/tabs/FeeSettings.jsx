@@ -52,10 +52,10 @@ export default function FeeSettings() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (data.success) {
-        toast.success(data.message);
-        setCurrentFee(Number(amount));
-        setReason("");
-      } else {
+  toast.success(data.message);
+  fetchCurrentFee();
+  setReason("");
+} else {
         toast.error(data.message || "Failed to update fee");
       }
     } catch (e) {

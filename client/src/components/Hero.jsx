@@ -97,7 +97,7 @@ const mainButtonLabel = isRemovedMember
           className="font-outfit font-bold text-2xl sm:text-3xl md:text-4xl lg:text-[52px] lg:leading-[52px] lg:whitespace-nowrap text-white"
         >
           <span>
-            {t("Government Officer's Housing Scheme")}
+            {t("Government Officers' Housing Scheme")}
           </span>{' '}
           <motion.span
             initial={{ color: "#FFFFFF" }}

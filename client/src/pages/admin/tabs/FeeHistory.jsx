@@ -30,17 +30,25 @@ export default function FeeHistory() {
     }
   }, [axios, getToken]);
 
-  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
 
   if (loading) {
     return (
       <div className="mt-6 space-y-3 max-w-xl">
-        {[1, 2, 3].map(i => (
+        {[1, 2, 3].map((i) => (
           <div key={i} className="h-20 rounded-xl bg-gray-100 animate-pulse" />
         ))}
       </div>
     );
   }
+
+  const now = new Date();
+  // history is sorted newest first, so the first record already in effect is "current"
+  const currentIndex = history.findIndex(
+    (r) => new Date(r.effectiveFrom) <= now,
+  );
 
   return (
     <div className="mt-6 max-w-xl">
@@ -58,21 +66,28 @@ export default function FeeHistory() {
       </div>
 
       {history.length === 0 ? (
-        <div className="text-center py-12 text-gray-400 border border-dashed
-          border-gray-200 rounded-xl">
+        <div
+          className="text-center py-12 text-gray-400 border border-dashed
+          border-gray-200 rounded-xl"
+        >
           <History className="h-8 w-8 mx-auto mb-2 text-gray-200" />
           <p>No fee changes recorded yet</p>
         </div>
       ) : (
         <div className="space-y-3">
           {history.map((record, idx) => {
-            const isCurrent = idx === 0;
+            const isCurrent = idx === currentIndex;
+            const isScheduled = new Date(record.effectiveFrom) > now;
             const prevAmount = history[idx + 1]?.amount;
             const diff = prevAmount ? record.amount - prevAmount : null;
-            const TrendIcon = diff === null ? null
-              : diff > 0 ? TrendingUp
-              : diff < 0 ? TrendingDown
-              : Minus;
+            const TrendIcon =
+              diff === null
+                ? null
+                : diff > 0
+                  ? TrendingUp
+                  : diff < 0
+                    ? TrendingDown
+                    : Minus;
 
             return (
               <motion.div
@@ -87,35 +102,55 @@ export default function FeeHistory() {
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`p-2 rounded-lg flex-shrink-0 ${
-                    isCurrent ? "bg-blue-100" : "bg-gray-100"
-                  }`}>
-                    {TrendIcon
-                      ? <TrendIcon className={`h-4 w-4 ${
-                          isCurrent ? "text-blue-600"
-                            : diff > 0 ? "text-red-500"
-                            : "text-emerald-500"
-                        }`} />
-                      : <History className="h-4 w-4 text-gray-500" />
-                    }
+                  <div
+                    className={`p-2 rounded-lg flex-shrink-0 ${
+                      isCurrent ? "bg-blue-100" : "bg-gray-100"
+                    }`}
+                  >
+                    {TrendIcon ? (
+                      <TrendIcon
+                        className={`h-4 w-4 ${
+                          isCurrent
+                            ? "text-blue-600"
+                            : diff > 0
+                              ? "text-red-500"
+                              : "text-emerald-500"
+                        }`}
+                      />
+                    ) : (
+                      <History className="h-4 w-4 text-gray-500" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-lg font-bold font-playfair ${
-                        isCurrent ? "text-blue-800" : "text-gray-800"
-                      }`}>
+                      <span
+                        className={`text-lg font-bold font-playfair ${
+                          isCurrent ? "text-blue-800" : "text-gray-800"
+                        }`}
+                      >
                         ৳{record.amount.toLocaleString()}
                       </span>
                       {isCurrent && (
-                        <span className="text-[10px] bg-blue-600 text-white
-                          px-2 py-0.5 rounded-full font-semibold">
+                        <span
+                          className="text-[10px] bg-blue-600 text-white
+                          px-2 py-0.5 rounded-full font-semibold"
+                        >
                           CURRENT
                         </span>
                       )}
+
+                      {isScheduled && (
+                        <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-semibold">
+                          SCHEDULED
+                        </span>
+                      )}
+
                       {diff !== null && (
-                        <span className={`text-xs font-medium ${
-                          diff > 0 ? "text-red-500" : "text-emerald-600"
-                        }`}>
+                        <span
+                          className={`text-xs font-medium ${
+                            diff > 0 ? "text-red-500" : "text-emerald-600"
+                          }`}
+                        >
                           {diff > 0 ? `+৳${diff}` : `-৳${Math.abs(diff)}`}
                         </span>
                       )}
@@ -123,9 +158,13 @@ export default function FeeHistory() {
                     <p className="text-xs text-gray-500 mt-0.5">
                       Effective from:{" "}
                       <span className="font-medium text-gray-700">
-                        {new Date(record.effectiveFrom).toLocaleDateString("en-GB", {
-                          month: "long", year: "numeric",
-                        })}
+                        {new Date(record.effectiveFrom).toLocaleDateString(
+                          "en-GB",
+                          {
+                            month: "long",
+                            year: "numeric",
+                          },
+                        )}
                       </span>
                     </p>
                     {record.reason && (

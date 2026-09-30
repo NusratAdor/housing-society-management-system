@@ -12,6 +12,7 @@ import Payment           from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
 import { getCurrentFee } from "./feeService.js";
 import { getMemberCreditBalance } from "./creditService.js";
+import { MAX_PREPAY_MONTHS } from "../configs/paymentConfig.js";
 
 const MONTH_NAMES = [
   "", "January", "February", "March", "April", "May", "June",
@@ -117,6 +118,7 @@ export const getMemberFullDashboardData = async (memberId) => {
 
   return {
     currentFee,
+     maxPrepayMonths: MAX_PREPAY_MONTHS,
     totalDue,
     totalMonthlyDue,
     totalExtraDue,

@@ -22,6 +22,9 @@
 import mongoose      from "mongoose";
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import ExtraCharge   from "../models/ExtraCharge.js";
+import { getCurrentFee } from "./feeService.js";
+import { getMemberCreditBalance } from "./creditService.js";
+import { MAX_PREPAY_MONTHS } from "../configs/paymentConfig.js";
 
 export const validatePaymentSelection = async ({
   memberId,
@@ -41,6 +44,18 @@ export const validatePaymentSelection = async ({
   if (advanceAmt < 0) {
     throw new Error("Advance amount cannot be negative");
   }
+
+  if (advanceAmt > 0) {
+  const [fee, existingCredit] = await Promise.all([
+    getCurrentFee(),
+    getMemberCreditBalance(memberId),
+  ]);
+  if (existingCredit + advanceAmt > fee * MAX_PREPAY_MONTHS) {
+    throw new Error(
+      `Prepaid credit cannot exceed ${MAX_PREPAY_MONTHS} months of fees`,
+    );
+  }
+}
 
   // ── Reject duplicate IDs outright — financial input, no ambiguity allowed
   if (new Set(selectedMonthlyIds.map(String)).size !== selectedMonthlyIds.length) {

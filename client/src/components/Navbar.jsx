@@ -93,21 +93,21 @@ const Navbar = () => {
           path: "/about-us/vision-mission",
           icon: Target,
         },
-        { name: "Advisers", path: "/about-us/advisers", icon: Lightbulb },
-        { name: "Chairman", path: "/about-us/chairman", icon: Crown },
+        { name: "Advisory Committee", path: "/about-us/advisory-committee", icon: Lightbulb },
+        { name: "President", path: "/about-us/president", icon: Crown },
         {
           name: "General Secretary",
           path: "/about-us/general-secretary",
           icon: UserCog,
         },
         {
-          name: "Former Chairman",
-          path: "/about-us/former-chairman",
+          name: "Former President",
+          path: "/about-us/former-president",
           icon: History,
         },
         {
-          name: "Former General Secretary",
-          path: "/about-us/former-general-secretary",
+          name: "Former Secretary",
+          path: "/about-us/former-secretary",
           icon: Archive,
         },
         {

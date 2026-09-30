@@ -51,10 +51,11 @@ import {
 import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
 
-// Number of not-yet-billed future months to offer in the range picker
-// beyond the member's real unpaid charges. 12 covers "pay a full year
-// ahead" in one selection without the chip row growing unbounded.
-const PROJECTED_MONTHS_AHEAD = 12;
+// Month arithmetic on a { month: 1-12, year } pair.
+const shiftMonth = ({ month, year }, n) => {
+  const idx = year * 12 + (month - 1) + n;
+  return { month: (idx % 12) + 1, year: Math.floor(idx / 12) };
+};
 
 const monthName = (month, format = "long") =>
   new Date(2000, month - 1).toLocaleDateString(undefined, { month: format });
@@ -384,58 +385,56 @@ export default function PaymentSection({ onPaymentSuccess }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Combined display list: real unpaid months + projected future ───────
-  // months. Projected months are computed client-side (no MonthlyCharge
-  // exists for them yet) by continuing the sequence from the last real
-  // unpaid month, or from the current month if the member has no unpaid
-  // months at all. Each uses the CURRENT fee as its best-available
-  // estimate — the actual amount is only locked when that month's real
-  // charge is eventually created by the monthly cron.
-  const displayMonths = useMemo(() => {
-    if (!breakdown) return [];
+  const maxPrepayMonths = breakdown?.maxPrepayMonths ?? 12;
 
-    const real = breakdown.unpaidMonthlyCharges.map((c) => ({
-      kind: "real",
-      id: String(c._id),
-      month: c.month,
-      year: c.year,
-      amount: c.amount,
-    }));
+  const realMonths = useMemo(
+    () =>
+      (breakdown?.unpaidMonthlyCharges ?? []).map((c) => ({
+        id: String(c._id),
+        month: c.month,
+        year: c.year,
+        amount: c.amount,
+      })),
+    [breakdown],
+  );
+  const realMonthCount = realMonths.length;
 
-    let cursorMonth, cursorYear;
-    if (real.length > 0) {
-      const last = real[real.length - 1];
-      cursorMonth = last.month;
-      cursorYear = last.year;
-    } else {
-      const now = new Date();
-      cursorMonth = now.getMonth() + 1;
-      cursorYear = now.getFullYear();
-      // No unpaid months at all — the current month itself may already
-      // exist as Paid, so projected months start the month AFTER it to
-      // avoid ever projecting a month that's already been charged.
-    }
+  // Prepay options: only months beyond what banked credit already covers,
+  // priced net of leftover credit. Credit is spent on future charges
+  // oldest-first (creditService), so it covers the first `covered` months
+  // that will be billed.
+  const prepay = useMemo(() => {
+    const fee = breakdown?.currentFee || 0;
+    if (!breakdown || fee <= 0) return { coveredThrough: null, options: [] };
 
-    const projected = [];
-    for (let i = 0; i < PROJECTED_MONTHS_AHEAD; i++) {
-      cursorMonth += 1;
-      if (cursorMonth > 12) {
-        cursorMonth = 1;
-        cursorYear += 1;
-      }
-      projected.push({
-        kind: "projected",
-        id: `projected-${cursorYear}-${cursorMonth}`,
-        month: cursorMonth,
-        year: cursorYear,
-        amount: breakdown.currentFee,
-      });
-    }
+    // First month not yet billed: the month after the newest charge on
+    // record, but never earlier than the current month.
+    const now = new Date();
+    const current = { month: now.getMonth() + 1, year: now.getFullYear() };
+    const newest = breakdown.last12Months?.[0];
+    const afterNewest = newest ? shiftMonth(newest, 1) : current;
+    const key = (m) => m.year * 12 + m.month;
+    const firstUnbilled =
+      key(afterNewest) >= key(current) ? afterNewest : current;
 
-    return [...real, ...projected];
-  }, [breakdown]);
+    const credit = breakdown.creditBalance || 0;
+    const covered = Math.floor(credit / fee);
+    const remainder = credit - covered * fee;
 
-  const realMonthCount = breakdown?.unpaidMonthlyCharges?.length ?? 0;
+    const options = Array.from(
+      { length: Math.max(0, maxPrepayMonths - covered) },
+      (_, i) => ({
+        ...shiftMonth(firstUnbilled, covered + i),
+        cost: (i + 1) * fee - remainder,
+      }),
+    );
+
+    return {
+      coveredThrough:
+        covered > 0 ? shiftMonth(firstUnbilled, covered - 1) : null,
+      options,
+    };
+  }, [breakdown, maxPrepayMonths]);
 
   // Prepay ahead is only meaningful once nothing real is left unpaid —
   // paying ahead while a real month is still due would silently violate
@@ -455,25 +454,19 @@ export default function PaymentSection({ onPaymentSuccess }) {
   // by one. Always deterministic — no anchor state, nothing to reset.
   const handleRealMonthClick = useCallback(
     (index) => {
-      const isCurrentlyFurthestSelected =
+      const isFurthestSelected =
         selectedMonthlyIds.length === index + 1 &&
-        selectedMonthlyIds[index] === displayMonths[index].id;
+        selectedMonthlyIds[index] === realMonths[index].id;
 
-      const newSelection = isCurrentlyFurthestSelected
-        ? displayMonths.slice(0, index).map((m) => m.id)
-        : displayMonths.slice(0, index + 1).map((m) => m.id);
+      const next = realMonths
+        .slice(0, isFurthestSelected ? index : index + 1)
+        .map((m) => m.id);
+      setSelectedMonthlyIds(next);
 
-      setSelectedMonthlyIds(newSelection);
-
-      // Prepay ahead requires every real unpaid month to be covered first —
-      // if this click leaves any unpaid month unselected, clear any existing
-      // prepay selection so state can never represent "prepaying future
-      // months while current dues remain unpaid."
-      if (newSelection.length < realMonthCount) {
-        setSelectedFutureCount(0);
-      }
+      // Prepay requires every real unpaid month to be covered first.
+      if (next.length < realMonthCount) setSelectedFutureCount(0);
     },
-    [selectedMonthlyIds, displayMonths, realMonthCount],
+    [selectedMonthlyIds, realMonths, realMonthCount],
   );
 
   // Prepay-ahead selection — a single value from the dropdown, not clicks.
@@ -526,13 +519,10 @@ export default function PaymentSection({ onPaymentSuccess }) {
       .reduce((sum, c) => sum + c.amount, 0);
   }, [breakdown, selectedMonthlyIds]);
 
-  // Estimated cost of the selected projected future months, at today's
-  // fee. This is what gets banked as credit for them — see the caveat
-  // rendered in the UI below about fee changes before those months bill.
-  const projectedFutureTotal = useMemo(() => {
-    if (!breakdown) return 0;
-    return selectedFutureCount * (breakdown.currentFee || 0);
-  }, [breakdown, selectedFutureCount]);
+  const projectedFutureTotal =
+    selectedFutureCount > 0
+      ? (prepay.options[selectedFutureCount - 1]?.cost ?? 0)
+      : 0;
 
   const selectedExtraTotal = useMemo(() => {
     if (!breakdown) return 0;
@@ -593,6 +583,8 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const nextDueMonth = breakdown?.nextDueMonth ?? null;
   const paidThroughMonth = breakdown?.paidThroughMonth ?? null;
   const pendingPayment = breakdown?.pendingPayment ?? null;
+  const paymentInFlight =
+    !!pendingPayment || !!breakdown?.awaitingConfirmationPayment;
   const creditBalance = breakdown?.creditBalance ?? 0;
   const unpaidMonthCount = realMonthCount;
   const remainingAfterSelection = totalDue - chargesSelectedTotal;
@@ -831,11 +823,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
           </div>
           <button
             onClick={handleTopUp}
-            disabled={
-              paying ||
-              !!pendingPayment ||
-              !!breakdown?.awaitingConfirmationPayment
-            }
+            disabled={paying || paymentInFlight}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white
               text-xs font-semibold rounded-lg hover:bg-indigo-700
               disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
@@ -984,7 +972,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
           {!loadingData && realMonthCount > 0 && (
             <>
               <div className="flex flex-wrap gap-2 mb-4">
-                {displayMonths.slice(0, realMonthCount).map((m, idx) => {
+                {realMonths.map((m, idx) => {
                   const isSelected = selectedMonthlyIds.includes(m.id);
                   return (
                     <button
@@ -1056,25 +1044,39 @@ export default function PaymentSection({ onPaymentSuccess }) {
               <select
                 value={selectedFutureCount}
                 onChange={handlePrepayMonthsChange}
-                disabled={!allRealMonthsSelected}
+                disabled={
+                  !allRealMonthsSelected ||
+                  paymentInFlight ||
+                  prepay.options.length === 0
+                }
                 className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs
-        focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white
-        min-w-[220px] disabled:bg-gray-50 disabled:text-gray-300
-        disabled:cursor-not-allowed"
+    focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white
+    min-w-[220px] disabled:bg-gray-50 disabled:text-gray-300
+    disabled:cursor-not-allowed"
               >
                 <option value={0}>None</option>
-                {displayMonths.slice(realMonthCount).map((m, i) => {
-                  const cumulativeCost = (i + 1) * (breakdown?.currentFee || 0);
-                  return (
-                    <option key={m.id} value={i + 1}>
-                      {monthName(m.month, "short")} {m.year} — {i + 1} month
-                      {i > 0 ? "s" : ""}, ~৳{cumulativeCost.toLocaleString()}
-                    </option>
-                  );
-                })}
+                {prepay.options.map((o, i) => (
+                  <option key={`${o.year}-${o.month}`} value={i + 1}>
+                    Through {monthName(o.month, "short")} {o.year} — ~৳
+                    {o.cost.toLocaleString()}
+                  </option>
+                ))}
               </select>
             </div>
 
+            {prepay.coveredThrough && (
+              <p className="text-[11px] text-gray-400 mt-2">
+                Your credit already covers dues through{" "}
+                {monthName(prepay.coveredThrough.month)}{" "}
+                {prepay.coveredThrough.year}.
+              </p>
+            )}
+            {prepay.options.length === 0 && !loadingData && (
+              <p className="text-[11px] text-gray-400 mt-2">
+                You have already prepaid the maximum of {maxPrepayMonths}{" "}
+                months.
+              </p>
+            )}
             {!allRealMonthsSelected && (
               <p className="text-[11px] text-gray-400 mt-2">
                 Clear current dues to unlock prepay
@@ -1225,7 +1227,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
 
             <button
               onClick={handlePay}
-              disabled={!hasSelection || paying}
+              disabled={!hasSelection || paying || paymentInFlight}
               className="flex items-center gap-2 px-6 py-3
                 bg-[var(--color-primary)] text-white text-sm font-semibold
                 rounded-xl shadow-sm hover:bg-blue-700 active:scale-95
