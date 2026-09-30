@@ -261,7 +261,7 @@ export default function OverviewCard({
       </p>
       <h1 className="text-slate-800 text-xl md:text-2xl font-semibold
         font-playfair leading-tight mb-1">
-        Welcome back to GOMCS
+        Welcome to GOMCS
       </h1>
 
       <div className="mt-3 inline-flex items-center px-3 py-1.5

@@ -19,7 +19,7 @@
     "duesPending": "Dues pending"
   },
   "header": {
-    "welcomeBack": "Welcome back, {{name}}",
+    "welcome": "Welcome, {{name}}",
     "plot": "Plot"
   }
 }
