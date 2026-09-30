@@ -13,15 +13,19 @@
 // separate deposit-recording step needed. The admin is shown, and the
 // member is emailed, the resulting credit balance when relevant.
 
-import Payment         from "../models/Payment.js";
-import Member          from "../models/Member.js";
-import Notification    from "../models/Notification.js";
+import Payment from "../models/Payment.js";
+import Member from "../models/Member.js";
+import Notification from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
 import { createMonthlyChargesForMonth } from "../services/chargeService.js";
 import { allocatePayment } from "../services/allocationService.js";
-import { enqueueEmail } from "../services/emailQueueService.js";   // was: sendPaymentConfirmationEmail from emailService.js
+import { enqueueEmail } from "../services/emailQueueService.js"; // was: sendPaymentConfirmationEmail from emailService.js
 import { getMemberDueSummary } from "../services/paymentService.js";
-import { getMemberCreditBalance, reconcileMemberCredit } from "../services/creditService.js";
+import {
+  getMemberCreditBalance,
+  reconcileMemberCredit,
+} from "../services/creditService.js";
+import MonthlyCharge from "../models/MonthlyCharge.js";
 
 export const triggerMonthlyDue = async (req, res) => {
   if (process.env.DISABLE_MANUAL_TRIGGERS === "true") {
@@ -31,9 +35,13 @@ export const triggerMonthlyDue = async (req, res) => {
     });
   }
   try {
-    const now   = new Date();
-    const month = req.query.month ? parseInt(req.query.month, 10) : now.getMonth() + 1;
-    const year  = req.query.year  ? parseInt(req.query.year,  10) : now.getFullYear();
+    const now = new Date();
+    const month = req.query.month
+      ? parseInt(req.query.month, 10)
+      : now.getMonth() + 1;
+    const year = req.query.year
+      ? parseInt(req.query.year, 10)
+      : now.getFullYear();
 
     if (month < 1 || month > 12) {
       return res.status(400).json({ success: false, message: "Invalid month" });
@@ -47,9 +55,10 @@ export const triggerMonthlyDue = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: result.created > 0
-        ? `Created ${result.created} charge(s) of ৳${result.fee} for ${month}/${year}`
-        : `No new charges — all ${result.skipped} member(s) already have charges`,
+      message:
+        result.created > 0
+          ? `Created ${result.created} charge(s) of ৳${result.fee} for ${month}/${year}`
+          : `No new charges — all ${result.skipped} member(s) already have charges`,
       result,
     });
   } catch (error) {
@@ -60,8 +69,7 @@ export const triggerMonthlyDue = async (req, res) => {
 
 export const getPendingPayments = async (req, res) => {
   try {
-    const payments = await Payment
-      .find({ status: "pending" })
+    const payments = await Payment.find({ status: "pending" })
       .populate("member", "name email membershipNo phone")
       .sort({ createdAt: -1 })
       .lean();
@@ -74,8 +82,7 @@ export const getPendingPayments = async (req, res) => {
 
 export const getVerifiedPayments = async (req, res) => {
   try {
-    const payments = await Payment
-      .find({ status: "verified" })
+    const payments = await Payment.find({ status: "verified" })
       .populate("member", "name email membershipNo phone")
       .sort({ verifiedAt: -1 })
       .lean();
@@ -100,14 +107,18 @@ export const approvePayment = async (req, res) => {
     const claimed = await Payment.findOneAndUpdate(
       { _id: req.params.id, status: "verified" },
       { $set: { status: "processing", processingAt: new Date() } },
-      { new: true }
+      { new: true },
     );
 
     if (!claimed) {
-      const existing = await Payment.findById(req.params.id).select("status receiptNumber").lean();
+      const existing = await Payment.findById(req.params.id)
+        .select("status receiptNumber")
+        .lean();
 
       if (!existing) {
-        return res.status(404).json({ success: false, message: "Payment not found" });
+        return res
+          .status(404)
+          .json({ success: false, message: "Payment not found" });
       }
 
       if (existing.status === "completed") {
@@ -123,7 +134,8 @@ export const approvePayment = async (req, res) => {
       if (existing.status === "processing") {
         return res.status(409).json({
           success: false,
-          message: "This payment is already being confirmed. Please wait a moment and refresh.",
+          message:
+            "This payment is already being confirmed. Please wait a moment and refresh.",
         });
       }
 
@@ -136,14 +148,14 @@ export const approvePayment = async (req, res) => {
     let receiptNumber, allocations;
     try {
       const result = await allocatePayment({
-        paymentId:          claimed._id,
+        paymentId: claimed._id,
         selectedMonthlyIds: claimed.pendingMonthlyIds.map(String),
-        selectedExtraIds:   claimed.pendingExtraIds.map(String),
+        selectedExtraIds: claimed.pendingExtraIds.map(String),
         extraChargeAmounts: claimed.pendingExtraAmounts || {},
-        confirmedBy:        req.clerkUserId,
+        confirmedBy: req.clerkUserId,
       });
       receiptNumber = result.receiptNumber;
-      allocations   = result.allocations;
+      allocations = result.allocations;
     } catch (allocationError) {
       // Nothing was committed. Release the claim so the payment can be
       // retried. The status filter means a payment that actually did
@@ -151,16 +163,20 @@ export const approvePayment = async (req, res) => {
       // never touched.
       await Payment.updateOne(
         { _id: claimed._id, status: "processing" },
-        { $set: { status: "verified" }, $unset: { processingAt: "" } }
+        { $set: { status: "verified" }, $unset: { processingAt: "" } },
       );
       throw allocationError;
     }
 
+    let creditCleared = [];
     if (claimed.advanceAmount > 0) {
       try {
-        await reconcileMemberCredit(claimed.member);
+        creditCleared = await reconcileMemberCredit(claimed.member);
       } catch (reconcileError) {
-        console.error("[approvePayment] Credit reconciliation failed:", reconcileError.message);
+        console.error(
+          "[approvePayment] Credit reconciliation failed:",
+          reconcileError.message,
+        );
       }
     }
 
@@ -171,71 +187,102 @@ export const approvePayment = async (req, res) => {
     if (member) {
       try {
         await Notification.create({
-          type:        "Payment",
-          content:     `Payment of ৳${claimed.amount.toLocaleString()} confirmed. Receipt: ${receiptNumber}`,
+          type: "Payment",
+          content:
+            `Payment of ৳${claimed.amount.toLocaleString()} confirmed. Receipt: ${receiptNumber}.` +
+            (claimed.advanceAmount > 0
+              ? ` ৳${claimed.advanceAmount.toLocaleString()} of it was added to your advance credit.`
+              : ""),
           clerkUserId: member.clerkUserId,
-          adminOnly:   false,
+          adminOnly: false,
         });
       } catch (notifError) {
-        console.error("[approvePayment] Notification creation failed:", notifError.message);
+        console.error(
+          "[approvePayment] Notification creation failed:",
+          notifError.message,
+        );
       }
 
       try {
-        const dueSummary    = await getMemberDueSummary(claimed.member);
-        const creditBalance = claimed.advanceAmount > 0
-          ? await getMemberCreditBalance(claimed.member)
-          : 0;
+        const dueSummary = await getMemberDueSummary(claimed.member);
+        const creditBalance =
+          claimed.advanceAmount > 0
+            ? await getMemberCreditBalance(claimed.member)
+            : 0;
 
-        const isPureAdvance = allocations.length === 0 && claimed.advanceAmount > 0;
+        const creditApplied =
+          creditCleared.length > 0
+            ? (
+                await MonthlyCharge.find({ _id: { $in: creditCleared } })
+                  .select("month year amount")
+                  .sort({ year: 1, month: 1 })
+                  .lean()
+              ).map((c) => ({ month: c.month, year: c.year, amount: c.amount }))
+            : [];
+
+      const isPureAdvance = claimed.advanceAmount >= claimed.amount;
 
         if (isPureAdvance) {
           await enqueueEmail({
-            to:      member.email,
+            to: member.email,
             subject: `Advance Payment Received — Receipt ${receiptNumber}`,
-            type:    "advance_confirmation",
+            type: "advance_confirmation",
             payload: {
-              name:          member.name,
-              amount:        claimed.amount,
+              name: member.name,
+              amount: claimed.amount,
               receiptNumber,
-              paidAt:        new Date(),
+              paidAt: new Date(),
               creditBalance,
+              creditApplied,
+              remainingDue: dueSummary.totalDue,
             },
           });
         } else {
           await enqueueEmail({
-            to:      member.email,
+            to: member.email,
             subject: `Payment Confirmed — Receipt ${receiptNumber}`,
-            type:    "payment_confirmation",
+            type: "payment_confirmation",
             payload: {
-              name:          member.name,
-              amount:        claimed.amount,
+              name: member.name,
+              amount: claimed.amount,
               receiptNumber,
-              paidAt:        new Date(),
+              paidAt: new Date(),
               allocations,
-              remainingDue:  dueSummary.totalDue,
+              remainingDue: dueSummary.totalDue,
               advanceAmount: claimed.advanceAmount,
               creditBalance,
+              creditApplied,
             },
           });
         }
         emailSent = true;
       } catch (queueErr) {
-        console.error("[approvePayment] Failed to queue confirmation email:", queueErr.message);
+        console.error(
+          "[approvePayment] Failed to queue confirmation email:",
+          queueErr.message,
+        );
       }
     }
 
     writeAuditLog({
-      action:      "PAYMENT_APPROVED",
+      action: "PAYMENT_APPROVED",
       performedBy: req.clerkUserId,
-      targetId:    claimed._id,
-      description: `Admin confirmed payment of ৳${claimed.amount} (${claimed.transactionId}). Receipt: ${receiptNumber}`,
-      after:       { status: "completed", receiptNumber },
+      targetId: claimed._id,
+      description:
+        `Admin confirmed payment of ৳${claimed.amount}` +
+        (claimed.advanceAmount > 0
+          ? ` (incl. ৳${claimed.advanceAmount} advance)`
+          : "") +
+        ` (${claimed.transactionId}). Receipt: ${receiptNumber}`,
+      after: { status: "completed", receiptNumber },
       metadata: {
         transactionId: claimed.transactionId,
-        amount:        claimed.amount,
-        memberId:      String(claimed.member),
+        amount: claimed.amount,
+        memberId: String(claimed.member),
         advanceAmount: claimed.advanceAmount,
-        emailQueued:   emailSent,
+        chargesPortion: claimed.amount - claimed.advanceAmount,
+        creditAppliedTo: creditCleared.map(String),
+        emailQueued: emailSent,
       },
     });
 
@@ -254,8 +301,9 @@ export const approvePayment = async (req, res) => {
     // never fire.
     if (/already processed/i.test(error.message)) {
       return res.status(409).json({
-        success:     false,
-        message:     "One or more charges in this payment were already cleared by another payment — this appears to be a duplicate. Please use Reject instead of Confirm for this transaction.",
+        success: false,
+        message:
+          "One or more charges in this payment were already cleared by another payment — this appears to be a duplicate. Please use Reject instead of Confirm for this transaction.",
         isDuplicate: true,
       });
     }
@@ -281,7 +329,7 @@ export const rejectPayment = async (req, res) => {
     if (!rejectedReason?.trim()) {
       return res.status(400).json({
         success: false,
-        message:  "Rejection reason is required",
+        message: "Rejection reason is required",
       });
     }
 
@@ -289,20 +337,24 @@ export const rejectPayment = async (req, res) => {
       { _id: req.params.id, status: { $in: ["pending", "verified"] } },
       {
         $set: {
-          status:         "rejected",
-          rejectedAt:     new Date(),
+          status: "rejected",
+          rejectedAt: new Date(),
           rejectedReason: rejectedReason.trim(),
-          rejectedBy:     req.clerkUserId,
+          rejectedBy: req.clerkUserId,
         },
       },
-      { new: true }
+      { new: true },
     ).populate("member", "clerkUserId name");
 
     if (!claimed) {
-      const existing = await Payment.findById(req.params.id).select("status").lean();
+      const existing = await Payment.findById(req.params.id)
+        .select("status")
+        .lean();
 
       if (!existing) {
-        return res.status(404).json({ success: false, message: "Payment not found" });
+        return res
+          .status(404)
+          .json({ success: false, message: "Payment not found" });
       }
 
       return res.status(400).json({
@@ -313,27 +365,27 @@ export const rejectPayment = async (req, res) => {
 
     if (claimed.member?.clerkUserId) {
       await Notification.create({
-        type:        "Payment",
+        type: "Payment",
         content:
           `Your payment of ৳${claimed.amount.toLocaleString()} was not processed. ` +
           `Reason: ${rejectedReason.trim()}`,
         clerkUserId: claimed.member.clerkUserId,
-        adminOnly:   false,
+        adminOnly: false,
       });
     }
 
     writeAuditLog({
-      action:      "PAYMENT_REJECTED",
+      action: "PAYMENT_REJECTED",
       performedBy: req.clerkUserId,
-      targetId:    claimed._id,
+      targetId: claimed._id,
       description:
         `Admin rejected payment of ৳${claimed.amount} ` +
         `(${claimed.transactionId}) — ${rejectedReason.trim()}`,
-      after:    { status: "rejected", rejectedReason: rejectedReason.trim() },
+      after: { status: "rejected", rejectedReason: rejectedReason.trim() },
       metadata: {
         transactionId: claimed.transactionId,
-        amount:        claimed.amount,
-        memberId:      String(claimed.member?._id || claimed.member),
+        amount: claimed.amount,
+        memberId: String(claimed.member?._id || claimed.member),
       },
     });
 

@@ -13,6 +13,7 @@ import PaymentAllocation from "../models/PaymentAllocation.js";
 import { getCurrentFee } from "./feeService.js";
 import { getMemberCreditBalance } from "./creditService.js";
 import { MAX_PREPAY_MONTHS } from "../configs/paymentConfig.js";
+import { getDirectAllocations, buildAdvanceItem } from "../utils/paymentBreakdown.js";
 
 const MONTH_NAMES = [
   "", "January", "February", "March", "April", "May", "June",
@@ -212,7 +213,10 @@ export const getMemberTransactionHistory = async (memberId, limit = 24) => {
   const extraMap   = Object.fromEntries(extraCharges.map(c => [String(c._id), c]));
 
   return payments.map(payment => {
-    const allocations = allocationsByPayment[String(payment._id)] || [];
+    const allocations = getDirectAllocations(
+  payment,
+  allocationsByPayment[String(payment._id)] || [],
+);
 
     const breakdown = allocations.map(alloc => {
       if (alloc.chargeType === "monthly") {
@@ -228,6 +232,7 @@ export const getMemberTransactionHistory = async (memberId, limit = 24) => {
       }
     }).filter(Boolean);
 
-    return { ...payment, breakdown };
+    const advanceItem = buildAdvanceItem(payment);
+return { ...payment, breakdown: advanceItem ? [...breakdown, advanceItem] : breakdown };
   });
 };

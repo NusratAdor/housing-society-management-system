@@ -16,6 +16,8 @@ import PaymentAllocation from "../models/PaymentAllocation.js";
 import MonthlyCharge     from "../models/MonthlyCharge.js";
 import ExtraCharge       from "../models/ExtraCharge.js";
 import { getMemberDueBreakdown } from "./paymentService.js";
+import { getDirectAllocations, buildAdvanceItem } from "../utils/paymentBreakdown.js";
+
 
 const MONTH_NAMES = [
   "", "January", "February", "March", "April",
@@ -103,8 +105,10 @@ export const getMemberReportData = async ({
   const extraMap   = Object.fromEntries(extraCharges.map(c => [String(c._id), c]));
 
   // Build enriched payment objects
-  const enrichedPayments = payments.map(payment => {
-    const allocations = allocByPayment[String(payment._id)] || [];
+ const enrichedPayments = payments.map(payment => {
+  const allocations = getDirectAllocations(
+    payment,
+    allocByPayment[String(payment._id)] || [], );
 
     const breakdown = allocations.map(alloc => {
       if (alloc.chargeType === "monthly") {
@@ -127,17 +131,22 @@ export const getMemberReportData = async ({
       }
     }).filter(Boolean);
 
-    return { ...payment, breakdown };
+      const advanceItem = buildAdvanceItem(payment);
+  return { ...payment, breakdown: advanceItem ? [...breakdown, advanceItem] : breakdown };
   });
 
   // Compute period summary
-  const totalPaid        = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalMonthly     = allAllocations
-    .filter(a => a.chargeType === "monthly")
-    .reduce((sum, a) => sum + a.amount, 0);
-  const totalExtra       = allAllocations
-    .filter(a => a.chargeType === "extra")
-    .reduce((sum, a) => sum + a.amount, 0);
+  const directAllocations = payments.flatMap(p =>
+  getDirectAllocations(p, allocByPayment[String(p._id)] || []),
+);
+const totalPaid    = payments.reduce((sum, p) => sum + p.amount, 0);
+const totalMonthly = directAllocations
+  .filter(a => a.chargeType === "monthly")
+  .reduce((sum, a) => sum + a.amount, 0);
+const totalExtra   = directAllocations
+  .filter(a => a.chargeType === "extra")
+  .reduce((sum, a) => sum + a.amount, 0);
+const totalAdvance = payments.reduce((sum, p) => sum + (p.advanceAmount || 0), 0);
 
   return {
     member,
@@ -231,9 +240,10 @@ export const getSingleReceiptData = async ({ paymentId, memberId }) => {
     throw new Error("Receipts can only be generated for completed payments");
   }
 
-  const allocations = await PaymentAllocation
-    .find({ payment: paymentObjectId })
-    .lean();
+ const allocations = getDirectAllocations(
+  payment,
+  await PaymentAllocation.find({ payment: paymentObjectId }).lean(),
+);
 
   const monthlyIds = allocations.filter(a => a.chargeType === "monthly").map(a => a.chargeId);
   const extraIds   = allocations.filter(a => a.chargeType === "extra").map(a => a.chargeId);
@@ -274,6 +284,9 @@ export const getSingleReceiptData = async ({ paymentId, memberId }) => {
     if (a.type === b.type) return 0;
     return a.type === "monthly" ? -1 : 1;
   });
+
+  const advanceItem = buildAdvanceItem(payment);
+if (advanceItem) lineItems.push(advanceItem);
 
   return { payment, member, lineItems };
 };

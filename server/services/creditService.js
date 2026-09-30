@@ -37,6 +37,15 @@ import Member from "../models/Member.js";
 import Notification from "../models/Notification.js";
 import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
 
+
+
+const MONTH_NAMES = [
+  "", "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+
+
 // ─── getAvailableCreditDeposits ─────────────────────────────────────────────
 // Returns the member's completed payments that still have unapplied
 // credit, oldest first (FIFO), each annotated with how much of its
@@ -161,7 +170,7 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
     charge.paidAt = now;
     await charge.save({ session });
 
-    return { applied: true };
+    return { applied: true, month: charge.month, year: charge.year, amount: charge.amount };
   });
 
   // ── Notification — sent AFTER successful commit only, never inside
@@ -193,6 +202,27 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
       );
     }
   }
+
+
+
+  if (outcome.applied) {
+  try {
+    const member = await Member.findById(memberId).select("clerkUserId").lean();
+    if (member?.clerkUserId) {
+      await Notification.create({
+        type:        "Payment",
+        content:
+          `৳${outcome.amount.toLocaleString()} from your advance credit was applied to ` +
+          `${MONTH_NAMES[outcome.month]} ${outcome.year}. No payment is needed for this month.`,
+        clerkUserId: member.clerkUserId,
+        adminOnly:   false,
+      });
+    }
+  } catch (notifErr) {
+    console.error(`[CreditService] Applied notification failed for member ${memberId}:`, notifErr.message);
+  }
+}
+
 
   return outcome.applied;
 };

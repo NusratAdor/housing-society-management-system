@@ -6,13 +6,22 @@
 
 import { Parser as Json2csvParser } from "json2csv";
 
-const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString("en-GB") : "";
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-GB") : "");
 
 const MONTH_NAMES = [
-  "", "January", "February", "March", "April",
-  "May", "June", "July", "August", "September",
-  "October", "November", "December",
+  "",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 // ─── generateMemberCsv ────────────────────────────────────────────────────────
@@ -27,34 +36,39 @@ export const generateMemberCsv = ({ member, payments, summary }) => {
     if (payment.breakdown.length === 0) {
       // No allocation data available — output one summary row
       rows.push({
-        "Member Name":       member.name,
-        "Membership No":     member.membershipNo,
-        "Plot No":           member.plotNo,
-        "Email":             member.email,
-        "Receipt Number":    payment.receiptNumber || "",
-        "Transaction ID":    payment.transactionId,
-        "Payment Date":      fmtDate(payment.paidAt),
-        "Charge Type":       "",
-        "Description":       "Payment",
-        "Amount (BDT)":      payment.amount,
+        "Member Name": member.name,
+        "Membership No": member.membershipNo,
+        "Plot No": member.plotNo,
+        Email: member.email,
+        "Receipt Number": payment.receiptNumber || "",
+        "Transaction ID": payment.transactionId,
+        "Payment Date": fmtDate(payment.paidAt),
+        "Charge Type": "",
+        Description: "Payment",
+        "Amount (BDT)": payment.amount,
         "Payment Total (BDT)": payment.amount,
-        "Status":            payment.status,
+        Status: payment.status,
       });
     } else {
       for (const item of payment.breakdown) {
         rows.push({
-          "Member Name":       member.name,
-          "Membership No":     member.membershipNo,
-          "Plot No":           member.plotNo,
-          "Email":             member.email,
-          "Receipt Number":    payment.receiptNumber || "",
-          "Transaction ID":    payment.transactionId,
-          "Payment Date":      fmtDate(payment.paidAt),
-          "Charge Type":       item.type === "monthly" ? "Monthly Dues" : "Extra Charge",
-          "Description":       item.description,
-          "Amount (BDT)":      item.amount,
+          "Member Name": member.name,
+          "Membership No": member.membershipNo,
+          "Plot No": member.plotNo,
+          Email: member.email,
+          "Receipt Number": payment.receiptNumber || "",
+          "Transaction ID": payment.transactionId,
+          "Payment Date": fmtDate(payment.paidAt),
+          "Charge Type":
+            item.type === "monthly"
+              ? "Monthly Dues"
+              : item.type === "advance"
+                ? "Advance Credit"
+                : "Extra Charge",
+          Description: item.description,
+          "Amount (BDT)": item.amount,
           "Payment Total (BDT)": payment.amount,
-          "Status":            payment.status,
+          Status: payment.status,
         });
       }
     }
@@ -63,18 +77,18 @@ export const generateMemberCsv = ({ member, payments, summary }) => {
   // Append summary row at the bottom
   rows.push({});
   rows.push({
-    "Member Name":         "PERIOD SUMMARY",
-    "Membership No":       "",
-    "Plot No":             "",
-    "Email":               "",
-    "Receipt Number":      "",
-    "Transaction ID":      "",
-    "Payment Date":        `${fmtDate(summary.periodStart)} to ${fmtDate(summary.periodEnd)}`,
-    "Charge Type":         "",
-    "Description":         "Total Paid",
-    "Amount (BDT)":        summary.totalPaid,
+    "Member Name": "PERIOD SUMMARY",
+    "Membership No": "",
+    "Plot No": "",
+    Email: "",
+    "Receipt Number": "",
+    "Transaction ID": "",
+    "Payment Date": `${fmtDate(summary.periodStart)} to ${fmtDate(summary.periodEnd)}`,
+    "Charge Type": "",
+    Description: "Total Paid",
+    "Amount (BDT)": summary.totalPaid,
     "Payment Total (BDT)": summary.totalPaid,
-    "Status":              "",
+    Status: "",
   });
 
   if (rows.length === 0) {
@@ -90,32 +104,32 @@ export const generateMemberCsv = ({ member, payments, summary }) => {
 // Suitable for importing into accounting software.
 
 export const generateAdminCsv = ({ payments, summary }) => {
-  const rows = payments.map(payment => ({
-    "Date":           fmtDate(payment.paidAt),
-    "Receipt No":     payment.receiptNumber || "",
+  const rows = payments.map((payment) => ({
+    Date: fmtDate(payment.paidAt),
+    "Receipt No": payment.receiptNumber || "",
     "Transaction ID": payment.transactionId,
-    "Member Name":    payment.member?.name         || "—",
-    "Membership No":  payment.member?.membershipNo || "—",
-    "Plot No":        payment.member?.plotNo        || "—",
-    "Email":          payment.member?.email         || "—",
-    "Amount (BDT)":   payment.amount,
-    "Gateway":        payment.gateway || "sslcommerz",
-    "Status":         payment.status,
+    "Member Name": payment.member?.name || "—",
+    "Membership No": payment.member?.membershipNo || "—",
+    "Plot No": payment.member?.plotNo || "—",
+    Email: payment.member?.email || "—",
+    "Amount (BDT)": payment.amount,
+    Gateway: payment.gateway || "sslcommerz",
+    Status: payment.status,
   }));
 
   // Summary rows
   rows.push({});
   rows.push({
-    "Date":           "PERIOD TOTAL",
-    "Receipt No":     "",
+    Date: "PERIOD TOTAL",
+    "Receipt No": "",
     "Transaction ID": "",
-    "Member Name":    `${summary.membersWhoPayd} members`,
-    "Membership No":  "",
-    "Plot No":        "",
-    "Email":          `${fmtDate(summary.periodStart)} — ${fmtDate(summary.periodEnd)}`,
-    "Amount (BDT)":   summary.totalCollection,
-    "Gateway":        "",
-    "Status":         `${summary.totalPayments} payments`,
+    "Member Name": `${summary.membersWhoPayd} members`,
+    "Membership No": "",
+    "Plot No": "",
+    Email: `${fmtDate(summary.periodStart)} — ${fmtDate(summary.periodEnd)}`,
+    "Amount (BDT)": summary.totalCollection,
+    Gateway: "",
+    Status: `${summary.totalPayments} payments`,
   });
 
   if (payments.length === 0) {
@@ -123,8 +137,16 @@ export const generateAdminCsv = ({ payments, summary }) => {
   }
 
   const fields = [
-    "Date", "Receipt No", "Transaction ID", "Member Name",
-    "Membership No", "Plot No", "Email", "Amount (BDT)", "Gateway", "Status",
+    "Date",
+    "Receipt No",
+    "Transaction ID",
+    "Member Name",
+    "Membership No",
+    "Plot No",
+    "Email",
+    "Amount (BDT)",
+    "Gateway",
+    "Status",
   ];
   const parser = new Json2csvParser({ fields });
   return parser.parse(rows);

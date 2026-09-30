@@ -35,21 +35,32 @@
 //   emailLayout()   — shared HTML wrapper for all emails
 //   Each public function builds its own bodyContent and calls sendEmail()
 
-import { Resend }        from "resend";
-import MonthlyCharge     from "../models/MonthlyCharge.js";
-import ExtraCharge       from "../models/ExtraCharge.js";
+import { Resend } from "resend";
+import MonthlyCharge from "../models/MonthlyCharge.js";
+import ExtraCharge from "../models/ExtraCharge.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const resend      = new Resend(process.env.RESEND_API_KEY);
-const FROM        = process.env.FROM_EMAIL
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM = process.env.FROM_EMAIL
   ? `GOHS <${process.env.FROM_EMAIL}>`
   : "GOHS <noreply@gohs.example.com>";
-const FRONTEND    = process.env.FRONTEND_URL || "https://yourdomain.com";
-const SOCIETY     = "Government Officer's Housing Society";
+const FRONTEND = process.env.FRONTEND_URL || "https://yourdomain.com";
+const SOCIETY = "Government Officer's Housing Society";
 const MONTH_NAMES = [
-  "", "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -57,7 +68,9 @@ const MONTH_NAMES = [
 const fmt = (n) => Number(n).toLocaleString();
 const fmtDate = (d) =>
   new Date(d).toLocaleDateString("en-GB", {
-    day: "numeric", month: "long", year: "numeric",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
   });
 
 /**
@@ -75,8 +88,8 @@ const sendEmail = async ({ to, subject, html }) => {
   }
 
   const result = await resend.emails.send({
-    from:    FROM,
-    to:      Array.isArray(to) ? to : [to],
+    from: FROM,
+    to: Array.isArray(to) ? to : [to],
     subject,
     html,
   });
@@ -159,9 +172,11 @@ const chargeRow = ({ description, subtext, amount, isBold = false }) => `
     <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;
                font-size:14px;color:#374151;line-height:1.5;">
       ${description}
-      ${subtext
-        ? `<br/><span style="font-size:12px;color:#9ca3af;">${subtext}</span>`
-        : ""}
+      ${
+        subtext
+          ? `<br/><span style="font-size:12px;color:#9ca3af;">${subtext}</span>`
+          : ""
+      }
     </td>
     <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;
                font-size:14px;text-align:right;white-space:nowrap;
@@ -205,91 +220,177 @@ const totalRow = ({ label, amount, color = "#065f46" }) => `
  *
  * Called from: adminPaymentController.approvePayment — the only call site.
  */
+
+const remainingBalanceHtml = (remainingDue) =>
+  remainingDue > 0
+    ? `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="border:1px solid #fde68a;border-radius:10px;
+                overflow:hidden;margin-bottom:24px;background:#fffbeb;">
+    <tr>
+      <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#92400e;">
+        Remaining Outstanding Balance
+      </td>
+      <td style="padding:14px 20px;text-align:right;font-size:16px;
+                 font-weight:800;color:#b45309;white-space:nowrap;">
+        ৳${fmt(remainingDue)}
+      </td>
+    </tr>
+  </table>`
+    : "";
+
+// Months cleared automatically from banked credit + credit still available.
+const creditSummaryHtml = ({ creditApplied = [], creditBalance = 0 }) => {
+  const appliedTable =
+    creditApplied.length > 0
+      ? `
+    <p style="font-size:13px;font-weight:600;color:#374151;
+              text-transform:uppercase;letter-spacing:0.5px;margin:0 0 10px;">
+      Applied From Your Credit
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="border:1px solid #e5e7eb;border-radius:10px;
+                  overflow:hidden;margin-bottom:20px;">
+      <tbody>
+        ${creditApplied
+          .map((m) =>
+            chargeRow({
+              description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
+              subtext: "Paid from your credit balance",
+              amount: m.amount,
+            }),
+          )
+          .join("")}
+      </tbody>
+    </table>`
+      : "";
+
+  const balanceTable =
+    creditBalance > 0
+      ? `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="border:1px solid #bbf7d0;border-radius:10px;
+                  overflow:hidden;margin-bottom:24px;background:#f0fdf4;">
+      <tr>
+        <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#065f46;">
+          Remaining Credit Balance
+        </td>
+        <td style="padding:14px 20px;text-align:right;font-size:16px;
+                   font-weight:800;color:#059669;white-space:nowrap;">
+          ৳${fmt(creditBalance)}
+        </td>
+      </tr>
+    </table>`
+      : "";
+
+  return appliedTable + balanceTable;
+};
+
 export const sendPaymentConfirmationEmail = async ({
   to,
   name,
   amount,
   receiptNumber,
   paidAt,
-  allocations  = [],
+  allocations = [],
   remainingDue = 0,
+  advanceAmount = 0,
+  creditBalance = 0,
+  creditApplied = [],
 }) => {
-  const monthlyAllocations = allocations.filter(a => a.chargeType === "monthly");
-  const extraAllocations   = allocations.filter(a => a.chargeType === "extra");
+  const monthlyAllocations = allocations.filter(
+    (a) => a.chargeType === "monthly",
+  );
+  const extraAllocations = allocations.filter((a) => a.chargeType === "extra");
 
-  const monthlyChargeIds = monthlyAllocations.map(a => a.chargeId);
-  const extraChargeIds   = extraAllocations.map(a => a.chargeId);
+  const monthlyChargeIds = monthlyAllocations.map((a) => a.chargeId);
+  const extraChargeIds = extraAllocations.map((a) => a.chargeId);
 
   // Only fetch descriptive metadata (month/year, label/purpose) here —
   // never the charge's `amount` field, which is not reliable for what
   // was paid in THIS transaction once partial payments are involved.
   const [monthlyMeta, extraMeta] = await Promise.all([
     monthlyChargeIds.length > 0
-      ? MonthlyCharge.find({ _id: { $in: monthlyChargeIds } }).select("month year").lean()
+      ? MonthlyCharge.find({ _id: { $in: monthlyChargeIds } })
+          .select("month year")
+          .lean()
       : [],
     extraChargeIds.length > 0
-      ? ExtraCharge.find({ _id: { $in: extraChargeIds } }).select("label purpose").lean()
+      ? ExtraCharge.find({ _id: { $in: extraChargeIds } })
+          .select("label purpose")
+          .lean()
       : [],
   ]);
 
-  const monthlyMetaMap = Object.fromEntries(monthlyMeta.map(c => [String(c._id), c]));
-  const extraMetaMap   = Object.fromEntries(extraMeta.map(c => [String(c._id), c]));
+  const monthlyMetaMap = Object.fromEntries(
+    monthlyMeta.map((c) => [String(c._id), c]),
+  );
+  const extraMetaMap = Object.fromEntries(
+    extraMeta.map((c) => [String(c._id), c]),
+  );
 
   const monthlyRowsBuilt = monthlyAllocations
-    .map(a => {
+    .map((a) => {
       const meta = monthlyMetaMap[String(a.chargeId)];
-      return meta ? { month: meta.month, year: meta.year, amount: a.amount } : null;
+      return meta
+        ? { month: meta.month, year: meta.year, amount: a.amount }
+        : null;
     })
     .filter(Boolean)
     .sort((x, y) => (x.year !== y.year ? x.year - y.year : x.month - y.month));
 
   const extraRowsBuilt = extraAllocations
-    .map(a => {
+    .map((a) => {
       const meta = extraMetaMap[String(a.chargeId)];
-      return meta ? { label: meta.label, purpose: meta.purpose, amount: a.amount } : null;
+      return meta
+        ? { label: meta.label, purpose: meta.purpose, amount: a.amount }
+        : null;
     })
     .filter(Boolean);
 
-  const hasBreakdown = monthlyRowsBuilt.length > 0 || extraRowsBuilt.length > 0;
+  const hasBreakdown =
+    monthlyRowsBuilt.length > 0 ||
+    extraRowsBuilt.length > 0 ||
+    advanceAmount > 0;
 
   const breakdownRows = [
-    ...monthlyRowsBuilt.map(m =>
+    ...monthlyRowsBuilt.map((m) =>
       chargeRow({
         description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
-        amount:      m.amount,
-      })
+        amount: m.amount,
+      }),
     ),
-    ...extraRowsBuilt.map(c =>
+    ...extraRowsBuilt.map((c) =>
       chargeRow({
         description: c.label,
-        subtext:     c.purpose,
-        amount:      c.amount,
-      })
+        subtext: c.purpose,
+        amount: c.amount,
+      }),
     ),
+
+    ...(advanceAmount > 0
+      ? [
+          chargeRow({
+            description: "Advance Payment",
+            subtext: "Added to your credit balance",
+            amount: advanceAmount,
+          }),
+        ]
+      : []),
+
     totalRow({ label: "Total Paid", amount }),
   ].join("");
 
   const isFullyCleared = remainingDue <= 0;
 
-  const introText = isFullyCleared
-    ? `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}. Your account has been updated and your dues are fully cleared.`
-    : `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}. Your account has been updated accordingly.`;
+  const advanceNote =
+    advanceAmount > 0
+      ? ` ৳${fmt(advanceAmount)} of this payment was added to your advance credit.`
+      : "";
 
-  const remainingBalanceBlock = !isFullyCleared ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #fde68a;border-radius:10px;
-                  overflow:hidden;margin-bottom:24px;background:#fffbeb;">
-      <tr>
-        <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#92400e;">
-          Remaining Outstanding Balance
-        </td>
-        <td style="padding:14px 20px;text-align:right;font-size:16px;
-                   font-weight:800;color:#b45309;white-space:nowrap;">
-          ৳${fmt(remainingDue)}
-        </td>
-      </tr>
-    </table>
-  ` : "";
+  const introText = isFullyCleared
+    ? `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}.${advanceNote} Your account has been updated and your dues are fully cleared.`
+    : `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}.${advanceNote} Your account has been updated accordingly.`;
 
   const bodyContent = `
     <div style="text-align:center;margin-bottom:28px;">
@@ -337,7 +438,9 @@ export const sendPaymentConfirmationEmail = async ({
       </tr>
     </table>
 
-    ${hasBreakdown ? `
+    ${
+      hasBreakdown
+        ? `
       <p style="font-size:13px;font-weight:600;color:#374151;
                 text-transform:uppercase;letter-spacing:0.5px;margin:0 0 10px;">
         Payment Breakdown
@@ -361,9 +464,12 @@ export const sendPaymentConfirmationEmail = async ({
         </thead>
         <tbody>${breakdownRows}</tbody>
       </table>
-    ` : ""}
+    `
+        : ""
+    }
 
-    ${remainingBalanceBlock}
+    ${creditSummaryHtml({ creditApplied, creditBalance })}
+${remainingBalanceHtml(remainingDue)}
 
     <div style="text-align:center;margin-top:8px;">
       <a href="${FRONTEND}/dashboard"
@@ -379,13 +485,12 @@ export const sendPaymentConfirmationEmail = async ({
     to,
     subject: `Payment Confirmed — Receipt ${receiptNumber}`,
     html: emailLayout({
-      title:      "Payment Confirmed",
-      preheader:  `৳${fmt(amount)} received · Receipt ${receiptNumber}`,
+      title: "Payment Confirmed",
+      preheader: `৳${fmt(amount)} received · Receipt ${receiptNumber}`,
       bodyContent,
     }),
   });
 };
-
 
 /**
  * sendAdvancePaymentConfirmationEmail
@@ -403,6 +508,8 @@ export const sendAdvancePaymentConfirmationEmail = async ({
   receiptNumber,
   paidAt,
   creditBalance,
+  creditApplied = [],
+  remainingDue = 0,
 }) => {
   const bodyContent = `
     <div style="text-align:center;margin-bottom:28px;">
@@ -422,12 +529,15 @@ export const sendAdvancePaymentConfirmationEmail = async ({
       Dear <strong>${name}</strong>,
     </p>
     <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.7;">
-      We have received your advance payment of
-      <strong style="color:#111827;">৳${fmt(amount)}</strong>
-      on ${fmtDate(paidAt)}. This amount will be automatically applied to
-      your upcoming monthly maintenance dues as they become due —
-      no further action is required from you until it is used up.
-    </p>
+  We have received your advance payment of
+  <strong style="color:#111827;">৳${fmt(amount)}</strong>
+  on ${fmtDate(paidAt)}.
+  ${
+    creditApplied.length > 0
+      ? "It has been applied to your outstanding monthly dues, shown below. Any remaining amount stays as credit and will be applied automatically to your upcoming dues."
+      : "This amount will be applied automatically to your upcoming monthly dues as they are billed — no further action is required until it is used up."
+  }
+</p>
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            style="background:#f8fafc;border:1px solid #e2e8f0;
@@ -482,18 +592,12 @@ export const sendAdvancePaymentConfirmationEmail = async ({
     to,
     subject: `Advance Payment Received — Receipt ${receiptNumber}`,
     html: emailLayout({
-      title:      "Advance Payment Received",
-      preheader:  `৳${fmt(amount)} added to your credit balance · Receipt ${receiptNumber}`,
+      title: "Advance Payment Received",
+      preheader: `৳${fmt(amount)} added to your credit balance · Receipt ${receiptNumber}`,
       bodyContent,
     }),
   });
 };
-
-
-
-
-
-
 
 /**
  * sendDueReminderEmail
@@ -509,26 +613,30 @@ export const sendDueReminderEmail = async ({
   totalDue,
   totalMonthlyDue,
   totalExtraDue,
-  unpaidMonths  = [],
+  unpaidMonths = [],
   unpaidCharges = [],
 }) => {
-  const monthlyRows = unpaidMonths.map(m =>
-    chargeRow({
-      description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
-      amount:      m.amount,
-    })
-  ).join("");
+  const monthlyRows = unpaidMonths
+    .map((m) =>
+      chargeRow({
+        description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
+        amount: m.amount,
+      }),
+    )
+    .join("");
 
-  const extraRows = unpaidCharges.map(c =>
-    chargeRow({
-      description: c.label,
-      subtext:     c.purpose,
-      amount:      c.amount,
-    })
-  ).join("");
+  const extraRows = unpaidCharges
+    .map((c) =>
+      chargeRow({
+        description: c.label,
+        subtext: c.purpose,
+        amount: c.amount,
+      }),
+    )
+    .join("");
 
   const hasMonthly = unpaidMonths.length > 0;
-  const hasExtra   = unpaidCharges.length > 0;
+  const hasExtra = unpaidCharges.length > 0;
 
   const bodyContent = `
     <div style="text-align:center;margin-bottom:28px;">
@@ -553,7 +661,9 @@ export const sendDueReminderEmail = async ({
       that should be cleared before the end of this month.
     </p>
 
-    ${hasMonthly ? `
+    ${
+      hasMonthly
+        ? `
       <p style="font-size:13px;font-weight:600;color:#374151;
                 text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px;">
         Monthly Dues
@@ -566,9 +676,13 @@ export const sendDueReminderEmail = async ({
           ${totalRow({ label: "Monthly Total", amount: totalMonthlyDue, color: "#92400e" })}
         </tbody>
       </table>
-    ` : ""}
+    `
+        : ""
+    }
 
-    ${hasExtra ? `
+    ${
+      hasExtra
+        ? `
       <p style="font-size:13px;font-weight:600;color:#374151;
                 text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px;">
         Additional Charges
@@ -581,7 +695,9 @@ export const sendDueReminderEmail = async ({
           ${totalRow({ label: "Charges Total", amount: totalExtraDue, color: "#92400e" })}
         </tbody>
       </table>
-    ` : ""}
+    `
+        : ""
+    }
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            style="border:2px solid #dc2626;border-radius:10px;
@@ -615,8 +731,8 @@ export const sendDueReminderEmail = async ({
     to,
     subject: `⏰ Payment Reminder — ৳${fmt(totalDue)} Due`,
     html: emailLayout({
-      title:      "Payment Reminder",
-      preheader:  `You have ৳${fmt(totalDue)} outstanding. Please pay before month-end.`,
+      title: "Payment Reminder",
+      preheader: `You have ৳${fmt(totalDue)} outstanding. Please pay before month-end.`,
       bodyContent,
     }),
   });
@@ -644,13 +760,19 @@ export const sendNoticeEmail = async (to, notice) => {
       ${date ? fmtDate(date) : ""}
     </p>
 
-    ${optimisedImage ? `
+    ${
+      optimisedImage
+        ? `
       <img src="${optimisedImage}" alt="${title}"
            width="520" style="max-width:100%;height:auto;border-radius:10px;
                               display:block;margin:0 0 20px;" />
-    ` : ""}
+    `
+        : ""
+    }
 
-    ${summary ? `
+    ${
+      summary
+        ? `
       <div style="background:#f0fdf4;border-left:3px solid #10b981;
                   padding:12px 16px;border-radius:0 6px 6px 0;margin:0 0 20px;">
         <p style="margin:0;font-size:15px;font-weight:500;color:#065f46;
@@ -658,7 +780,9 @@ export const sendNoticeEmail = async (to, notice) => {
           ${summary}
         </p>
       </div>
-    ` : ""}
+    `
+        : ""
+    }
 
     <div style="font-size:15px;color:#374151;line-height:1.8;margin:0 0 28px;">
       ${content.replace(/\n/g, "<br/>")}
@@ -678,8 +802,8 @@ export const sendNoticeEmail = async (to, notice) => {
     to,
     subject: `📢 New Notice: ${title}`,
     html: emailLayout({
-      title:      `New Notice: ${title}`,
-      preheader:  summary || `New notice published: ${title}`,
+      title: `New Notice: ${title}`,
+      preheader: summary || `New notice published: ${title}`,
       bodyContent,
     }),
   });
