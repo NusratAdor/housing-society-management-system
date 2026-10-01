@@ -1,38 +1,18 @@
 // server/jobs/paymentJobs.js
+
+// Daily cron job. Registered once at server startup via runDailyJobs.
 //
-// Daily cron job. Registered once at server startup via runDailyJobs().
-//
-// Production jobs:
 // Task 1 — 1st of month:
-//          Create MonthlyCharge for every member at the locked fee.
+//          Create MonthlyCharge for every member at the
+//          locked fee for that month.
 //
 // Task 2 — 9 days before month-end:
 //          Queue due reminder emails.
 //
-// Email dispatcher:
-//          Every 5 minutes.
-//          Confirmation emails first.
-//          Due reminders second.
-//
-// ---------------------------------------------------------------
-// TEMPORARY TEST MODE
-// ---------------------------------------------------------------
-//
-// Set ENABLE_TEST_REMINDER_CRON = true to test the reminder cron.
-//
-// The test cron:
-//
-// 1. Runs every minute.
-// 2. Runs ONLY ONCE.
-// 3. Targets ONLY the three emails listed in
-//    TEST_REMINDER_MEMBER_EMAILS.
-// 4. Uses their REAL current due balance.
-// 5. Creates the normal Notification + EmailQueueItem.
-// 6. The normal 5-minute dispatcher sends the email.
-//
-// IMPORTANT:
-// Remove/disable the test section after testing.
-//
+// Email dispatcher — every 5 min:
+//          Confirmations first.
+//          Reminders second.
+//          Both share one safe daily budget.
 
 import cron from "node-cron";
 
@@ -81,53 +61,23 @@ const CONFIRMATION_TYPES = [
 
 
 // ===============================================================
-// TEMPORARY TEST CONFIGURATION
-// ===============================================================
-//
-// IMPORTANT:
-// Replace these three example emails with the REAL email
-// addresses of the three members you want to test.
-//
-// Example:
-//
-// const TEST_REMINDER_MEMBER_EMAILS = [
-//   "member1@gmail.com",
-//   "member2@gmail.com",
-//   "member3@gmail.com",
-// ];
-//
-
-const ENABLE_TEST_REMINDER_CRON = true;
-
-const TEST_REMINDER_MEMBER_EMAILS = [
-  "nusratjahan141462@gmail.com",
-  "washiflasker1234@gmail.com",
-  "washifshazan21@gmail.com",
-];
-
-
-// This prevents the temporary test cron from executing more
-// than once during the current server process.
-//
-// If you restart the server, it can run once again.
-let testReminderHasRun = false;
-
-
-// ===============================================================
 // SEND ONE EMAIL QUEUE ITEM
 // ===============================================================
 
 const sendQueueItem = async (item) => {
   try {
+
     // -----------------------------------------------------------
     // Payment confirmation
     // -----------------------------------------------------------
 
     if (item.type === "payment_confirmation") {
+
       await sendPaymentConfirmationEmail({
         to: item.to,
         ...item.payload,
       });
+
     }
 
     // -----------------------------------------------------------
@@ -135,10 +85,12 @@ const sendQueueItem = async (item) => {
     // -----------------------------------------------------------
 
     else if (item.type === "advance_confirmation") {
+
       await sendAdvancePaymentConfirmationEmail({
         to: item.to,
         ...item.payload,
       });
+
     }
 
     // -----------------------------------------------------------
@@ -146,14 +98,17 @@ const sendQueueItem = async (item) => {
     // -----------------------------------------------------------
 
     else if (item.type === "due_reminder") {
+
       await sendDueReminderEmail({
         to: item.to,
         ...item.payload,
       });
+
     }
 
+
     // -----------------------------------------------------------
-    // Mark email as successfully sent
+    // Mark email as sent
     // -----------------------------------------------------------
 
     await EmailQueueItem.updateOne(
@@ -166,7 +121,9 @@ const sendQueueItem = async (item) => {
       }
     );
 
+
     return true;
+
 
   } catch (err) {
 
@@ -174,27 +131,35 @@ const sendQueueItem = async (item) => {
     // Retry handling
     // -----------------------------------------------------------
 
-    const nextRetryCount = (item.retryCount || 0) + 1;
+    const nextRetryCount =
+      (item.retryCount || 0) + 1;
 
     const stillRetryable =
       nextRetryCount < MAX_RETRY_ATTEMPTS;
+
 
     await EmailQueueItem.updateOne(
       { _id: item._id },
       {
         $set: {
-          status: stillRetryable ? "pending" : "failed",
+          status: stillRetryable
+            ? "pending"
+            : "failed",
+
           retryCount: nextRetryCount,
+
           error: err.message,
         },
       }
     );
+
 
     console.error(
       `[EmailQueue] Send failed for ${item.to} ` +
       `(type: ${item.type}, attempt ${nextRetryCount}):`,
       err.message
     );
+
 
     return false;
   }
@@ -205,13 +170,17 @@ const sendQueueItem = async (item) => {
 // MONTHLY CHARGE JOB
 // ===============================================================
 
-export const runMonthlyChargeJob = async (month, year) => {
+export const runMonthlyChargeJob = async (
+  month,
+  year
+) => {
 
-  const result = await createMonthlyChargesForMonth({
-    month,
-    year,
-    performedBy: "SYSTEM",
-  });
+  const result =
+    await createMonthlyChargesForMonth({
+      month,
+      year,
+      performedBy: "SYSTEM",
+    });
 
 
   console.info(
@@ -221,16 +190,19 @@ export const runMonthlyChargeJob = async (month, year) => {
 
 
   await Notification.create({
+
     type: "Payment",
 
     content:
-      `Monthly maintenance fee of ৳${result.fee.toLocaleString()} ` +
+      `Monthly maintenance fee of ` +
+      `৳${result.fee.toLocaleString()} ` +
       `has been added for ${month}/${year}. ` +
       `Please pay before month-end.`,
 
     clerkUserId: null,
 
     adminOnly: false,
+
   });
 
 
@@ -241,89 +213,17 @@ export const runMonthlyChargeJob = async (month, year) => {
 // ===============================================================
 // QUEUE DUE REMINDERS
 // ===============================================================
-//
-// Production:
-//     queueDueReminders()
-//
-// This processes ALL active members.
-//
-// Test:
-//     queueDueReminders({
-//       memberEmails: [
-//         "member1@example.com",
-//         "member2@example.com",
-//         "member3@example.com"
-//       ]
-//     })
-//
-// This processes ONLY those members.
-//
 
-export const queueDueReminders = async ({
-  memberEmails = null,
-} = {}) => {
+export const queueDueReminders = async () => {
 
-  // -----------------------------------------------------------
-  // Build member query
-  // -----------------------------------------------------------
+  const members =
+    await Member
+      .find({
+        status: "active",
+      })
+      .select("_id clerkUserId name email")
+      .lean();
 
-  const memberQuery = {
-    status: "active",
-  };
-
-
-  // -----------------------------------------------------------
-  // If memberEmails are supplied,
-  // only those members will be selected.
-  // -----------------------------------------------------------
-
-  if (Array.isArray(memberEmails) && memberEmails.length > 0) {
-
-    memberQuery.email = {
-      $in: memberEmails,
-    };
-
-  }
-
-
-  // -----------------------------------------------------------
-  // Find members
-  // -----------------------------------------------------------
-
-  const members = await Member
-    .find(memberQuery)
-    .select("_id clerkUserId name email")
-    .lean();
-
-
-  console.info(
-    `[Cron] Reminder target members found: ${members.length}`
-  );
-
-
-  // -----------------------------------------------------------
-  // Safety log
-  // -----------------------------------------------------------
-
-  if (
-    Array.isArray(memberEmails) &&
-    memberEmails.length > 0
-  ) {
-
-    console.info(
-      `[TEST CRON] Requested ${memberEmails.length} member(s).`
-    );
-
-    console.info(
-      `[TEST CRON] Found emails:`,
-      members.map((member) => member.email)
-    );
-  }
-
-
-  // -----------------------------------------------------------
-  // Counters
-  // -----------------------------------------------------------
 
   let reminded = 0;
 
@@ -333,38 +233,22 @@ export const queueDueReminders = async ({
 
 
   // =============================================================
-  // PROCESS EACH MEMBER
+  // PROCESS MEMBERS
   // =============================================================
 
   for (const member of members) {
 
-    console.info(
-      `[Cron] Checking due balance for ${member.email}`
-    );
-
-
-    // -----------------------------------------------------------
-    // Get REAL current due balance
-    // -----------------------------------------------------------
-
     const breakdown =
-      await getMemberDueBreakdown(member._id);
-
-
-    console.info(
-      `[Cron] ${member.email} -> totalDue=৳${breakdown.totalDue}`
-    );
+      await getMemberDueBreakdown(
+        member._id
+      );
 
 
     // -----------------------------------------------------------
-    // No outstanding amount
+    // Member has no outstanding balance
     // -----------------------------------------------------------
 
     if (breakdown.totalDue === 0) {
-
-      console.info(
-        `[Cron] ${member.email} is paid. Skipping reminder.`
-      );
 
       skipped++;
 
@@ -383,23 +267,22 @@ export const queueDueReminders = async ({
         type: "Payment",
 
         content:
-          `Reminder: You have ৳${breakdown.totalDue.toLocaleString()} ` +
+          `Reminder: You have ` +
+          `৳${breakdown.totalDue.toLocaleString()} ` +
           `outstanding. Please pay before month-end.`,
 
-        clerkUserId: member.clerkUserId,
+        clerkUserId:
+          member.clerkUserId,
 
         adminOnly: false,
+
       });
-
-
-      console.info(
-        `[Cron] Notification created for ${member.email}`
-      );
 
     } catch (notifErr) {
 
       console.error(
-        `[Cron] Notification failed for ${member.email}:`,
+        `[Cron] Notification failed for ` +
+        `${member.clerkUserId}:`,
         notifErr.message
       );
 
@@ -413,12 +296,7 @@ export const queueDueReminders = async ({
     try {
 
       // ---------------------------------------------------------
-      // Safety check:
-      //
-      // Don't create another pending reminder for the same
-      // member if one is already waiting to be sent.
-      //
-      // This is especially useful during testing.
+      // Prevent duplicate pending reminder emails
       // ---------------------------------------------------------
 
       const existingPendingReminder =
@@ -447,7 +325,7 @@ export const queueDueReminders = async ({
 
 
       // ---------------------------------------------------------
-      // Add email to queue
+      // Queue reminder email
       // ---------------------------------------------------------
 
       await enqueueEmail({
@@ -487,18 +365,14 @@ export const queueDueReminders = async ({
       reminded++;
 
 
-      console.info(
-        `[Cron] Reminder queued successfully for ${member.email}`
-      );
-
-
     } catch (queueErr) {
 
       queueFail++;
 
 
       console.error(
-        `[Cron] Failed to queue reminder for ${member.email}:`,
+        `[Cron] Failed to queue reminder for ` +
+        `${member.email}:`,
         queueErr.message
       );
 
@@ -508,7 +382,7 @@ export const queueDueReminders = async ({
 
 
   // =============================================================
-  // FINAL RESULT
+  // FINAL LOG
   // =============================================================
 
   console.info(
@@ -530,32 +404,16 @@ export const queueDueReminders = async ({
 // ===============================================================
 // EMAIL DISPATCHER
 // ===============================================================
-//
-// Runs every 5 minutes.
-//
-// Priority:
-//
-// 1. Payment confirmations
-// 2. Advance confirmations
-// 3. Due reminders
-//
-// Total daily safe limit = 90
-// Reminder daily limit   = 70
-//
 
 export const runEmailDispatchCycle = async () => {
 
   // -----------------------------------------------------------
-  // How many emails have already been sent today?
+  // Total emails already sent today
   // -----------------------------------------------------------
 
   const sentSoFar =
     await getSentTodayCount();
 
-
-  // -----------------------------------------------------------
-  // Remaining safe daily capacity
-  // -----------------------------------------------------------
 
   const totalRemaining =
     SAFE_DAILY_CAP - sentSoFar;
@@ -572,8 +430,7 @@ export const runEmailDispatchCycle = async () => {
 
 
   // =============================================================
-  // STEP 1
-  // PAYMENT CONFIRMATIONS FIRST
+  // CONFIRMATION EMAILS FIRST
   // =============================================================
 
   const pendingConfirmations =
@@ -597,10 +454,6 @@ export const runEmailDispatchCycle = async () => {
   let failed = 0;
 
 
-  // -----------------------------------------------------------
-  // Send confirmations
-  // -----------------------------------------------------------
-
   for (const item of pendingConfirmations) {
 
     const ok =
@@ -612,16 +465,19 @@ export const runEmailDispatchCycle = async () => {
       : failed++;
 
 
-    // Small gap between emails
-    await new Promise((resolve) =>
-      setTimeout(resolve, SEND_GAP_MS)
+    await new Promise(
+      (resolve) =>
+        setTimeout(
+          resolve,
+          SEND_GAP_MS
+        )
     );
+
   }
 
 
   // =============================================================
-  // STEP 2
-  // CALCULATE REMAINING DAILY CAPACITY
+  // REMAINING DAILY CAPACITY
   // =============================================================
 
   const sentAfterConfirmations =
@@ -629,7 +485,8 @@ export const runEmailDispatchCycle = async () => {
 
 
   const remainingAfterConfirmations =
-    SAFE_DAILY_CAP - sentAfterConfirmations;
+    SAFE_DAILY_CAP -
+    sentAfterConfirmations;
 
 
   if (remainingAfterConfirmations <= 0) {
@@ -643,8 +500,7 @@ export const runEmailDispatchCycle = async () => {
 
 
   // =============================================================
-  // STEP 3
-  // CHECK REMINDER DAILY LIMIT
+  // REMINDER DAILY CAP
   // =============================================================
 
   const reminderSentToday =
@@ -655,13 +511,14 @@ export const runEmailDispatchCycle = async () => {
 
   const reminderRoom =
     Math.min(
-      REMINDER_DAILY_CAP - reminderSentToday,
+      REMINDER_DAILY_CAP -
+        reminderSentToday,
+
       remainingAfterConfirmations
     );
 
 
   // =============================================================
-  // STEP 4
   // SEND REMINDERS
   // =============================================================
 
@@ -692,9 +549,14 @@ export const runEmailDispatchCycle = async () => {
         : failed++;
 
 
-      await new Promise((resolve) =>
-        setTimeout(resolve, SEND_GAP_MS)
+      await new Promise(
+        (resolve) =>
+          setTimeout(
+            resolve,
+            SEND_GAP_MS
+          )
       );
+
     }
   }
 
@@ -713,67 +575,69 @@ export const runEmailDispatchCycle = async () => {
 const STALE_PROCESSING_MINUTES = 10;
 
 
-export const recoverStaleProcessingPayments = async () => {
+export const recoverStaleProcessingPayments =
+  async () => {
 
-  const cutoff =
-    new Date(
-      Date.now() -
-      STALE_PROCESSING_MINUTES * 60 * 1000
-    );
+    const cutoff =
+      new Date(
+        Date.now() -
+        STALE_PROCESSING_MINUTES *
+          60 *
+          1000
+      );
 
 
-  const result =
-    await Payment.updateMany(
+    const result =
+      await Payment.updateMany(
 
-      {
-        status: "processing",
+        {
+          status: "processing",
 
-        processingAt: {
-          $lt: cutoff,
-        },
-      },
-
-      {
-        $set: {
-          status: "verified",
+          processingAt: {
+            $lt: cutoff,
+          },
         },
 
-        $unset: {
-          processingAt: "",
-        },
-      }
+        {
+          $set: {
+            status: "verified",
+          },
 
-    );
+          $unset: {
+            processingAt: "",
+          },
+        }
 
-
-  if (result.modifiedCount > 0) {
-
-    console.warn(
-      `[Payments] Released ` +
-      `${result.modifiedCount} stale "processing" payment(s) ` +
-      `back to "verified"`
-    );
-  }
+      );
 
 
-  return result.modifiedCount;
-};
+    if (result.modifiedCount > 0) {
+
+      console.warn(
+        `[Payments] Released ` +
+        `${result.modifiedCount} stale ` +
+        `"processing" payment(s) ` +
+        `back to "verified"`
+      );
+
+    }
+
+
+    return result.modifiedCount;
+  };
 
 
 // ===============================================================
-// CRON REGISTRATION
+// REGISTER CRON JOBS
 // ===============================================================
 
 const runDailyJobs = () => {
 
   // =============================================================
-  // PRODUCTION DAILY CRON
+  // DAILY PAYMENT JOB
   // =============================================================
   //
-  // Runs every day at 9:00 AM.
-  //
-  // IMPORTANT:
-  // This is your existing production schedule.
+  // Runs every day at 9:00 AM Bangladesh time.
   //
 
   cron.schedule(
@@ -781,8 +645,7 @@ const runDailyJobs = () => {
 
     async () => {
 
-      const now =
-        new Date();
+      const now = new Date();
 
 
       const currentMonth =
@@ -814,7 +677,7 @@ const runDailyJobs = () => {
 
 
       // =========================================================
-      // MONTHLY CHARGE CREATION
+      // FIRST DAY OF MONTH
       // =========================================================
 
       if (dayOfMonth === 1) {
@@ -834,11 +697,12 @@ const runDailyJobs = () => {
           );
 
         }
+
       }
 
 
       // =========================================================
-      // PRODUCTION DUE REMINDER
+      // DUE REMINDER
       // =========================================================
 
       if (
@@ -858,6 +722,7 @@ const runDailyJobs = () => {
           );
 
         }
+
       }
 
     },
@@ -865,154 +730,15 @@ const runDailyJobs = () => {
     {
       timezone: "Asia/Dhaka",
     }
+
   );
 
 
   // =============================================================
-  // TEMPORARY TEST CRON
-  // =============================================================
-  //
-  // This is ONLY for testing.
-  //
-  // It runs every minute.
-  //
-  // BUT:
-  //
-  // testReminderHasRun prevents it from executing more than once
-  // during the current server process.
-  //
-  // Therefore:
-  //
-  //     Server starts
-  //          ↓
-  //     waits for next minute
-  //          ↓
-  //     tests exactly 3 members
-  //          ↓
-  //     testReminderHasRun = true
-  //          ↓
-  //     no more reminder tests
-  //
-
-  if (ENABLE_TEST_REMINDER_CRON) {
-
-    cron.schedule(
-      "* * * * *",
-
-      async () => {
-
-        // -------------------------------------------------------
-        // Prevent second execution
-        // -------------------------------------------------------
-
-        if (testReminderHasRun) {
-          return;
-        }
-
-
-        // Set this BEFORE running the async job.
-        //
-        // This protects against overlapping executions.
-        testReminderHasRun = true;
-
-
-        console.info("");
-        console.info(
-          "================================================"
-        );
-        console.info(
-          "[TEST CRON] Due reminder test started"
-        );
-        console.info(
-          "================================================"
-        );
-
-
-        console.info(
-          "[TEST CRON] Target members:"
-        );
-
-
-        TEST_REMINDER_MEMBER_EMAILS.forEach(
-          (email, index) => {
-
-            console.info(
-              `[TEST CRON] ${index + 1}. ${email}`
-            );
-
-          }
-        );
-
-
-        try {
-
-          const result =
-            await queueDueReminders({
-              memberEmails:
-                TEST_REMINDER_MEMBER_EMAILS,
-            });
-
-
-          console.info("");
-          console.info(
-            "[TEST CRON] Test completed"
-          );
-
-
-          console.info(
-            `[TEST CRON] queued=${result.queued}`
-          );
-
-
-          console.info(
-            `[TEST CRON] skipped=${result.skipped}`
-          );
-
-
-          console.info(
-            `[TEST CRON] queueFail=${result.queueFail}`
-          );
-
-
-          console.info(
-            "================================================"
-          );
-          console.info("");
-
-        } catch (error) {
-
-          console.error(
-            "[TEST CRON] Reminder test failed:",
-            error.message
-          );
-
-        }
-
-      },
-
-      {
-        timezone: "Asia/Dhaka",
-      }
-    );
-
-
-    console.info(
-      "[TEST CRON] Temporary three-member reminder test enabled"
-    );
-
-  }
-
-
-  // =============================================================
-  // PRODUCTION EMAIL DISPATCHER
+  // EMAIL QUEUE DISPATCHER
   // =============================================================
   //
   // Runs every 5 minutes.
-  //
-  // This is NOT modified for the test.
-  //
-  // The test reminder items will enter the normal queue,
-  // and this normal dispatcher will send them.
   //
 
   cron.schedule(
@@ -1021,7 +747,7 @@ const runDailyJobs = () => {
     async () => {
 
       // ---------------------------------------------------------
-      // Recover stale payments
+      // Recover stale processing payments
       // ---------------------------------------------------------
 
       try {
@@ -1039,7 +765,7 @@ const runDailyJobs = () => {
 
 
       // ---------------------------------------------------------
-      // Process email queue
+      // Dispatch emails
       // ---------------------------------------------------------
 
       try {
@@ -1057,7 +783,11 @@ const runDailyJobs = () => {
             `[EmailQueue] Dispatch run: ` +
             `sent=${result.sent}, ` +
             `failed=${result.failed}` +
-            `${result.note ? ` (${result.note})` : ""}`
+            `${
+              result.note
+                ? ` (${result.note})`
+                : ""
+            }`
           );
 
         }
@@ -1076,11 +806,12 @@ const runDailyJobs = () => {
     {
       timezone: "Asia/Dhaka",
     }
+
   );
 
 
   // =============================================================
-  // FINAL REGISTRATION LOG
+  // REGISTRATION LOG
   // =============================================================
 
   console.info(
