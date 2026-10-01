@@ -15,10 +15,39 @@ export const enqueueEmail = async ({ to, subject, type, payload }) => {
   return EmailQueueItem.create({ to, subject, type, payload });
 };
 
-// Combined count across ALL email types, sent today.
+const TIMEZONE = "Asia/Dhaka";
+
+const getStartOfDhakaDay = () => {
+  const now = new Date();
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const values = Object.fromEntries(
+    parts
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value }) => [type, value]),
+  );
+
+  // Dhaka is UTC+6 and does not observe DST.
+  return new Date(
+    Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      0,
+      0,
+      0,
+    ) - 6 * 60 * 60 * 1000,
+  );
+};
+
 export const getSentTodayCount = async () => {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
+  const startOfToday = getStartOfDhakaDay();
 
   return EmailQueueItem.countDocuments({
     status: "sent",
@@ -26,14 +55,12 @@ export const getSentTodayCount = async () => {
   });
 };
 
-// Count for ONE specific type, sent today.
 export const getSentTodayCountByType = async (type) => {
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
+  const startOfToday = getStartOfDhakaDay();
 
   return EmailQueueItem.countDocuments({
-    type,
     status: "sent",
+    type,
     sentAt: { $gte: startOfToday },
   });
 };
