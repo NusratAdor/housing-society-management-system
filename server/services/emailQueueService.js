@@ -10,41 +10,12 @@
 // intended limit. See paymentJobs.js for the dispatcher that uses this.
 
 import EmailQueueItem from "../models/EmailQueueItem.js";
+import { getStartOfDhakaDay } from "../utils/dateTime.js";
 
 export const enqueueEmail = async ({ to, subject, type, payload }) => {
   return EmailQueueItem.create({ to, subject, type, payload });
 };
 
-const TIMEZONE = "Asia/Dhaka";
-
-const getStartOfDhakaDay = () => {
-  const now = new Date();
-
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-
-  const values = Object.fromEntries(
-    parts
-      .filter(({ type }) => type !== "literal")
-      .map(({ type, value }) => [type, value]),
-  );
-
-  // Dhaka is UTC+6 and does not observe DST.
-  return new Date(
-    Date.UTC(
-      Number(values.year),
-      Number(values.month) - 1,
-      Number(values.day),
-      0,
-      0,
-      0,
-    ) - 6 * 60 * 60 * 1000,
-  );
-};
 
 export const getSentTodayCount = async () => {
   const startOfToday = getStartOfDhakaDay();

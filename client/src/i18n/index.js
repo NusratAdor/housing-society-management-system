@@ -61,6 +61,7 @@ i18n
     defaultNS: "dashboard",
     ns: ["navbar", "dashboard", "overview", "payment", "profile", "notices", "faqs", "gallery", "contact"],
     fallbackLng: "en",
+    supportedLngs: ["en", "bn"],
     interpolation: { escapeValue: false },
     detection: {
       order: ["localStorage", "navigator"],

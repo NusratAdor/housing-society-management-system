@@ -19,15 +19,20 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
       required: true,
       enum: [
-        "FEE_CHANGED", // admin changed monthly fee
-        "CHARGE_CREATED", // admin created extra charge(s)
-        "CHARGE_CANCELLED", // admin cancelled an extra charge
-        "PAYMENT_APPROVED", // admin manually approved a payment
-        "PAYMENT_REJECTED", // admin rejected a payment
-        "MEMBER_ROLE_CHANGED", // admin changed a member's role
-        "MEMBER_UPDATED", // admin updated member profile
-        "MEMBER_DELETED", // admin deleted a member
-        "MONTHLY_DUES_ADDED", // cron job added monthly dues
+        "FEE_CHANGED",
+        "CHARGE_CREATED",
+        "CHARGE_CANCELLED",
+        "PAYMENT_APPROVED",
+        "PAYMENT_REJECTED",
+
+        "ADMIN_REQUEST_APPROVED",
+        "ADMIN_REQUEST_REJECTED",
+
+        "MEMBER_UPDATED",
+        "MEMBER_REMOVED",
+        "MEMBER_ROLE_CHANGED",
+
+        "MONTHLY_DUES_ADDED",
 
         "STAFF_INVITED",
         "STAFF_ROLE_CHANGED",

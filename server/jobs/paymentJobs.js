@@ -44,6 +44,8 @@ import {
   sendDueReminderEmail,
 } from "../services/emailService.js";
 
+import { getDhakaDateParts } from "../utils/dateTime.js";
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -91,26 +93,6 @@ let emailDispatchRunning = false;
  * The cron itself is scheduled in Asia/Dhaka, but the business date
  * should also explicitly come from Asia/Dhaka.
  */
-const getDhakaDateParts = () => {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const values = Object.fromEntries(
-    parts
-      .filter(({ type }) => type !== "literal")
-      .map(({ type, value }) => [type, value]),
-  );
-
-  return {
-    year: Number(values.year),
-    month: Number(values.month),
-    day: Number(values.day),
-  };
-};
 
 /**
  * Returns the number of days in a given month.
@@ -351,6 +333,19 @@ export const queueDueReminders = async () => {
       // ---------------------------------------------------------------
 
       if (member.email) {
+        const existingPending = await EmailQueueItem.findOne({
+          to: member.email,
+          type: "due_reminder",
+          status: "pending",
+        }).lean();
+
+        if (existingPending) {
+          console.info(
+            `[Cron] Reminder email already pending for ${member.email}`,
+          );
+          continue;
+        }
+
         await enqueueEmail({
           to: member.email,
           subject:

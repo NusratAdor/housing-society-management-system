@@ -10,8 +10,9 @@
 
 import Member from "../models/Member.js";
 import MemberSeat from "../models/MemberSeat.js";
+import mongoose from "mongoose";
 import {
-  createOrUpdateMember,
+  updateOwnMemberProfile,
   findMemberByClerkId,
   requestAdminAccess,
 } from "../services/memberService.js";
@@ -20,55 +21,190 @@ import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
 // ── createMemberProfile ───────────────────────────────────────────────────────
 
+// ── createMemberProfile ───────────────────────────────────────────────────────
+
 export const createMemberProfile = async (req, res) => {
+  const session = await Member.startSession();
+
   try {
-    const { name, email, phone, address, designation, membershipNo, plotNo } =
-      req.body;
+    const {
+      name,
+      email,
+      phone,
+      designation,
+      permanentAddress,
+      presentAddress,
+      membershipNo,
+      plots,
+      nominee,
+    } = req.body;
+
     const { clerkUserId } = req;
 
-    if (!clerkUserId)
-      return res
-        .status(400)
-        .json({ success: false, message: "User ID missing" });
-    if (!email)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email required" });
+    // ── Basic request validation ────────────────────────────────────────────
 
-    if (!isValidPhone(phone)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid Bangladeshi phone number" });
+    if (!clerkUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID missing",
+      });
     }
+
+    if (!email?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Email required",
+      });
+    }
+
     const normalizedPhone = normalizePhone(phone);
 
-    const cleanMembership = membershipNo?.trim().toUpperCase();
-    if (!cleanMembership) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Membership number is required" });
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number",
+      });
     }
 
-    // ── MemberSeat validation ─────────────────────────────────────────────
-    const seat = await MemberSeat.findOne({ membershipNo: cleanMembership });
+    const cleanMembership = membershipNo?.trim().toUpperCase();
+
+    if (!cleanMembership) {
+      return res.status(400).json({
+        success: false,
+        message: "Membership number is required",
+      });
+    }
+
+    // ── Validate new profile structure ─────────────────────────────────────
+
+    if (!name?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required",
+      });
+    }
+
+    if (!designation?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Designation is required",
+      });
+    }
+
+    if (!permanentAddress?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Permanent address is required",
+      });
+    }
+
+    if (!presentAddress?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Present address is required",
+      });
+    }
+
+    if (!Array.isArray(plots) || plots.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one plot is required",
+      });
+    }
+
+    const allowedPlotSizes = [13, 10, 9, 7, 6.5];
+
+    const normalizedPlots = plots.map((plot) => ({
+      plotNo: plot?.plotNo?.trim().toUpperCase(),
+      plotSize: Number(plot?.plotSize),
+    }));
+
+    const invalidPlot = normalizedPlots.some(
+      (plot) => !plot.plotNo || !allowedPlotSizes.includes(plot.plotSize),
+    );
+
+    if (invalidPlot) {
+      return res.status(400).json({
+        success: false,
+        message: "Each plot must have a valid plot number and plot size",
+      });
+    }
+
+    if (
+      !nominee?.name?.trim() ||
+      !nominee?.email?.trim() ||
+      !isValidPhone(nominee.phone)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid nominee information is required",
+      });
+    }
+
+    const normalizedNomineePhone = normalizePhone(nominee.phone);
+
+    if (!normalizedNomineePhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid nominee phone number",
+      });
+    }
+
+    // ── Start transaction ──────────────────────────────────────────────────
+
+    await session.startTransaction();
+
+    // ── Find existing member ───────────────────────────────────────────────
+
+    const existingMember = await Member.findOne({
+      clerkUserId,
+    }).session(session);
+
+    // A removed member must never be silently resurrected.
+    if (existingMember) {
+      await session.abortTransaction();
+
+      return res.status(409).json({
+        success: false,
+        message:
+          existingMember.status === "removed"
+            ? "This account has been removed. Please contact the admin."
+            : "Profile already exists. Please use your profile page to make changes.",
+      });
+    }
+
+    // ── Find registration seat ─────────────────────────────────────────────
+    //
+    // IMPORTANT:
+    // membershipNo alone is NOT enough.
+    //
+    // The member must prove that both:
+    //
+    //   membershipNo + registeredPhone
+    //
+    // match the admin-provisioned MemberSeat.
+
+    const seat = await MemberSeat.findOne({
+      membershipNo: cleanMembership,
+      registeredPhone: normalizedPhone,
+      isRetired: false,
+    }).session(session);
 
     if (!seat) {
+      await session.abortTransaction();
+
       return res.status(400).json({
         success: false,
         message:
-          "Membership number not found. Please contact the admin to verify your membership.",
+          "Membership number and registered phone number do not match our records. Please contact the admin.",
       });
     }
 
-    if (seat.isRetired) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "This membership number has been retired and can no longer be used. Please contact the admin.",
-      });
-    }
+    // ── Check seat ownership ───────────────────────────────────────────────
 
     if (seat.isClaimed && seat.claimedByClerkId !== clerkUserId) {
+      await session.abortTransaction();
+
       return res.status(400).json({
         success: false,
         message:
@@ -76,101 +212,256 @@ export const createMemberProfile = async (req, res) => {
       });
     }
 
+    // ── Check membership ownership ─────────────────────────────────────────
+
     const existingMembership = await Member.findOne({
       membershipNo: cleanMembership,
-    });
+    }).session(session);
+
     if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Membership number already in use" });
-    }
+      await session.abortTransaction();
 
-      const existingMember = await findMemberByClerkId(clerkUserId);
-
-    // A removed member must never be silently resurrected by
-    // re-submitting the registration form — their old, now-inactive
-    // profile stays exactly as it was for the historical record.
-    if (existingMember && existingMember.status === "removed") {
       return res.status(400).json({
         success: false,
-        message: "This account has been removed. Please contact the admin.",
+        message: "Membership number already in use",
       });
     }
 
-    const isFirstTimeCreate = !existingMember;
+    // ---------------------------------------------------------
+    // Create member
+    // ---------------------------------------------------------
 
-    const member = await createOrUpdateMember(clerkUserId, {
-      name: name?.trim(),
-      email: email.trim().toLowerCase(),
-      phone: normalizedPhone,
-      address: address?.trim(),
-      designation: designation?.trim(),
-      membershipNo: cleanMembership,
-      plotNo: plotNo?.trim(),
-      role: existingMember?.role || "member",
+    const [member] = await Member.create(
+      [
+        {
+          clerkUserId,
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          phone: normalizedPhone,
+          designation: designation.trim(),
+          permanentAddress: permanentAddress.trim(),
+          presentAddress: presentAddress.trim(),
+          membershipNo: cleanMembership,
+
+          plots: normalizedPlots,
+
+          nominee: {
+            name: nominee.name.trim(),
+            phone: normalizedNomineePhone,
+            email: nominee.email.trim().toLowerCase(),
+          },
+
+          role: "member",
+          pendingAdmin: false,
+          status: "active",
+        },
+      ],
+      { session },
+    );
+
+    // ---------------------------------------------------------
+    // Atomically claim the seat
+    // ---------------------------------------------------------
+
+    const now = new Date();
+
+    const claimedSeat = await MemberSeat.findOneAndUpdate(
+      {
+        _id: seat._id,
+        isClaimed: false,
+        isRetired: false,
+      },
+      {
+        $set: {
+          isClaimed: true,
+          claimedByClerkId: clerkUserId,
+          claimedAt: now,
+          joinDate: now,
+        },
+      },
+      {
+        new: true,
+        session,
+      },
+    );
+
+    if (!claimedSeat) {
+      throw new Error(
+        "This membership seat was claimed by another request. Please try again.",
+      );
+    }
+
+    // ---------------------------------------------------------
+    // Generate historical monthly charges
+    // ---------------------------------------------------------
+
+    const result = await generateBackdatedCharges({
+      memberId: member._id,
+      paidThroughMonth: seat.paidThroughMonth,
+      session,
     });
 
-    // ── Mark seat as claimed ──────────────────────────────────────────────
-    // ── Mark seat as claimed ──────────────────────────────────────────────
-    // joinDate is set here automatically, to the exact registration
-    // moment — never entered by admin, never in the CSV. This is the
-    // one and only place joinDate gets written.
-    if (!seat.isClaimed) {
-      const now = new Date();
-      seat.isClaimed = true;
-      seat.claimedByClerkId = clerkUserId;
-      seat.claimedAt = now;
-      seat.joinDate = now;
-      await seat.save();
+    if (result.created > 0) {
+      console.info(
+        `[MemberSeat] Backfilled ${result.created} month(s) for ${cleanMembership}`,
+      );
     }
 
-    // ── Backfill historical monthly dues (first-time registration only) ──
-    // If the seat has a paidThroughMonth set, catch the member up with
-    // real, individually-dated MonthlyCharge records from the following
-    // month through the current month. No-op if paidThroughMonth is unset.
-    // ── Backfill historical monthly dues (first-time registration only) ──
-    // If the seat has a paidThroughMonth set, catch the member up with
-    // real, individually-dated MonthlyCharge records from the following
-    // month through the current month. No-op if paidThroughMonth is unset.
-    if (isFirstTimeCreate) {
-      const paidThroughMonthToConsume = seat.paidThroughMonth;
-      try {
-        const result = await generateBackdatedCharges({
-          memberId: member._id,
-          paidThroughMonth: paidThroughMonthToConsume,
-        });
-        if (result.created > 0) {
-          console.info(
-            `[MemberSeat] Backfilled ${result.created} month(s) of dues for ${cleanMembership}`,
-          );
-        }
-        // Consume paidThroughMonth now that it has been used — matches
-        // the "consumed once at claim time" contract documented on
-        // MemberSeat.js. Left untouched on failure below, so the value
-        // is not lost before a retry or manual admin reconciliation.
-        if (paidThroughMonthToConsume) {
-          seat.paidThroughMonth = null;
-          await seat.save();
-        }
-      } catch (backfillError) {
-        // Non-fatal — log but do not fail registration. paidThroughMonth
-        // is deliberately left in place here so an admin can retry or
-        // manually reconcile using the original value.
-        console.error(
-          "[MemberSeat] Backdated charge creation failed:",
-          backfillError.message,
-        );
-      }
-    }
+    // IMPORTANT:
+    // Do NOT clear seat.paidThroughMonth.
+    // It remains historical provisioning/audit information.
 
-    return res.status(isFirstTimeCreate ? 201 : 200).json({
+    await session.commitTransaction();
+
+    return res.status(201).json({
       success: true,
-      message: isFirstTimeCreate ? "Profile created" : "Profile updated",
+      message: "Profile created",
       member,
     });
   } catch (error) {
-    console.error("createMemberProfile error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    await session.abortTransaction();
+
+    console.error("createMemberProfile error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  } finally {
+    await session.endSession();
+  }
+};
+
+export const updateOwnProfile = async (req, res) => {
+  try {
+    const { clerkUserId } = req;
+
+    const {
+      name,
+      designation,
+      permanentAddress,
+      presentAddress,
+      plots,
+      nominee,
+    } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required",
+      });
+    }
+
+    if (!designation?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Designation is required",
+      });
+    }
+
+    if (!permanentAddress?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Permanent address is required",
+      });
+    }
+
+    if (!presentAddress?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Present address is required",
+      });
+    }
+
+    if (!Array.isArray(plots) || plots.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one plot is required",
+      });
+    }
+
+    if (!nominee?.name?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nominee name is required",
+      });
+    }
+
+    const normalizedNomineePhone = normalizePhone(nominee.phone);
+
+    if (!normalizedNomineePhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid nominee phone number",
+      });
+    }
+
+    if (!nominee.email?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Nominee email is required",
+      });
+    }
+
+    const allowedPlotSizes = new Set([13, 10, 9, 7, 6.5]);
+
+    const normalizedPlots = plots.map((plot) => ({
+      plotNo: String(plot.plotNo || "")
+        .trim()
+        .toUpperCase(),
+      plotSize: Number(plot.plotSize),
+    }));
+
+    for (const plot of normalizedPlots) {
+      if (!plot.plotNo) {
+        return res.status(400).json({
+          success: false,
+          message: "Every plot must have a plot number",
+        });
+      }
+
+      if (!allowedPlotSizes.has(plot.plotSize)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid plot size",
+        });
+      }
+    }
+
+    const updatedMember = await updateOwnMemberProfile(clerkUserId, {
+      name: name.trim(),
+      designation: designation.trim(),
+      permanentAddress: permanentAddress.trim(),
+      presentAddress: presentAddress.trim(),
+
+      plots: normalizedPlots,
+
+      nominee: {
+        name: nominee.name.trim(),
+        phone: normalizedNomineePhone,
+        email: nominee.email.trim().toLowerCase(),
+      },
+    });
+
+    if (!updatedMember) {
+      return res.status(404).json({
+        success: false,
+        message: "Active member profile not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      member: updatedMember,
+    });
+  } catch (error) {
+    console.error("updateOwnProfile error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };
 

@@ -1,0 +1,111 @@
+
+{
+  "title": "Create your member profile",
+  "subtitle": "Complete your membership information to access the member dashboard.",
+
+  "sections": {
+    "personal": {
+      "title": "Personal information",
+      "description": "Enter the personal information associated with your membership."
+    },
+    "membership": {
+      "title": "Membership information",
+      "description": "Enter the membership details provided by the housing society."
+    },
+    "address": {
+      "title": "Address information",
+      "description": "Provide your permanent and present addresses."
+    },
+    "plots": {
+      "title": "Plot information",
+      "description": "Add all plots associated with your membership."
+    },
+    "nominee": {
+      "title": "Nominee information",
+      "description": "Provide the required nominee information."
+    }
+  },
+
+  "fields": {
+    "name": "Full name",
+    "email": "Email",
+    "phone": "Registered phone number",
+    "designation": "Designation",
+    "membershipNumber": "Membership number",
+    "permanentAddress": "Permanent address",
+    "presentAddress": "Present address",
+    "plotNumber": "Plot number",
+    "plotSize": "Plot size",
+    "nomineeName": "Nominee name",
+    "nomineePhone": "Nominee phone",
+    "nomineeEmail": "Nominee email"
+  },
+
+  "hints": {
+    "email": "This email is taken from your sign-in account.",
+    "phone": "Use the phone number registered with the housing society.",
+    "membershipNumber": "Your membership number must match the society's records.",
+    "plotNumber": "Enter the plot number exactly as assigned.",
+    "nomineePhone": "International phone numbers are supported."
+  },
+
+  "placeholders": {
+    "name": "Enter your full name",
+    "phone": "Enter your registered phone number",
+    "designation": "Enter your designation",
+    "membershipNumber": "Enter your membership number",
+    "permanentAddress": "Enter your permanent address",
+    "presentAddress": "Enter your present address",
+    "plotNumber": "e.g. AD-10, AD/10, AD 10",
+    "nomineeName": "Enter nominee's full name",
+    "nomineePhone": "Enter nominee's phone number",
+    "nomineeEmail": "Enter nominee's email address"
+  },
+
+  "plot": {
+    "label": "Plot {{number}}",
+    "description": "Provide the plot number and its assigned size.",
+    "selectSize": "Select plot size",
+    "add": "Add plot",
+    "remove": "Remove"
+  },
+
+  "actions": {
+    "createProfile": "Create profile",
+    "creating": "Creating profile...",
+    "back": "Back",
+    "continue": "Continue"
+  },
+
+  "errors": {
+    "nameRequired": "Name is required.",
+    "emailRequired": "Email is required.",
+    "emailInvalid": "Enter a valid email address.",
+    "phoneRequired": "Registered phone number is required.",
+    "phoneInvalid": "Enter a valid phone number.",
+    "designationRequired": "Designation is required.",
+    "membershipNumberRequired": "Membership number is required.",
+    "permanentAddressRequired": "Permanent address is required.",
+    "presentAddressRequired": "Present address is required.",
+    "plotRequired": "At least one plot is required.",
+    "plotNumberRequired": "Plot number is required.",
+    "plotSizeRequired": "Plot size is required.",
+    "plotSizeInvalid": "Invalid plot size.",
+    "nomineeNameRequired": "Nominee name is required.",
+    "nomineePhoneRequired": "Nominee phone number is required.",
+    "nomineePhoneInvalid": "Enter a valid phone number.",
+    "nomineeEmailRequired": "Nominee email is required.",
+    "nomineeEmailInvalid": "Enter a valid email address."
+  },
+
+  "toast": {
+    "created": "Profile created successfully.",
+    "validation": "Please fix the highlighted fields.",
+    "sessionExpired": "Your session has expired. Please sign in again.",
+    "registrationFailed": "Failed to create your profile.",
+    "membershipNotFound": "The membership number or registered phone number does not match our records.",
+    "membershipAlreadyClaimed": "This membership has already been registered.",
+    "membershipRetired": "This membership is no longer available for registration."
+  }
+}
+

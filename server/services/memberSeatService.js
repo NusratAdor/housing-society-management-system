@@ -1,114 +1,219 @@
 // server/services/memberSeatService.js
 //
-// Backdated due generation for newly registered members.
+// Handles historical MonthlyCharge generation when a MemberSeat is claimed.
 //
-// CHANGE (this pass): rewritten to key off MemberSeat.paidThroughMonth
-// (a "YYYY-MM" string) instead of joinDate, and to generate charges
-// through and INCLUDING the current month — not stopping at last month.
-// A member registering mid-cycle needs the current month's charge too,
-// since the monthly cron already ran for everyone else before this
-// member existed in the system.
+// MemberSeat.paidThroughMonth is a historical provisioning fact:
+//   "The member had already settled dues through this month
+//    before joining the digital system."
 //
-// Each historical charge uses the fee that was active during that
-// specific month — getFeeForMonth() from feeService.js handles this
-// correctly, exactly as it does for the regular monthly cron job.
+// This service converts that fact into real MonthlyCharge records.
 //
-// Design: idempotent. If called twice (e.g. retry after a partial
-// failure), existing charges are detected and skipped. No duplicates
-// are created — this also means it is safe to run even if the regular
-// monthly cron has already created the current month's charge for this
-// member by the time this runs.
+// Important:
+//   - MonthlyCharge.amount is locked from FeeHistory.
+//   - FeeHistory is queried for EACH historical month.
+//   - All database operations use the caller's transaction session.
+//   - This service does NOT start its own transaction because the
+//     member-registration flow already owns the transaction.
+//
+// Example:
+//
+//   paidThroughMonth = "2026-03"
+//   current month    = "2026-10"
+//
+// Creates:
+//
+//   2026-04
+//   2026-05
+//   2026-06
+//   2026-07
+//   2026-08
+//   2026-09
+//   2026-10
+//
+// Each month's amount comes from the FeeHistory record effective
+// for that specific month.
+
+import mongoose from "mongoose";
 
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import { getFeeForMonth } from "./feeService.js";
+import { getDhakaDateParts } from "../utils/dateTime.js";
 
-// ─── parsePaidThroughMonth ─────────────────────────────────────────────────
-// Parses a "YYYY-MM" string into { month, year }. Returns null for an
-// empty/missing value so callers can treat "no history to backfill" as
-// a normal, expected case.
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-const parsePaidThroughMonth = (paidThroughMonth) => {
-  if (!paidThroughMonth) return null;
-
-  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(paidThroughMonth);
-  if (!match) return null;
-
-  return { year: Number(match[1]), month: Number(match[2]) };
-};
-
-// ─── generateBackdatedCharges ─────────────────────────────────────────────
-// Creates MonthlyCharge records from the month AFTER paidThroughMonth up
-// to and including the current month.
-//
-// Parameters:
-//   memberId          — MongoDB ObjectId of the newly created Member document
-//   paidThroughMonth  — "YYYY-MM" string from MemberSeat, or null/undefined
-//
-// Returns:
-//   { created, skipped } — how many charges were created vs already existed
-
-export const generateBackdatedCharges = async ({ memberId, paidThroughMonth }) => {
-  const paidThrough = parsePaidThroughMonth(paidThroughMonth);
-
-  // No history to backfill — member starts fresh from their registration
-  // month, handled entirely by the normal monthly cron going forward.
-  if (!paidThrough) {
-    return { created: 0, skipped: 0 };
+const parsePaidThroughMonth = (value) => {
+  if (typeof value !== "string") {
+    return null;
   }
 
-  const now = new Date();
-  const endYear  = now.getFullYear();
-  const endMonth = now.getMonth() + 1; // 1-based, inclusive of current month
+  const normalized = value.trim();
 
-  // Build the list of (month, year) pairs starting the month AFTER
-  // paidThrough, through and including the current month.
-  const periods = [];
-  let cursor = new Date(Date.UTC(paidThrough.year, paidThrough.month, 1)); // next month, 0-based month arithmetic
-  const end  = new Date(Date.UTC(endYear, endMonth - 1, 1));
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(normalized);
 
-  while (cursor <= end) {
-    periods.push({
-      month: cursor.getUTCMonth() + 1,
-      year:  cursor.getUTCFullYear(),
-    });
-    cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+  if (!match) {
+    return null;
   }
-
-  if (periods.length === 0) {
-    // paidThroughMonth is the current month or later — nothing to backfill
-    return { created: 0, skipped: 0 };
-  }
-
-  // Idempotency guard — skip any period that already has a charge
-  const existing = await MonthlyCharge.find({
-    member: memberId,
-    $or: periods.map(p => ({ month: p.month, year: p.year })),
-  }).select("month year").lean();
-
-  const existingSet = new Set(existing.map(c => `${c.year}-${c.month}`));
-
-  const periodsToCreate = periods.filter(
-    p => !existingSet.has(`${p.year}-${p.month}`)
-  );
-
-  if (periodsToCreate.length === 0) {
-    return { created: 0, skipped: periods.length };
-  }
-
-  const chargesWithFees = await Promise.all(
-    periodsToCreate.map(async ({ month, year }) => {
-      const amount = await getFeeForMonth(month, year);
-      return { member: memberId, month, year, amount, status: "Unpaid" };
-    })
-  );
-
-  const inserted = await MonthlyCharge.insertMany(
-    chargesWithFees,
-    { ordered: false }
-  );
 
   return {
-    created: inserted.length,
-    skipped: periods.length - periodsToCreate.length,
+    year: Number(match[1]),
+    month: Number(match[2]),
+  };
+};
+
+const addOneMonth = ({ year, month }) => {
+  if (month === 12) {
+    return {
+      year: year + 1,
+      month: 1,
+    };
+  }
+
+  return {
+    year,
+    month: month + 1,
+  };
+};
+
+// ─── generateBackdatedCharges ───────────────────────────────────────────────
+//
+// Generates all missing MonthlyCharge records between:
+//
+//   paidThroughMonth + 1
+//
+// and:
+//
+//   current Dhaka month
+//
+// `session` is optional so the function can also be used safely in
+// non-transactional contexts, although registration should always pass it.
+
+export const generateBackdatedCharges = async ({
+  memberId,
+  paidThroughMonth,
+  session = null,
+}) => {
+  const parsed = parsePaidThroughMonth(paidThroughMonth);
+
+  if (!parsed) {
+    throw new Error(
+      "paidThroughMonth must be in YYYY-MM format",
+    );
+  }
+
+  const { year: currentYear, month: currentMonth } =
+    getDhakaDateParts();
+
+  // Start from the month immediately after the externally-paid month.
+  let cursor = addOneMonth(parsed);
+
+  const periods = [];
+
+  while (
+    cursor.year < currentYear ||
+    (cursor.year === currentYear &&
+      cursor.month <= currentMonth)
+  ) {
+    periods.push({
+      month: cursor.month,
+      year: cursor.year,
+    });
+
+    cursor = addOneMonth(cursor);
+  }
+
+  // Nothing to generate when the member is already paid through
+  // the current month.
+  if (periods.length === 0) {
+    return {
+      created: 0,
+      skipped: 0,
+      periods: [],
+    };
+  }
+
+  const memberObjectId =
+    new mongoose.Types.ObjectId(memberId);
+
+  // One query instead of one query per month.
+  //
+  // This is important even though the current system is only
+  // ~500–550 members. It keeps the registration path predictable
+  // and avoids N+1 database calls.
+  const existingQuery = MonthlyCharge.find({
+    member: memberObjectId,
+    $or: periods.map(({ month, year }) => ({
+      month,
+      year,
+    })),
+  }).select("month year");
+
+  if (session) {
+    existingQuery.session(session);
+  }
+
+  const existingCharges = await existingQuery.lean();
+
+  const existingKeys = new Set(
+    existingCharges.map(
+      (charge) => `${charge.year}-${charge.month}`,
+    ),
+  );
+
+  const missingPeriods = periods.filter(
+    ({ month, year }) =>
+      !existingKeys.has(`${year}-${month}`),
+  );
+
+  if (missingPeriods.length === 0) {
+    return {
+      created: 0,
+      skipped: periods.length,
+      periods: [],
+    };
+  }
+
+  // Historical fee lookup.
+  //
+  // These are independent reads, so Promise.all is appropriate.
+  // Every lookup receives the same transaction session.
+  const fees = await Promise.all(
+    missingPeriods.map(async ({ month, year }) => {
+      const amount = await getFeeForMonth(
+        month,
+        year,
+        session,
+      );
+
+      return {
+        month,
+        year,
+        amount,
+      };
+    }),
+  );
+
+  const documents = fees.map(
+    ({ month, year, amount }) => ({
+      member: memberObjectId,
+      month,
+      year,
+      amount,
+      status: "Unpaid",
+    }),
+  );
+
+  await MonthlyCharge.insertMany(documents, {
+    ordered: true,
+    ...(session ? { session } : {}),
+  });
+
+  return {
+    created: documents.length,
+    skipped: periods.length - documents.length,
+    periods: documents.map(({ month, year, amount }) => ({
+      month,
+      year,
+      amount,
+    })),
   };
 };

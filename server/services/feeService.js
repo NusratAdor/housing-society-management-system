@@ -33,28 +33,33 @@ import FeeHistory from "../models/FeeHistory.js";
 //   - createMonthlyChargesForMonth() to lock the amount at charge creation
 //   - getMemberDueBreakdown() to show the current fee on the dashboard
 
-export const getFeeForMonth = async (month, year) => {
+export const getFeeForMonth = async (month, year, session = null) => {
   // First day of the target month at midnight UTC
   // Using UTC month constructor: Date.UTC(year, monthIndex, day)
   // month is 1-based so monthIndex = month - 1
   const firstDayOfMonth = new Date(Date.UTC(year, month - 1, 1));
 
-  const record = await FeeHistory
-    .findOne({ effectiveFrom: { $lte: firstDayOfMonth } })
-    .sort({ effectiveFrom: -1 })   // get the most recent one on or before target
-    .lean();
+ const query = FeeHistory
+  .findOne({
+    effectiveFrom: {
+      $lte: firstDayOfMonth,
+    },
+  })
+  .sort({ effectiveFrom: -1 });
 
+if (session) {
+  query.session(session);
+}
+
+const record = await query.lean();
+
+
+
+  
   if (!record) {
-    // No fee configured for this month. This must never silently
-    // default — MonthlyCharge.amount is locked permanently at
-    // creation, so a guessed number here becomes a permanent,
-    // financially-incorrect record with no built-in way to correct it.
-    // Fail loud instead: abort charge creation and surface a clear,
-    // actionable error to whoever triggered this (cron log, or the
-    // member-registration flow, which logs and continues without
-    // creating the charge — see memberController.js).
     throw new Error(
-      `No fee configured for ${month}/${year}. Run scripts/seedInitialFee.js or set a fee covering this month before generating charges.`
+      `No fee configured for ${month}/${year}. ` +
+      `Run scripts/seedInitialFee.js or set a fee covering this month before generating charges.`
     );
   }
 

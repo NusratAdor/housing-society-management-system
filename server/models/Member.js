@@ -1,136 +1,198 @@
-// server/models/Member.js
-//
-// Member profile only.
-//
-// WHY dueAmount and paymentStatus are NOT here:
-//   These are computed values derived from MonthlyCharge, ExtraCharge,
-//   and PaymentAllocation. Storing them creates a cached copy that can
-//   drift out of sync with the financial records — and once it drifts,
-//   you have no way to know which is correct.
-//
-//   Due amount is computed as:
-//     SUM(MonthlyCharge.amount where member=X and status="Unpaid")
-//     + SUM(ExtraCharge.amount where member=X and status="Unpaid")
-//
-//   Payment status is derived as:
-//     totalDue === 0 ? "Paid" : "Due"
-//
-//   These queries take <10ms with proper indexes for 500 members.
-//   There is no performance reason to store them.
-//   There is a strong correctness reason NOT to store them.
-
 import mongoose from "mongoose";
 
 const memberSchema = new mongoose.Schema(
   {
+    // ─────────────────────────────────────────────────────────────
+    // Clerk identity
+    // ─────────────────────────────────────────────────────────────
     clerkUserId: {
-      type:     String,
+      type: String,
       required: true,
-      unique:   true,
-      trim:     true,
+      unique: true,
+      trim: true,
     },
 
+    profileImageUrl: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Personal information
+    // ─────────────────────────────────────────────────────────────
     name: {
-      type:      String,
-      required:  true,
-      trim:      true,
+      type: String,
+      required: true,
+      trim: true,
       maxlength: 100,
     },
 
     email: {
-      type:      String,
-      required:  true,
-      unique:    true,
-      trim:      true,
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
       lowercase: true,
     },
 
+    /*
+     * Current member phone.
+     *
+     * IMPORTANT:
+     * This is NOT the original registration credential.
+     * The original registered phone lives in MemberSeat.registeredPhone.
+     */
     phone: {
-      type:     String,
+      type: String,
       required: true,
-      trim:     true,
-    },
-
-    address: {
-      type:      String,
-      required:  true,
-      trim:      true,
-      maxlength: 300,
+      trim: true,
     },
 
     designation: {
-      type:     String,
+      type: String,
       required: true,
-      trim:     true,
+      trim: true,
+      maxlength: 100,
     },
 
+    // ─────────────────────────────────────────────────────────────
+    // Address information
+    // ─────────────────────────────────────────────────────────────
+    permanentAddress: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 500,
+    },
+
+    presentAddress: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 500,
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Membership
+    // ─────────────────────────────────────────────────────────────
     membershipNo: {
-      type:      String,
-      required:  true,
-      unique:    true,
-      trim:      true,
-      uppercase: true,
-    },
-
-    plotNo: {
-      type:     String,
+      type: String,
       required: true,
-      trim:     true,
+      unique: true,
+      trim: true,
     },
 
+    // ─────────────────────────────────────────────────────────────
+    // Multiple plots
+    // ─────────────────────────────────────────────────────────────
+    plots: {
+      type: [
+        {
+          _id: false,
+
+          plotNo: {
+            type: String,
+            required: true,
+            trim: true,
+            uppercase: true,
+            maxlength: 50,
+          },
+
+          plotSize: {
+            type: Number,
+            required: true,
+            enum: [13, 10, 9, 7, 6.5],
+          },
+        },
+      ],
+
+      required: true,
+
+      validate: {
+        validator: (plots) => Array.isArray(plots) && plots.length > 0,
+
+        message: "At least one plot is required",
+      },
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Nominee
+    // ─────────────────────────────────────────────────────────────
+    nominee: {
+      type: {
+        name: {
+          type: String,
+          required: true,
+          trim: true,
+          maxlength: 100,
+        },
+
+        phone: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+
+        email: {
+          type: String,
+          required: true,
+          trim: true,
+          lowercase: true,
+        },
+      },
+
+      required: true,
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Authorization / role
+    // ─────────────────────────────────────────────────────────────
     role: {
-      type:    String,
-      enum:    ["member", "admin"],
+      type: String,
+      enum: ["member", "admin"],
       default: "member",
     },
 
     pendingAdmin: {
-      type:    Boolean,
+      type: Boolean,
       default: false,
     },
 
-
-    // ── Soft delete ─────────────────────────────────────────────────────
-    // A member is never actually deleted from this collection. "Removing"
-    // a member only ever sets status to "removed" — their profile and
-    // every financial record tied to them (Payment, MonthlyCharge,
-    // ExtraCharge) stays intact, permanently, for historical/audit
-    // purposes. See memberService.deactivateMember.
+    // ─────────────────────────────────────────────────────────────
+    // Soft deletion
+    // ─────────────────────────────────────────────────────────────
     status: {
-      type:    String,
-      enum:    ["active", "removed"],
+      type: String,
+      enum: ["active", "removed"],
       default: "active",
     },
 
     removedAt: {
-      type:    Date,
+      type: Date,
       default: null,
     },
 
-    // Clerk userId of the admin who removed this member, or
-    // "SYSTEM_CLERK_WEBHOOK" if the member deleted their own account.
     removedBy: {
-      type:    String,
+      type: String,
       default: null,
     },
 
- creditVersion: {
-      type:    Number,
+    // ─────────────────────────────────────────────────────────────
+    // Payment concurrency marker
+    // KEEP this.
+    // ─────────────────────────────────────────────────────────────
+    creditVersion: {
+      type: Number,
       default: 0,
     },
-
-
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-// Used by isAdmin middleware for every authenticated admin request
 memberSchema.index({ role: 1 });
-
-// Used to filter active vs removed members (dashboards, monthly cron,
-// admin listings)
 memberSchema.index({ status: 1 });
 
 export default mongoose.model("Member", memberSchema);

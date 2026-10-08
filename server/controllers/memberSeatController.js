@@ -1,288 +1,578 @@
 // server/controllers/memberSeatController.js
 //
-// Admin pre-registers membership numbers before a member can sign up.
-// Only membershipNo (required) and paidThroughMonth (required) are
-// admin/CSV-provided. name, plotNo, designation are supplied by the
-// member themselves at /create-profile — not duplicated here. joinDate
-// is set automatically at seat-claim time (memberController.js), never
-// here.
+// HTTP controller for MemberSeat administration.
+//
+// Responsibilities:
+//   - Read req.
+//   - Validate basic HTTP input.
+//   - Parse CSV upload.
+//   - Call memberSeatImportService.
+//   - Send HTTP response.
+//
+// Business rules belong in:
+//   - memberSeatImportService.js
+//   - memberSeatService.js
+//
+// This controller deliberately contains NO row-by-row CSV database logic.
 
 import MemberSeat from "../models/MemberSeat.js";
+import {
+  normalizePhone,
+  isValidPhone,
+} from "../utils/phoneUtils.js";
+import { importMemberSeats } from "../services/memberSeatImportService.js";
+import { getDhakaDateParts } from "../utils/dateTime.js";
 
-// ── sanitize ──────────────────────────────────────────────────────────────────
-const sanitize = (val) => {
-  if (typeof val !== "string") return val;
-  return val.trim().replace(/^[=+\-@\t\r]/, "");
+const PAID_THROUGH_PATTERN =
+  /^\d{4}-(0[1-9]|1[0-2])$/;
+
+const MEMBERSHIP_NO_PATTERN = /^\d+$/;
+
+const MAX_CSV_ROWS = 5000;
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const normalizeMembershipNo = (value) => {
+  return String(value ?? "").trim();
 };
 
-// ── parseCSV ──────────────────────────────────────────────────────────────────
+const normalizePaidThroughMonth = (value) => {
+  return String(value ?? "").trim();
+};
+
+const getCurrentMonth = () => {
+  const { year, month } = getDhakaDateParts();
+
+  return `${year}-${String(month).padStart(2, "0")}`;
+};
+
+const isFuturePaidThroughMonth = (value) => {
+  return value > getCurrentMonth();
+};
+
+// CSV fields are intentionally simple:
+//
+// membershipNo,phone,paidThroughMonth
+//
+// None of these fields should contain commas, so a small parser is
+// sufficient and avoids bringing a full CSV dependency into the
+// request path.
+
 const parseCSV = (text) => {
-  const lines = text
+  const normalizedText = String(text ?? "")
+    .replace(/^\uFEFF/, "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
+    .trim();
+
+  if (!normalizedText) {
+    return {
+      headers: [],
+      rows: [],
+    };
+  }
+
+  const lines = normalizedText
     .split("\n")
-    .filter(l => l.trim());
+    .filter((line) => line.trim() !== "");
 
-  if (lines.length < 2) return { headers: [], rows: [] };
+  if (lines.length < 2) {
+    return {
+      headers: lines[0]
+        ? lines[0].split(",").map((h) => h.trim())
+        : [],
+      rows: [],
+    };
+  }
 
-  const parseRow = (line) => {
-    const fields = [];
-    let current  = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-        else inQuotes = !inQuotes;
-      } else if (ch === "," && !inQuotes) {
-        fields.push(current.trim());
-        current = "";
-      } else {
-        current += ch;
-      }
-    }
-    fields.push(current.trim());
-    return fields;
-  };
+  const headers = lines[0]
+    .split(",")
+    .map((header) =>
+      header
+        .replace(/^\uFEFF/, "")
+        .trim(),
+    );
 
-  const headers = parseRow(lines[0]).map(h => h.toLowerCase().trim());
-  const rows    = lines.slice(1).map((line, i) => {
-    const values = parseRow(line);
-    const row    = {};
-    headers.forEach((h, j) => { row[h] = values[j] ?? ""; });
-    row._lineNumber = i + 2;
-    return row;
-  });
+  const rows = [];
 
-  return { headers, rows };
-};
+  for (let index = 1; index < lines.length; index += 1) {
+    const values = lines[index]
+      .split(",")
+      .map((value) => value.trim());
 
-// ── validateRow ───────────────────────────────────────────────────────────────
-// membershipNo and paidThroughMonth are the ONLY fields this accepts —
-// both required.
+    const row = {};
 
-const REQUIRED_HEADERS = ["membershipno", "paidthroughmonth"];
-const PAID_THROUGH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+    headers.forEach((header, headerIndex) => {
+      row[header] = values[headerIndex] ?? "";
+    });
 
-const validateRow = (row) => {
-  const errors = [];
-
-  const membershipNo       = sanitize(row["membershipno"]      ?? "").toUpperCase();
-  const paidThroughMonthRaw = sanitize(row["paidthroughmonth"] ?? "");
-
-  if (!membershipNo) errors.push("membershipNo is required");
-  if (!/^[A-Z0-9\-]+$/.test(membershipNo)) errors.push("membershipNo contains invalid characters");
-  if (!paidThroughMonthRaw) errors.push("paidThroughMonth is required");
-
-  let paidThroughMonth = null;
-  if (paidThroughMonthRaw) {
-    if (!PAID_THROUGH_PATTERN.test(paidThroughMonthRaw)) {
-      errors.push(`paidThroughMonth "${paidThroughMonthRaw}" must be in YYYY-MM format (e.g. 2026-03)`);
-    } else {
-      const [yearStr, monthStr] = paidThroughMonthRaw.split("-");
-      const asDate = new Date(Number(yearStr), Number(monthStr) - 1, 1);
-      const now    = new Date();
-      const nowFirstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      if (asDate > nowFirstOfMonth) {
-        errors.push("paidThroughMonth cannot be in the future");
-      } else {
-        paidThroughMonth = paidThroughMonthRaw;
-      }
-    }
+    rows.push(row);
   }
 
   return {
-    valid: errors.length === 0,
-    errors,
-    parsed: errors.length === 0 ? {
-      membershipNo,
-      paidThroughMonth,
-    } : null,
+    headers,
+    rows,
   };
 };
 
-// ── getAllSeats ────────────────────────────────────────────────────────────────
+const validateCSVHeaders = (headers) => {
+  const normalized = new Set(
+    headers.map((header) =>
+      String(header)
+        .replace(/^\uFEFF/, "")
+        .trim()
+        .toLowerCase(),
+    ),
+  );
+
+  const required = [
+    "membershipno",
+    "phone",
+    "paidthroughmonth",
+  ];
+
+  return required.filter(
+    (header) => !normalized.has(header),
+  );
+};
+
+// ─── GET /api/admin/seats ──────────────────────────────────────────────────
 
 export const getAllSeats = async (req, res) => {
   try {
-    const seats = await MemberSeat.find().sort({ createdAt: -1 }).lean();
-    return res.status(200).json({ success: true, seats });
+    const seats = await MemberSeat.find({})
+      .select(
+        "membershipNo registeredPhone paidThroughMonth " +
+          "joinDate isClaimed claimedAt isRetired retiredAt",
+      )
+      .sort({ membershipNo: 1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      seats,
+    });
   } catch (error) {
-    console.error("getAllSeats error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error(
+      "getAllSeats error:",
+      error.message,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load member seats",
+    });
   }
 };
 
-// ── createSeat ────────────────────────────────────────────────────────────────
+// ─── POST /api/admin/seats ─────────────────────────────────────────────────
 
 export const createSeat = async (req, res) => {
   try {
-    const { membershipNo, paidThroughMonth } = req.body;
+    const {
+      membershipNo,
+      phone,
+      paidThroughMonth,
+    } = req.body;
 
-    if (!membershipNo?.trim()) return res.status(400).json({ success: false, message: "Membership number is required" });
-    if (!paidThroughMonth) return res.status(400).json({ success: false, message: "paidThroughMonth is required" });
+    const normalizedMembershipNo =
+      normalizeMembershipNo(membershipNo);
 
-    if (!PAID_THROUGH_PATTERN.test(paidThroughMonth)) {
-      return res.status(400).json({ success: false, message: "paidThroughMonth must be in YYYY-MM format" });
+    const normalizedPaidThroughMonth =
+      normalizePaidThroughMonth(paidThroughMonth);
+
+    if (
+      !normalizedMembershipNo ||
+      !MEMBERSHIP_NO_PATTERN.test(
+        normalizedMembershipNo,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Membership number must contain digits only",
+      });
     }
 
-    const clean = membershipNo.trim().toUpperCase();
-    const existing = await MemberSeat.findOne({ membershipNo: clean });
-    if (existing) return res.status(400).json({ success: false, message: `Membership number ${clean} already exists` });
+    if (!phone || !String(phone).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
 
-    const seat = await MemberSeat.create({
-      membershipNo,
-      paidThroughMonth,
+    let normalizedPhone;
+
+    try {
+      normalizedPhone = normalizePhone(phone);
+    } catch {
+      normalizedPhone = null;
+    }
+
+    if (
+      !normalizedPhone ||
+      !isValidPhone(normalizedPhone)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number",
+      });
+    }
+
+    if (
+      !PAID_THROUGH_PATTERN.test(
+        normalizedPaidThroughMonth,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "paidThroughMonth must be in YYYY-MM format",
+      });
+    }
+
+    if (
+      isFuturePaidThroughMonth(
+        normalizedPaidThroughMonth,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "paidThroughMonth cannot be in the future",
+      });
+    }
+
+    const existing = await MemberSeat.findOne({
+      membershipNo: normalizedMembershipNo,
     });
 
-    return res.status(201).json({ success: true, seat });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message:
+          existing.isRetired
+            ? "This membership number is retired and cannot be reused"
+            : "A seat already exists for this membership number",
+      });
+    }
+
+    const seat = await MemberSeat.create({
+      membershipNo: normalizedMembershipNo,
+      registeredPhone: normalizedPhone,
+      paidThroughMonth:
+        normalizedPaidThroughMonth,
+      isClaimed: false,
+      isRetired: false,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Member seat created",
+      seat,
+    });
   } catch (error) {
-    console.error("createSeat error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error(
+      "createSeat error:",
+      error.message,
+    );
+
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "A seat already exists for this membership number",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create member seat",
+    });
   }
 };
 
-// ── updateSeat ────────────────────────────────────────────────────────────────
+// ─── PUT /api/admin/seats/:id ──────────────────────────────────────────────
+//
+// Claimed seats are completely immutable.
+//
+// If an admin needs to change the member's current phone,
+// that belongs to Member.phone — NOT MemberSeat.registeredPhone.
 
 export const updateSeat = async (req, res) => {
   try {
-    const seat = await MemberSeat.findById(req.params.id);
-    if (!seat) return res.status(404).json({ success: false, message: "Seat not found" });
+    const { id } = req.params;
 
-    const { membershipNo, paidThroughMonth } = req.body;
+    const seat = await MemberSeat.findById(id);
 
-    if (paidThroughMonth && !PAID_THROUGH_PATTERN.test(paidThroughMonth)) {
-      return res.status(400).json({ success: false, message: "paidThroughMonth must be in YYYY-MM format" });
+    if (!seat) {
+      return res.status(404).json({
+        success: false,
+        message: "Member seat not found",
+      });
+    }
+
+    if (seat.isRetired) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Retired seats cannot be edited",
+      });
     }
 
     if (seat.isClaimed) {
-      // Claimed seats: paidThroughMonth is locked — it was already
-      // consumed once at claim time and re-applying it retroactively
-      // would create duplicate/incorrect backdated charges. membershipNo
-      // is permanently locked once claimed too, matching the same rule
-      // already enforced for Member.membershipNo elsewhere.
       return res.status(400).json({
         success: false,
-        message: "This seat has been claimed — membershipNo and paidThroughMonth can no longer be edited.",
+        message:
+          "Claimed seats are locked and cannot be edited",
       });
     }
 
-    if (membershipNo) {
-      const clean = membershipNo.trim().toUpperCase();
-      if (clean !== seat.membershipNo) {
-        const conflict = await MemberSeat.findOne({ membershipNo: clean });
-        if (conflict) return res.status(400).json({ success: false, message: `Membership number ${clean} already exists` });
-        seat.membershipNo = clean;
-      }
+    const {
+      membershipNo,
+      phone,
+      paidThroughMonth,
+    } = req.body;
+
+    const normalizedMembershipNo =
+      normalizeMembershipNo(membershipNo);
+
+    const normalizedPaidThroughMonth =
+      normalizePaidThroughMonth(paidThroughMonth);
+
+    if (
+      !normalizedMembershipNo ||
+      !MEMBERSHIP_NO_PATTERN.test(
+        normalizedMembershipNo,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Membership number must contain digits only",
+      });
     }
-    if (paidThroughMonth !== undefined) seat.paidThroughMonth = paidThroughMonth || null;
+
+    let normalizedPhone;
+
+    try {
+      normalizedPhone = normalizePhone(phone);
+    } catch {
+      normalizedPhone = null;
+    }
+
+    if (
+      !normalizedPhone ||
+      !isValidPhone(normalizedPhone)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number",
+      });
+    }
+
+    if (
+      !PAID_THROUGH_PATTERN.test(
+        normalizedPaidThroughMonth,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "paidThroughMonth must be in YYYY-MM format",
+      });
+    }
+
+    if (
+      isFuturePaidThroughMonth(
+        normalizedPaidThroughMonth,
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "paidThroughMonth cannot be in the future",
+      });
+    }
+
+    const membershipConflict =
+      await MemberSeat.findOne({
+        membershipNo: normalizedMembershipNo,
+        _id: { $ne: seat._id },
+      }).select("_id isRetired");
+
+    if (membershipConflict) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Another seat already uses this membership number",
+      });
+    }
+
+    seat.membershipNo = normalizedMembershipNo;
+    seat.registeredPhone = normalizedPhone;
+    seat.paidThroughMonth =
+      normalizedPaidThroughMonth;
 
     await seat.save();
-    return res.status(200).json({ success: true, seat });
+
+    return res.status(200).json({
+      success: true,
+      message: "Member seat updated",
+      seat,
+    });
   } catch (error) {
-    console.error("updateSeat error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error(
+      "updateSeat error:",
+      error.message,
+    );
+
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Another seat already uses this membership number",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update member seat",
+    });
   }
 };
 
-// ── deleteSeat ────────────────────────────────────────────────────────────────
+// ─── DELETE /api/admin/seats/:id ───────────────────────────────────────────
 
 export const deleteSeat = async (req, res) => {
   try {
-    const seat = await MemberSeat.findById(req.params.id);
-    if (!seat) return res.status(404).json({ success: false, message: "Seat not found" });
-    if (seat.isClaimed) return res.status(400).json({
-      success: false,
-      message: "This seat has been claimed by a registered member. Delete the member account first.",
-    });
-    await MemberSeat.findByIdAndDelete(req.params.id);
-    return res.status(200).json({ success: true, message: "Seat deleted" });
-  } catch (error) {
-    console.error("deleteSeat error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
+    const { id } = req.params;
 
-// ── importSeatsFromCSV ────────────────────────────────────────────────────────
+    const seat = await MemberSeat.findById(id);
 
-export const importSeatsFromCSV = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "No CSV file uploaded" });
-    }
-
-    const text = req.file.buffer.toString("utf-8");
-
-    if (text.includes("<html") || text.includes("<?xml")) {
-      return res.status(400).json({ success: false, message: "File does not appear to be a CSV" });
-    }
-
-    const { headers, rows } = parseCSV(text);
-
-    const missingHeaders = REQUIRED_HEADERS.filter(h => !headers.includes(h));
-    if (missingHeaders.length > 0) {
-      return res.status(400).json({
+    if (!seat) {
+      return res.status(404).json({
         success: false,
-        message: `CSV is missing required columns: ${missingHeaders.join(", ")}`,
-        hint:    "Required columns: membershipNo, paidThroughMonth",
+        message: "Member seat not found",
       });
     }
 
-    if (rows.length === 0) return res.status(400).json({ success: false, message: "CSV file has no data rows" });
-    if (rows.length > 1000) return res.status(400).json({ success: false, message: "CSV cannot exceed 1000 rows per import" });
+    if (seat.isClaimed) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Claimed seats cannot be deleted",
+      });
+    }
 
-    const results = { created: 0, updated: 0, errors: [] };
+    if (seat.isRetired) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Retired seats cannot be deleted",
+      });
+    }
 
-    for (const row of rows) {
-      const { valid, errors, parsed } = validateRow(row);
+    await MemberSeat.deleteOne({
+      _id: seat._id,
+    });
 
-      if (!valid) {
-        results.errors.push({
-          line:         row._lineNumber,
-          membershipNo: row["membershipno"] || "(empty)",
-          errors,
-        });
-        continue;
-      }
+    return res.status(200).json({
+      success: true,
+      message: "Member seat deleted",
+    });
+  } catch (error) {
+    console.error(
+      "deleteSeat error:",
+      error.message,
+    );
 
-      try {
-        const existing = await MemberSeat.findOne({ membershipNo: parsed.membershipNo });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete member seat",
+    });
+  }
+};
 
-        if (existing) {
-          if (existing.isClaimed) {
-            results.errors.push({
-              line:         row._lineNumber,
-              membershipNo: parsed.membershipNo,
-              errors:       ["Seat already claimed — cannot update via CSV"],
-            });
-            continue;
-          }
-          existing.paidThroughMonth = parsed.paidThroughMonth;
-          await existing.save();
-          results.updated++;
-        } else {
-          await MemberSeat.create({
-            membershipNo:     parsed.membershipNo,
-            paidThroughMonth: parsed.paidThroughMonth,
-          });
-          results.created++;
-        }
-      } catch (rowError) {
-        results.errors.push({
-          line:         row._lineNumber,
-          membershipNo: parsed.membershipNo,
-          errors:       [rowError.message],
-        });
-      }
+// ─── POST /api/admin/seats/import ──────────────────────────────────────────
+
+export const importSeatsFromCSV = async (
+  req,
+  res,
+) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "CSV file is required",
+      });
+    }
+
+    const text = req.file.buffer.toString("utf8");
+
+    const { headers, rows } = parseCSV(text);
+
+    if (rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "CSV contains no data rows",
+      });
+    }
+
+    if (rows.length > MAX_CSV_ROWS) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `CSV cannot contain more than ${MAX_CSV_ROWS} rows`,
+      });
+    }
+
+    const missingHeaders =
+      validateCSVHeaders(headers);
+
+    if (missingHeaders.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          `Missing required CSV columns: ${missingHeaders.join(
+            ", ",
+          )}`,
+      });
+    }
+
+    const result = await importMemberSeats({
+      rows,
+      performedBy:
+        req.auth?.userId ||
+        req.user?.id ||
+        "UNKNOWN_ADMIN",
+    });
+
+    // Validation errors mean nothing was imported.
+    if (result.errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "CSV validation failed. No changes were made.",
+        results: result,
+      });
     }
 
     return res.status(200).json({
       success: true,
-      message: `Import complete: ${results.created} created, ${results.updated} updated, ${results.errors.length} errors`,
-      results,
+      message:
+        "Member seat import completed",
+      results: result,
     });
   } catch (error) {
-    console.error("importSeatsFromCSV error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error during import" });
+    console.error(
+      "importSeatsFromCSV error:",
+      error.message,
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to import member seats",
+    });
   }
 };

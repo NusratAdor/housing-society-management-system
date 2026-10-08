@@ -1,101 +1,114 @@
-// server/models/MemberSeat.js
-//
-// Admin pre-registers membership numbers before a member can sign up.
-// This model now holds ONLY what admin actually knows in advance:
-// the membership number itself and how far dues are already settled
-// outside the digital system. Everything else — name, plotNo,
-// designation — is supplied by the member themselves at
-// /create-profile, on the real Member document. Duplicating those
-// fields here would just create two sources of truth for the same
-// data, with no way to know which one is current.
-//
-// joinDate is set automatically, exactly once, at the moment the seat
-// is claimed (see memberController.js) — never admin-entered, never
-// in the CSV.
-//
-// paidThroughMonth — "YYYY-MM" string marking the last month the
-// member had already settled dues for, outside the digital system. At
-// registration, memberSeatService.generateBackdatedCharges() uses this
-// to create real, individually-dated MonthlyCharge records from the
-// following month through the current month. Left blank, no backdated
-// charges are created — the member starts fresh from their
-// registration month.
-//
-// Any one-off amount owed outside of monthly dues is added after
-// registration via the existing custom-charges admin feature
-// (ExtraCharge) — unchanged.
-
 import mongoose from "mongoose";
 
 const memberSeatSchema = new mongoose.Schema(
   {
+    // ─────────────────────────────────────────────────────────────
+    // Membership number supplied by admin / society CSV
+    // ─────────────────────────────────────────────────────────────
     membershipNo: {
-      type:      String,
-      required:  true,
-      unique:    true,
-      trim:      true,
-      uppercase: true,
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      match: [
+    /^\d+$/,
+    "Membership number must contain digits only",
+  ],
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Original registered phone supplied by admin / society CSV.
+    //
+    // Stored in canonical international E.164 format:
+    // +8801712345678
+    // +14155552671
+    // +442071234567
+    //
+    // IMPORTANT:
+    // This value must never be changed by the member themselves.
+    // It is the registration eligibility credential.
+    // ─────────────────────────────────────────────────────────────
+    registeredPhone: {
+      type: String,
+      required: true,
+      trim: true,
     },
 
-    // Set automatically at claim time — the exact moment the member
-    // completes registration. Never admin/CSV-settable.
-    joinDate: {
-      type:    Date,
-      default: null,
-    },
-
-    // "YYYY-MM" (e.g. "2026-03"). Consumed once at seat-claim time by
-    // memberSeatService.generateBackdatedCharges; not used afterward.
+    // ─────────────────────────────────────────────────────────────
+    // Last month whose monthly fee was already paid before this
+    // system started managing the member.
+    //
+    // Example:
+    // "2026-09"
+    //
+    // If current month = 2026-10:
+    // system creates October charge.
+    //
+    // If current month = 2026-09:
+    // no backdated charge is created.
+    // ─────────────────────────────────────────────────────────────
     paidThroughMonth: {
-      type:    String,
-      default: null,
-      trim:    true,
+      type: String,
+      required: true,
+      trim: true,
       validate: {
-        validator: (v) => v === null || /^\d{4}-(0[1-9]|1[0-2])$/.test(v),
-        message:   "paidThroughMonth must be in YYYY-MM format",
+        validator: (value) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value),
+
+        message: "paidThroughMonth must be in YYYY-MM format",
       },
     },
 
+    // ─────────────────────────────────────────────────────────────
+    // Set automatically when registration succeeds.
+    // Admin does not enter this.
+    // ─────────────────────────────────────────────────────────────
+    joinDate: {
+      type: Date,
+      default: null,
+    },
+
+    // ─────────────────────────────────────────────────────────────
+    // Registration claim state
+    // ─────────────────────────────────────────────────────────────
     isClaimed: {
-      type:    Boolean,
+      type: Boolean,
       default: false,
     },
 
     claimedByClerkId: {
-      type:    String,
+      type: String,
       default: null,
     },
 
     claimedAt: {
       type: Date,
+      default: null,
     },
 
-    // ── Retirement ──────────────────────────────────────────────────────
-    // Set when the member holding this seat is removed. A retired seat
-    // is permanently locked: it can never be claimed by a new
-    // registration, edited, or deleted — the membership number is
-    // retired forever, exactly as the seat's isClaimed/claimedByClerkId/
-    // claimedAt are deliberately left untouched (not reset), preserving
-    // the historical record of who held this number and when.
+    // ─────────────────────────────────────────────────────────────
+    // Retired membership numbers can never be reused.
+    // ─────────────────────────────────────────────────────────────
     isRetired: {
-      type:    Boolean,
+      type: Boolean,
       default: false,
     },
 
     retiredAt: {
-      type:    Date,
+      type: Date,
       default: null,
     },
-
-
-
   },
   {
     timestamps: true,
-  }
+  },
 );
 
+// ─────────────────────────────────────────────────────────────
+// Indexes
+// ─────────────────────────────────────────────────────────────
+// Useful for admin filtering.
 memberSeatSchema.index({ isClaimed: 1 });
+
+// Useful for retired-seat filtering.
 memberSeatSchema.index({ isRetired: 1 });
 
 export default mongoose.model("MemberSeat", memberSeatSchema);

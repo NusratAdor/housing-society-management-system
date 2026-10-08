@@ -20,11 +20,14 @@ import { writeAuditLog } from "../services/auditService.js";
 import { deactivateMember } from "../services/memberService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
 
+const isValidEmail = (value) => /^[^\s@]+\.[^\s@]+$/.test(value.trim());
 // ─── getAllMembers ─────────────────────────────────────────────────────────────
 
 export const getAllMembers = async (req, res) => {
   try {
-    const members = await Member.find().select("-__v").lean();
+    const members = await Member.find().select(
+      "name email phone membershipNo designation permanentAddress presentAddress plots nominee role pendingAdmin status clerkUserId profileImageUrl",
+    );
     return res.status(200).json({ success: true, members });
   } catch (error) {
     console.error("getAllMembers error:", error.message);
@@ -34,118 +37,346 @@ export const getAllMembers = async (req, res) => {
 
 // ─── updateMemberProfile ──────────────────────────────────────────────────────
 
+// ─── updateMemberProfile ──────────────────────────────────────────────────────
+
 export const updateMemberProfile = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const body = req.body ?? {};
+
+    const protectedFields = {
+      membershipNo: "Membership number cannot be changed.",
+      email: "Email cannot be changed through member profile editing.",
+      clerkUserId: "Clerk user ID cannot be changed.",
+      role: "Member role cannot be changed through member profile editing.",
+      pendingAdmin:
+        "Admin request status cannot be changed through member profile editing.",
+      status: "Member status cannot be changed through member profile editing.",
+      removedAt:
+        "Removal information cannot be changed through member profile editing.",
+      removedBy:
+        "Removal information cannot be changed through member profile editing.",
+      registeredPhone: "Registration phone number cannot be changed.",
+    };
+
+    const attemptedProtectedField = Object.keys(protectedFields).find((field) =>
+      Object.prototype.hasOwnProperty.call(body, field),
+    );
+
+    if (attemptedProtectedField) {
+      return res.status(400).json({
+        success: false,
+        message: protectedFields[attemptedProtectedField],
+      });
+    }
+
     const {
       name,
       phone,
-      address,
       designation,
-      plotNo,
-      role,
-      pendingAdmin,
-      // membershipNo intentionally NOT destructured/used — see file header.
-      // Any membershipNo present in the request body is silently ignored,
-      // never validated, never written. This field is permanently locked
-      // once a member exists.
-    } = req.body;
+      permanentAddress,
+      presentAddress,
+      plots,
+      nominee,
+    } = body;
 
-    // Validation
-    if (phone && !isValidPhone(phone)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid phone number" });
-    }
-
-    const validRoles = ["member", "admin"];
-    if (role && !validRoles.includes(role)) {
-      return res.status(400).json({ success: false, message: "Invalid role" });
-    }
+    // ─────────────────────────────────────────────────────────────
+    // Find member first
+    // ─────────────────────────────────────────────────────────────
 
     const oldMember = await Member.findById(id);
+
     if (!oldMember) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
     }
 
-    // Snapshot before state for audit
+    if (oldMember.status === "removed") {
+      return res.status(400).json({
+        success: false,
+        message: "Removed members cannot be edited",
+      });
+    }
+
+    if (name !== undefined && (typeof name !== "string" || !name.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required",
+      });
+    }
+
+    if (
+      designation !== undefined &&
+      (typeof designation !== "string" || !designation.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Designation is required",
+      });
+    }
+
+    if (
+      permanentAddress !== undefined &&
+      (typeof permanentAddress !== "string" || !permanentAddress.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Permanent address is required",
+      });
+    }
+
+    if (
+      presentAddress !== undefined &&
+      (typeof presentAddress !== "string" || !presentAddress.trim())
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Present address is required",
+      });
+    }
+    // ─────────────────────────────────────────────────────────────
+    // Validate phone if admin is changing it
+    // ─────────────────────────────────────────────────────────────
+
+    if (phone !== undefined && !isValidPhone(phone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number",
+      });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Validate plots
+    // ─────────────────────────────────────────────────────────────
+
+    if (plots !== undefined) {
+      if (!Array.isArray(plots) || plots.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one plot is required",
+        });
+      }
+
+      const allowedPlotSizes = [13, 10, 9, 7, 6.5];
+
+      for (const plot of plots) {
+        if (!plot || typeof plot !== "object") {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid plot data",
+          });
+        }
+
+        if (typeof plot.plotNo !== "string" || !plot.plotNo.trim()) {
+          return res.status(400).json({
+            success: false,
+            message: "Plot number is required",
+          });
+        }
+
+        if (!allowedPlotSizes.includes(Number(plot.plotSize))) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid plot size",
+          });
+        }
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Validate nominee
+    // ─────────────────────────────────────────────────────────────
+
+    if (nominee !== undefined) {
+      if (!nominee || typeof nominee !== "object") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid nominee data",
+        });
+      }
+
+      if (typeof nominee.name !== "string" || !nominee.name.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Nominee name is required",
+        });
+      }
+
+      if (!nominee.phone || !isValidPhone(nominee.phone)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid nominee phone number",
+        });
+      }
+
+      if (
+        typeof nominee.email !== "string" ||
+        !nominee.email.trim() ||
+        !isValidEmail(nominee.email.trim())
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid nominee email",
+        });
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Snapshot BEFORE state for audit
+    // ─────────────────────────────────────────────────────────────
+
     const beforeSnapshot = {
       name: oldMember.name,
       phone: oldMember.phone,
-      address: oldMember.address,
       designation: oldMember.designation,
+
+      permanentAddress: oldMember.permanentAddress,
+      presentAddress: oldMember.presentAddress,
+
       membershipNo: oldMember.membershipNo,
-      plotNo: oldMember.plotNo,
+
+      plots: oldMember.plots,
+      nominee: oldMember.nominee,
+
       role: oldMember.role,
       pendingAdmin: oldMember.pendingAdmin,
     };
 
-    // Build update — only include fields that were sent. membershipNo is
-    // deliberately absent from this list, so it is never part of the
-    // $set payload regardless of what the request body contains.
+    // ─────────────────────────────────────────────────────────────
+    // Build update object
+    //
+    // IMPORTANT:
+    // membershipNo is deliberately NOT included.
+    // email is also deliberately NOT included.
+    // clerkUserId is never editable.
+    // ─────────────────────────────────────────────────────────────
+
     const updateData = {
-      ...(name !== undefined && { name: name.trim() }),
-      ...(phone !== undefined && { phone: normalizePhone(phone) }),
-      ...(address !== undefined && { address: address.trim() }),
-      ...(designation !== undefined && { designation: designation.trim() }),
-      ...(plotNo !== undefined && { plotNo: plotNo.trim() }),
-      ...(role !== undefined && { role }),
-      ...(pendingAdmin !== undefined && { pendingAdmin }),
+      ...(name !== undefined && {
+        name: name.trim(),
+      }),
+
+      ...(phone !== undefined && {
+        phone: normalizePhone(phone),
+      }),
+
+      ...(designation !== undefined && {
+        designation: designation.trim(),
+      }),
+
+      ...(permanentAddress !== undefined && {
+        permanentAddress: permanentAddress.trim(),
+      }),
+
+      ...(presentAddress !== undefined && {
+        presentAddress: presentAddress.trim(),
+      }),
+
+      ...(plots !== undefined && {
+        plots: plots.map((plot) => ({
+          plotNo: plot.plotNo.trim().toUpperCase(),
+          plotSize: Number(plot.plotSize),
+        })),
+      }),
+
+      ...(nominee !== undefined && {
+        nominee: {
+          name: nominee.name.trim(),
+          phone: normalizePhone(nominee.phone),
+          email: nominee.email.trim().toLowerCase(),
+        },
+      }),
     };
+
+    // ─────────────────────────────────────────────────────────────
+    // Update member
+    // ─────────────────────────────────────────────────────────────
 
     const updated = await Member.findByIdAndUpdate(
       id,
       { $set: updateData },
-      { new: true, runValidators: true },
+      {
+        new: true,
+        runValidators: true,
+      },
     );
 
     if (!updated) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
     }
 
-    // Snapshot after state
+    // ─────────────────────────────────────────────────────────────
+    // Snapshot AFTER state for audit
+    // ─────────────────────────────────────────────────────────────
+
     const afterSnapshot = {
       name: updated.name,
       phone: updated.phone,
-      address: updated.address,
       designation: updated.designation,
+
+      permanentAddress: updated.permanentAddress,
+      presentAddress: updated.presentAddress,
+
       membershipNo: updated.membershipNo,
-      plotNo: updated.plotNo,
+
+      plots: updated.plots,
+      nominee: updated.nominee,
+
       role: updated.role,
       pendingAdmin: updated.pendingAdmin,
     };
 
-    // Detect human-readable change list for notification.
-    // membershipNo remains in this map purely for audit-log readability —
-    // it will simply never show a diff, since it can no longer change.
+    // ─────────────────────────────────────────────────────────────
+    // Detect changed fields
+    // ─────────────────────────────────────────────────────────────
     const fieldLabels = {
       name: "name",
       phone: "phone",
-      address: "address",
       designation: "designation",
-      plotNo: "plot number",
-      role: "role",
+      permanentAddress: "permanent address",
+      presentAddress: "present address",
+      plots: "plots",
+      nominee: "nominee",
     };
 
     const changes = Object.entries(fieldLabels)
-      .filter(([f]) => String(oldMember[f] ?? "") !== String(updated[f] ?? ""))
-      .map(([f, label]) => `${label} → ${updated[f]}`);
+      .filter(([field]) => {
+        const before = JSON.stringify(oldMember[field] ?? null);
+        const after = JSON.stringify(updated[field] ?? null);
 
-    // In-app notification for the member
-    if (changes.length > 0 && oldMember.clerkUserId) {
-      await Notification.create({
-        type: "MemberUpdate",
-        content: `Your profile was updated by admin: ${changes.join(", ")}.`,
-        clerkUserId: oldMember.clerkUserId,
-        adminOnly: false,
-      });
+        return before !== after;
+      })
+      .map(([field, label]) => `${label} updated`);
+
+    // ─────────────────────────────────────────────────────────────
+    // Notify member
+    // ─────────────────────────────────────────────────────────────
+    try {
+      if (changes.length > 0 && oldMember.clerkUserId) {
+        await Notification.create({
+          type: "MemberUpdate",
+          content: `Your profile was updated by admin: ${changes.join(", ")}.`,
+          clerkUserId: oldMember.clerkUserId,
+          adminOnly: false,
+        });
+      }
+    } catch (notificationError) {
+      console.error(
+        "Member update notification failed:",
+        notificationError.message,
+      );
     }
 
-    // Audit log — fire-and-forget
+    // ─────────────────────────────────────────────────────────────
+    // Audit log
+    // ─────────────────────────────────────────────────────────────
+
     writeAuditLog({
       action: "MEMBER_UPDATED",
       performedBy: req.clerkUserId,
@@ -153,13 +384,27 @@ export const updateMemberProfile = async (req, res) => {
       description: `Admin updated member ${updated.name} (${updated.membershipNo})`,
       before: beforeSnapshot,
       after: afterSnapshot,
-      metadata: { changes },
+      metadata: {
+        changes,
+        membershipNoLocked: true,
+      },
     });
 
-    return res.status(200).json({ success: true, member: updated });
+    // ─────────────────────────────────────────────────────────────
+    // Response
+    // ─────────────────────────────────────────────────────────────
+
+    return res.status(200).json({
+      success: true,
+      member: updated,
+    });
   } catch (error) {
     console.error("updateMemberProfile error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };
 
@@ -170,40 +415,26 @@ export const deleteMember = async (req, res) => {
     const { id } = req.params;
 
     const member = await Member.findById(id);
+
     if (!member) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
     }
+
     if (member.status === "removed") {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "This member has already been removed",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "This member has already been removed",
+      });
     }
 
     await deactivateMember(
       member._id,
-      member.clerkUserId,
       member.membershipNo,
       req.clerkUserId,
     );
-
-    writeAuditLog({
-      action: "MEMBER_DELETED",
-      performedBy: req.clerkUserId,
-      targetId: member._id,
-      description: `Admin removed member ${member.name} (${member.membershipNo}) — membership number permanently retired, financial records preserved`,
-      before: { status: "active" },
-      after: { status: "removed" },
-      metadata: {
-        membershipNo: member.membershipNo,
-        dataPreserved: true,
-        seatRetired: true,
-      },
-    });
 
     return res.status(200).json({
       success: true,
@@ -212,7 +443,14 @@ export const deleteMember = async (req, res) => {
     });
   } catch (error) {
     console.error("deleteMember error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message:
+        error.statusCode === 409
+          ? error.message
+          : "Server error",
+    });
   }
 };
 
@@ -223,17 +461,55 @@ export const approveAdmin = async (req, res) => {
     const { id } = req.params;
 
     const oldMember = await Member.findById(id);
+
     if (!oldMember) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
+    }
+
+    if (oldMember.status === "removed") {
+      return res.status(400).json({
+        success: false,
+        message: "Removed members cannot be granted admin access",
+      });
+    }
+
+    if (!oldMember.pendingAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: "This member has no pending admin request",
+      });
+    }
+
+    if (oldMember.role === "admin") {
+      return res.status(400).json({
+        success: false,
+        message: "This member is already an admin",
+      });
     }
 
     const updated = await Member.findByIdAndUpdate(
       id,
-      { $set: { role: "admin", pendingAdmin: false } },
-      { new: true },
+      {
+        $set: {
+          role: "admin",
+          pendingAdmin: false,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
     );
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
+    }
 
     if (updated.clerkUserId) {
       await Notification.create({
@@ -246,18 +522,33 @@ export const approveAdmin = async (req, res) => {
     }
 
     writeAuditLog({
-      action: "MEMBER_ROLE_CHANGED",
+      action: "ADMIN_REQUEST_APPROVED",
       performedBy: req.clerkUserId,
       targetId: updated._id,
-      description: `Admin approved admin role for ${updated.name} (${updated.membershipNo})`,
-      before: { role: oldMember.role, pendingAdmin: oldMember.pendingAdmin },
-      after: { role: "admin", pendingAdmin: false },
+      description:
+        `Admin approved admin access for ${updated.name} ` +
+        `(${updated.membershipNo})`,
+      before: {
+        role: oldMember.role,
+        pendingAdmin: oldMember.pendingAdmin,
+      },
+      after: {
+        role: updated.role,
+        pendingAdmin: updated.pendingAdmin,
+      },
     });
 
-    return res.status(200).json({ success: true, member: updated });
+    return res.status(200).json({
+      success: true,
+      member: updated,
+    });
   } catch (error) {
     console.error("approveAdmin error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 };
 
@@ -266,13 +557,33 @@ export const approveAdmin = async (req, res) => {
 export const rejectAdminRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+
+    const rawReason = req.body?.reason;
+
+    const normalizedReason =
+      typeof rawReason === "string" ? rawReason.trim() : "";
+
+    if (normalizedReason.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason must be 500 characters or less",
+      });
+    }
 
     const oldMember = await Member.findById(id);
+
     if (!oldMember) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Member not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
+    }
+
+    if (oldMember.status === "removed") {
+      return res.status(400).json({
+        success: false,
+        message: "Removed members cannot have their admin request processed",
+      });
     }
 
     if (!oldMember.pendingAdmin) {
@@ -284,14 +595,29 @@ export const rejectAdminRequest = async (req, res) => {
 
     const updated = await Member.findByIdAndUpdate(
       id,
-      { $set: { pendingAdmin: false } },
-      { new: true },
+      {
+        $set: {
+          pendingAdmin: false,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      },
     );
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Member not found",
+      });
+    }
 
     if (updated.clerkUserId) {
       const baseMessage = "Your admin access request was not approved.";
-      const content = reason?.trim()
-        ? `${baseMessage} Reason: ${reason.trim()}`
+
+      const content = normalizedReason
+        ? `${baseMessage} Reason: ${normalizedReason}`
         : `${baseMessage} You may submit a new request at any time.`;
 
       await Notification.create({
@@ -303,22 +629,143 @@ export const rejectAdminRequest = async (req, res) => {
     }
 
     writeAuditLog({
-      action: "MEMBER_ROLE_CHANGED",
+      action: "ADMIN_REQUEST_REJECTED",
       performedBy: req.clerkUserId,
       targetId: updated._id,
       description:
-        `Admin rejected admin-access request from ${updated.name} ` +
-        `(${updated.membershipNo})` +
-        (reason?.trim() ? ` — ${reason.trim()}` : ""),
-      before: { pendingAdmin: true, role: oldMember.role },
-      after: { pendingAdmin: false, role: oldMember.role },
-      metadata: { decision: "rejected", reason: reason?.trim() || null },
+        `Admin rejected admin-access request from ` +
+        `${updated.name} (${updated.membershipNo})`,
+      before: {
+        pendingAdmin: true,
+        role: oldMember.role,
+      },
+      after: {
+        pendingAdmin: false,
+        role: updated.role,
+      },
+      metadata: {
+        decision: "rejected",
+        reason: normalizedReason || null,
+      },
     });
 
-    return res.status(200).json({ success: true, member: updated });
+    return res.status(200).json({
+      success: true,
+      member: updated,
+    });
   } catch (error) {
     console.error("rejectAdminRequest error:", error.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+
+
+
+
+export const demoteMember = async (req, res) => {
+  const session = await Member.startSession();
+
+  try {
+    session.startTransaction();
+
+    const target = await Member.findOne({
+      _id: req.params.id,
+      status: "active",
+      role: "admin",
+    }).session(session);
+
+    if (!target) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "Active administrator not found",
+      });
+    }
+
+    if (target.clerkUserId === req.clerkUserId) {
+      await session.abortTransaction();
+
+      return res.status(400).json({
+        success: false,
+        message: "You cannot demote yourself.",
+      });
+    }
+
+    const remainingAdminCount = await Member.countDocuments({
+      _id: { $ne: target._id },
+      role: "admin",
+      status: "active",
+    }).session(session);
+
+    if (remainingAdminCount === 0) {
+      await session.abortTransaction();
+
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot demote the last active administrator.",
+      });
+    }
+
+    const before = {
+      role: target.role,
+      pendingAdmin: target.pendingAdmin,
+    };
+
+    target.role = "member";
+    target.pendingAdmin = false;
+
+    await target.save({ session });
+
+    await writeAuditLog({
+      action: "MEMBER_ROLE_CHANGED",
+      performedBy: req.clerkUserId,
+      targetId: target._id,
+      description:
+        `Administrator access removed from ${target.name} (${target.membershipNo}).`,
+      before,
+      after: {
+        role: target.role,
+        pendingAdmin: target.pendingAdmin,
+      },
+      metadata: {
+        reason: "ADMIN_DEMOTION",
+      },
+      session,
+      required: true,
+    });
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      success: true,
+      message: "Administrator has been demoted to member.",
+      member: {
+        _id: target._id,
+        role: target.role,
+        pendingAdmin: target.pendingAdmin,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    console.error("demoteMember error:", error.message);
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message:
+        error.statusCode === 409
+          ? error.message
+          : "Failed to demote administrator.",
+    });
+  } finally {
+    await session.endSession();
   }
 };
 

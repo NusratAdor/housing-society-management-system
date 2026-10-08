@@ -1,37 +1,110 @@
+
 {
   "title": "Profile details",
-  "subtitle": "Keep your contact information up to date",
+  "subtitle": "Keep your personal and membership information up to date",
+
+  "sections": {
+    "personal": {
+      "title": "Personal information",
+      "description": "Update the personal information associated with your membership."
+    },
+    "address": {
+      "title": "Address information",
+      "description": "Keep your permanent and present addresses up to date."
+    },
+    "plots": {
+      "title": "Plot information",
+      "description": "Manage the plots associated with your membership."
+    },
+    "nominee": {
+      "title": "Nominee information",
+      "description": "Keep your nominee information current."
+    }
+  },
+
   "fields": {
     "name": "Full name",
     "phone": "Phone",
-    "address": "Address",
-    "designation": "Designation",
-    "plotNumber": "Plot number",
     "email": "Email",
-    "membershipNumber": "Membership number"
+    "designation": "Designation",
+    "membershipNumber": "Membership number",
+    "permanentAddress": "Permanent address",
+    "presentAddress": "Present address",
+    "plotNumber": "Plot number",
+    "plotSize": "Plot size",
+    "nomineeName": "Nominee name",
+    "nomineePhone": "Nominee phone",
+    "nomineeEmail": "Nominee email"
   },
+
   "hints": {
-    "email": "Managed by your sign-in account",
-    "membershipNumber": "Assigned by admin — contact admin to change"
+    "email": "Managed by your sign-in account.",
+    "phone": "Contact an administrator if your phone number needs to be changed.",
+    "membershipNumber": "Permanently assigned to your membership.",
+    "plotNumber": "Enter the plot number exactly as assigned.",
+    "nomineePhone": "International phone numbers are supported."
   },
+
+  "placeholders": {
+    "name": "Enter your full name",
+    "designation": "Enter your designation",
+    "permanentAddress": "Enter your permanent address",
+    "presentAddress": "Enter your present address",
+    "plotNumber": "e.g. AD-10, AD/10, AD 10",
+    "nomineeName": "Enter nominee's full name",
+    "nomineePhone": "Enter nominee's phone number",
+    "nomineeEmail": "Enter nominee's email address"
+  },
+
+  "plot": {
+    "label": "Plot {{number}}",
+    "description": "Provide the plot number and its assigned size.",
+    "selectSize": "Select plot size",
+    "add": "Add plot",
+    "remove": "Remove"
+  },
+
   "actions": {
     "save": "Save changes",
-    "saving": "Saving…",
-    "saved": "Saved",
+    "saving": "Saving...",
+    "saved": "Changes saved",
     "requestAdmin": "Request admin access",
-    "requesting": "Requesting…",
+    "requesting": "Requesting...",
     "adminActive": "Admin access active",
     "adminPending": "Admin request pending"
   },
-  "errors": {
-    "phone": "Enter a valid Bangladeshi number e.g. 01700000000",
-    "phoneRequired": "Fix the phone number before saving",
-    "noEmail": "No email found on your account"
+
+  "admin": {
+    "activeDescription": "You currently have active administrator access.",
+    "pendingDescription": "Your administrator access request is waiting for approval.",
+    "requestDescription": "Submit a request if you need administrator access."
   },
+
+  "errors": {
+    "nameRequired": "Name is required.",
+    "designationRequired": "Designation is required.",
+    "permanentAddressRequired": "Permanent address is required.",
+    "presentAddressRequired": "Present address is required.",
+    "plotRequired": "At least one plot is required.",
+    "plotNumberRequired": "Plot number is required.",
+    "plotSizeRequired": "Plot size is required.",
+    "plotSizeInvalid": "Invalid plot size.",
+    "nomineeNameRequired": "Nominee name is required.",
+    "nomineePhoneRequired": "Nominee phone number is required.",
+    "nomineePhoneInvalid": "Enter a valid phone number.",
+    "nomineeEmailRequired": "Nominee email is required.",
+    "nomineeEmailInvalid": "Enter a valid email address."
+  },
+
   "toast": {
-    "saved": "Profile saved",
-    "adminRequested": "Admin request submitted",
-    "adminAlreadyPending": "Your request is already pending",
-    "alreadyAdmin": "You already have admin access"
+    "saved": "Profile updated successfully.",
+    "validation": "Please fix the highlighted fields.",
+    "sessionExpired": "Your session has expired. Please sign in again.",
+    "updateFailed": "Failed to update your profile.",
+    "adminRequested": "Admin access request submitted.",
+    "adminAlreadyPending": "Your admin access request is already pending.",
+    "alreadyAdmin": "You already have admin access.",
+    "adminRequestFailed": "Failed to submit the admin access request."
   }
 }
+

@@ -26,7 +26,7 @@ const csvUpload = multer({
       "text/plain",               // some systems send .csv as text/plain
       "application/octet-stream", // generic binary — validated by content check in controller
     ];
-    if (!allowed.includes(file.mimetype) && !file.originalname.endsWith(".csv")) {
+    if (!allowed.includes(file.mimetype) && !file.originalname.toLowerCase().endsWith(".csv")) {
       return cb(new Error("Only CSV files are allowed"));
     }
     cb(null, true);

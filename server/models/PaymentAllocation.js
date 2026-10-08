@@ -21,14 +21,14 @@ import mongoose from "mongoose";
 const paymentAllocationSchema = new mongoose.Schema(
   {
     payment: {
-      type:     mongoose.Schema.Types.ObjectId,
-      ref:      "Payment",
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Payment",
       required: true,
     },
 
     member: {
-      type:     mongoose.Schema.Types.ObjectId,
-      ref:      "Member",
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Member",
       required: true,
     },
 
@@ -36,8 +36,8 @@ const paymentAllocationSchema = new mongoose.Schema(
     // "monthly" → chargeId is a MonthlyCharge _id
     // "extra"   → chargeId is an ExtraCharge _id
     chargeType: {
-      type:     String,
-      enum:     ["monthly", "extra"],
+      type: String,
+      enum: ["monthly", "extra"],
       required: true,
     },
 
@@ -45,9 +45,9 @@ const paymentAllocationSchema = new mongoose.Schema(
     // Dynamic reference — resolves to MonthlyCharge or ExtraCharge
     // based on chargeType
     chargeId: {
-      type:     mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       required: true,
-      refPath:  "chargeType",
+      refPath: "chargeType",
     },
 
     // Amount allocated from this payment to this charge
@@ -56,20 +56,20 @@ const paymentAllocationSchema = new mongoose.Schema(
     // For extra charges: always equals the full ExtraCharge amount
     //   (partial extra charge payments are not allowed)
     amount: {
-      type:     Number,
+      type: Number,
       required: true,
-      min:      [1, "Allocation amount must be at least 1 BDT"],
+      min: [1, "Allocation amount must be at least 1 BDT"],
     },
 
     allocatedAt: {
-      type:    Date,
+      type: Date,
       default: Date.now,
     },
   },
   {
     // No updatedAt needed — these records never change
     timestamps: { createdAt: true, updatedAt: false },
-  }
+  },
 );
 
 // Look up all allocations for a payment — used for receipt generation
@@ -83,7 +83,7 @@ paymentAllocationSchema.index({ chargeId: 1 });
 
 paymentAllocationSchema.index(
   { payment: 1, chargeType: 1, chargeId: 1 },
-  { unique: true }
+  { unique: true },
 );
 
 export default mongoose.model("PaymentAllocation", paymentAllocationSchema);

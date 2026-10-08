@@ -21,10 +21,13 @@ const run = async () => {
 
   const existingSeat = await MemberSeat.findOne({ membershipNo: "123" });
   if (existingSeat) {
-    console.log(`⚠️  Seat 123 already exists (isClaimed: ${existingSeat.isClaimed}). Skipping creation.`);
+    console.log(
+      `⚠️  Seat 123 already exists (isClaimed: ${existingSeat.isClaimed}). Skipping creation.`,
+    );
   } else {
     await MemberSeat.create({
       membershipNo: "123",
+      registeredPhone: "+8801712345678",
       paidThroughMonth: "2025-12",
       isClaimed: false,
     });

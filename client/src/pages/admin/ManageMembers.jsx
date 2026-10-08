@@ -1,856 +1,2296 @@
-// pages/admin/ManageMembers.jsx
-//
-// CHANGES (this pass):
-//   1. Membership No. is now READ-ONLY in the edit modal — it is the
-//      permanent key tying Member/MemberSeat/MonthlyCharge/ExtraCharge/
-//      Payment records together and must never change after registration.
-//      Removed from the save payload, its client-side validation, and
-//      its editable input; matching server enforcement in
-//      adminController.js.
-//   2. Due Breakdown popover repositioned using measured coordinates
-//      (position: fixed, computed from the real button position via
-//      useLayoutEffect) instead of position: absolute anchored inside
-//      the scrollable table — the previous approach clipped/required
-//      scrolling for rows near the bottom of the table.
-//
-// Everything else — search, sort, pagination, admin approve/reject flow,
-// delete flow — is unchanged.
-
-import React, { useEffect, useState, useCallback, useLayoutEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "react-hot-toast";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Edit,
+  Filter,
+  Loader2,
+  Mail,
+  MapPin,
+  Phone,
+  Plus,
+  Search,
+  Shield,
+  Trash2,
+  User,
+  UserRound,
+  Info,
+
+  X,
+} from "lucide-react";
+
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Edit,
-  Trash2,
-  Loader2,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-  SortAsc,
-  SortDesc,
-  Info,
-} from "lucide-react";
-import { useAppContext } from "../../context/AppContext";
 
+import { useAppContext } from "../../context/AppContext";
+import { normalizePhone, isValidPhone } from "../../utils/phoneUtils";
 import usePageTitle from "../../hooks/usePageTitle";
+
+
+
+const PLOT_SIZES = [6.5, 7, 9, 10, 13];
+
+const MEMBERS_PER_PAGE = 25;
+
+const createEmptyPlot = () => ({
+  plotNo: "",
+  plotSize: "",
+});
+
+const buildEditForm = (member) => ({
+  name: member?.name || "",
+  phone: member?.phone || "",
+  email: member?.email || "",
+  membershipNo: member?.membershipNo || "",
+  designation: member?.designation || "",
+
+  permanentAddress: member?.permanentAddress || "",
+  presentAddress: member?.presentAddress || "",
+
+  plots:
+    Array.isArray(member?.plots) && member.plots.length > 0
+      ? member.plots.map((plot) => ({
+          plotNo: plot.plotNo || "",
+          plotSize: plot.plotSize ?? "",
+        }))
+      : [createEmptyPlot()],
+
+  nominee: {
+    name: member?.nominee?.name || "",
+    phone: member?.nominee?.phone || "",
+    email: member?.nominee?.email || "",
+  },
+
+  role: member?.role || "member",
+});
+
+const formatCurrency = (amount = 0) =>
+  `৳${Number(amount || 0).toLocaleString()}`;
+
+const getMemberPlotSizes = (member) => {
+  if (!Array.isArray(member?.plots)) return [];
+
+  return member.plots
+    .map((plot) => Number(plot?.plotSize))
+    .filter((size) => PLOT_SIZES.includes(size));
+};
+
+const getTotalPlotSize = (member) => {
+  if (!Array.isArray(member?.plots)) return 0;
+
+  return member.plots.reduce(
+    (total, plot) => total + Number(plot?.plotSize || 0),
+    0,
+  );
+};
+
+const getSmallestPlotSize = (member) => {
+  const sizes = getMemberPlotSizes(member);
+
+  if (sizes.length === 0) {
+    return null;
+  }
+
+  return Math.min(...sizes);
+};
+
+const getPaymentStatusClasses = (status) => {
+  if (status === "Paid") {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+
+  return "bg-red-50 text-red-700 border-red-200";
+};
+
+const getRoleClasses = (role) => {
+  if (role === "admin") {
+    return "bg-violet-50 text-violet-700 border-violet-200";
+  }
+
+  return "bg-slate-50 text-slate-700 border-slate-200";
+};
+
+const getStatusClasses = (status) => {
+  if (status === "active") {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+
+  return "bg-slate-100 text-slate-600 border-slate-200";
+};
 
 const ManageMembers = () => {
   const { axios, getToken } = useAppContext();
+
   usePageTitle("Manage Members");
 
-  const [members,        setMembers]        = useState([]);
-  const [dueByMemberId,  setDueByMemberId]  = useState({});
-  const [filtered,       setFiltered]       = useState([]);
-  const [searchTerm,     setSearchTerm]     = useState("");
-  const [sortOrder,      setSortOrder]      = useState("asc");
-  const [loading,        setLoading]        = useState(true);
-  const [error,          setError]          = useState("");
-  const [confirmDelete,  setConfirmDelete]  = useState(null);
-  const [editingMember,  setEditingMember]  = useState(null);
-  const [saving,         setSaving]         = useState(false);
-  const [phoneError,     setPhoneError]     = useState("");
-  const [currentPage,    setCurrentPage]    = useState(1);
-  const [openDuePopover, setOpenDuePopover] = useState(null); // memberId | null
-  // Measured screen position for the currently-open due breakdown
-  // popover — null until computed, same pattern used for the export
-  // panel in PaymentSection.jsx, so it can never render clipped or
-  // trapped inside the table's scroll container.
-  const [duePopoverPos,  setDuePopoverPos]  = useState(null);
-  const dueBtnRefs = useRef({}); // memberId -> button DOM node
-  const [rejectPopover,  setRejectPopover]  = useState(null); // memberId | null
-  const [rejectReason,   setRejectReason]   = useState("");
-  const [rejecting,      setRejecting]      = useState(false);
+  const [members, setMembers] = useState([]);
+  const [dueByMemberId, setDueByMemberId] = useState({});
 
-  const membersPerPage = 10;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  // ── Validation helpers ──────────────────────────────────────────────────
+  /*
+   * Search is intentionally restricted to:
+   *   1. name
+   *   2. membership number
+   *
+   * Plot size is handled separately through plotSizeFilter.
+   *
+   * Email and phone are deliberately NOT searchable.
+   */
+  const [searchTerm, setSearchTerm] = useState("");
+  const [plotSizeFilter, setPlotSizeFilter] = useState("all");
 
-  const normalizePhone = (input) => {
-    if (!input) return "";
-    return input
-      .replace(/[^0-9]/g, "")
-      .replace(/^880/, "")
-      .replace(/^0+/, "0");
-  };
+  const [sortField, setSortField] = useState("membershipNo");
+  const [sortDirection, setSortDirection] = useState("asc");
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const validatePhone = (input) => {
-    const normalized = normalizePhone(input);
-    if (!normalized || normalized === "0") {
-      setPhoneError("");
-      return true;
-    }
-    if (!/^(013|014|015|016|017|018|019)\d{8}$/.test(normalized)) {
-      setPhoneError("Invalid Bangladeshi phone number");
-      return false;
-    }
-    setPhoneError("");
-    return true;
-  };
+  const [editingMember, setEditingMember] = useState(null);
+  const [editForm, setEditForm] = useState(null);
 
-  // ── Fetch members + due status ──────────────────────────────────────────
+  const [saving, setSaving] = useState(false);
+  const [editErrors, setEditErrors] = useState({});
 
-  const fetchMembers = useCallback(
-    async (retryCount = 0) => {
-      try {
-        setLoading(true);
-        setError("");
-        const token = await getToken();
-        if (!token) throw new Error("Failed to get authentication token");
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const [removing, setRemoving] = useState(false);
 
-        const [membersRes, dueRes] = await Promise.all([
-          axios.get("/api/admin/members", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          axios
-            .get("/api/admin/dashboard/member-due-status", {
-              headers: { Authorization: `Bearer ${token}` },
-            })
-            .catch(() => null),
-        ]);
+  const [rejectingMemberId, setRejectingMemberId] = useState(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
-        if (membersRes.data.success) {
-          setMembers(membersRes.data.members);
-          setFiltered(membersRes.data.members);
-          if (!membersRes.data.members.length) {
-            toast("No members found in the database", { icon: "ℹ️" });
-          }
-        } else {
-          setError(membersRes.data.message || "Failed to load members");
-        }
+  const [demotionTarget, setDemotionTarget] = useState(null);
+  const [demoting, setDemoting] = useState(false);
 
-        if (dueRes?.data?.success) {
-          const map = {};
-          for (const row of dueRes.data.members) {
-            map[row.memberId] = {
-              totalDue:      row.totalDue,
-              monthlyDue:    row.monthlyDue,
-              extraDue:      row.extraDue,
-              paymentStatus: row.paymentStatus,
-            };
-          }
-          setDueByMemberId(map);
-        }
-      } catch (err) {
-        const message =
-          err.response?.status === 404
-            ? "Members endpoint not found. Check backend configuration."
-            : err.response?.data?.errors?.[0]?.code === "authorization_invalid"
-            ? "Authentication failed. Please sign in again."
-            : "Error loading members. Please try again later.";
-        setError(message);
-        if (retryCount < 2)
-          setTimeout(() => fetchMembers(retryCount + 1), 1000);
-      } finally {
-        setLoading(false);
+  const [openDuePopover, setOpenDuePopover] = useState(null);
+const [duePopoverPos, setDuePopoverPos] = useState(null);
+const dueBtnRefs = useRef({});
+
+  /*
+   * ------------------------------------------------------------
+   * Fetch members
+   * ------------------------------------------------------------
+   */
+
+  const fetchMembers = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const token = await getToken();
+
+      if (!token) {
+        throw new Error("Authentication token unavailable");
       }
-    },
-    [axios, getToken],
-  );
+
+      const [membersResponse, dueResponse] = await Promise.all([
+        axios.get("/api/admin/members", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }),
+
+        axios
+          .get("/api/admin/dashboard/member-due-status", {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          })
+          .catch(() => null),
+      ]);
+
+      if (!membersResponse?.data?.success) {
+        throw new Error(
+          membersResponse?.data?.message || "Failed to load members",
+        );
+      }
+
+      const loadedMembers = membersResponse.data.members || [];
+
+      setMembers(loadedMembers);
+
+      if (dueResponse?.data?.success) {
+        const dueMap = {};
+
+        for (const row of dueResponse.data.members || []) {
+          dueMap[row.memberId] = {
+            totalDue: Number(row.totalDue || 0),
+            monthlyDue: Number(row.monthlyDue || 0),
+            extraDue: Number(row.extraDue || 0),
+            paymentStatus: row.paymentStatus,
+          };
+        }
+
+        setDueByMemberId(dueMap);
+      } else {
+        setDueByMemberId({});
+      }
+    } catch (err) {
+      console.error("ManageMembers fetch error:", err);
+
+      const status = err?.response?.status;
+
+      if (status === 401 || status === 403) {
+        setError("You are not authorized to manage members.");
+      } else {
+        setError(
+          err?.response?.data?.message ||
+            err?.message ||
+            "Failed to load members.",
+        );
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [axios, getToken]);
 
   useEffect(() => {
     fetchMembers();
   }, [fetchMembers]);
 
-  // ── Search filter ────────────────────────────────────────────────────────
+  /*
+   * ------------------------------------------------------------
+   * Filtering
+   * ------------------------------------------------------------
+   */
 
-  useEffect(() => {
-    const lower = searchTerm.toLowerCase();
-    setFiltered(
-      members.filter(
-        (m) =>
-          m.name.toLowerCase().includes(lower) ||
-          m.email.toLowerCase().includes(lower),
-      ),
-    );
-    setCurrentPage(1);
-  }, [searchTerm, members]);
+  const filteredMembers = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    const selectedPlotSize = Number(plotSizeFilter);
 
-  const toggleSort = () => {
-    const newOrder = sortOrder === "asc" ? "desc" : "asc";
-    setSortOrder(newOrder);
-    const sorted = [...filtered].sort((a, b) => {
-      const nameA = a.name.toLowerCase();
-      const nameB = b.name.toLowerCase();
-      return newOrder === "asc"
-        ? nameA.localeCompare(nameB)
-        : nameB.localeCompare(nameA);
+    return members.filter((member) => {
+      const matchesText =
+        !query ||
+        member.name?.toLowerCase().includes(query) ||
+        member.membershipNo?.toLowerCase().includes(query) ||
+        member.plots?.some((plot) =>
+          String(plot?.plotNo || "")
+            .toLowerCase()
+            .includes(query),
+        );
+
+      /*
+       * Plot-size filtering is intentionally independent from text search.
+       *
+       * Example:
+       * Member owns [13, 7].
+       *
+       * Selecting "7 Katha"   -> member appears
+       * Selecting "13 Katha"  -> member appears
+       * Selecting "10 Katha"  -> member does not appear
+       *
+       * This is different from sorting.
+       */
+      const matchesPlotSize =
+        plotSizeFilter === "all" ||
+        getMemberPlotSizes(member).includes(selectedPlotSize);
+
+      return matchesText && matchesPlotSize;
     });
-    setFiltered(sorted);
-  };
+  }, [members, searchTerm, plotSizeFilter]);
 
-  const totalPages    = Math.ceil(filtered.length / membersPerPage);
-  const startIdx      = (currentPage - 1) * membersPerPage;
-  const currentMembers = filtered.slice(startIdx, startIdx + membersPerPage);
+  /*
+   * ------------------------------------------------------------
+   * Sorting
+   * ------------------------------------------------------------
+   */
 
-  // Close any open popover when changing page or search
-  useEffect(() => {
-    setOpenDuePopover(null);
-    setRejectPopover(null);
-  }, [currentPage, searchTerm]);
+  const compareMembershipNumbers = (a, b) => {
+    const numberA = Number(a?.membershipNo);
+    const numberB = Number(b?.membershipNo);
 
-  // ── Due breakdown popover positioning ───────────────────────────────────
-  // Measured from the real button position rather than anchored via
-  // position: absolute inside the table — this is what lets the popover
-  // escape the table's scroll boundary and the viewport edge for rows
-  // near the bottom of the page.
-  useLayoutEffect(() => {
-    if (!openDuePopover) { setDuePopoverPos(null); return; }
-    const btn = dueBtnRefs.current[openDuePopover];
-    if (!btn) return;
-
-    // Fixed content (three label/value rows) — safe to estimate its
-    // height rather than needing a two-pass real measurement.
-    const POPOVER_HEIGHT_ESTIMATE = 150;
-    const margin      = 4;
-    const rect        = btn.getBoundingClientRect();
-    const spaceBelow  = window.innerHeight - rect.bottom;
-    const opensUpward = spaceBelow < POPOVER_HEIGHT_ESTIMATE + margin;
-
-    setDuePopoverPos({
-      top: opensUpward
-        ? Math.max(rect.top - POPOVER_HEIGHT_ESTIMATE - margin, margin)
-        : rect.bottom + margin,
-      left: rect.left,
-    });
-  }, [openDuePopover]);
-
-  // ── Edit handling ────────────────────────────────────────────────────────
-
-  const handleEdit = (member) => {
-    setEditingMember({
-      ...member,
-      phone: member.phone || "",
-      role:  member.role  || "member",
-    });
-    setPhoneError("");
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (phoneError) {
-      toast.error("Please fix form errors before saving");
-      return;
-    }
-
-    const normalizedPhone = normalizePhone(editingMember.phone);
     if (
-      editingMember.phone &&
-      !/^(013|014|015|016|017|018|019)\d{8}$/.test(normalizedPhone)
+      Number.isFinite(numberA) &&
+      Number.isFinite(numberB) &&
+      numberA !== numberB
     ) {
-      toast.error("Invalid phone number");
+      return numberA - numberB;
+    }
+
+    return String(a?.membershipNo || "").localeCompare(
+      String(b?.membershipNo || ""),
+      undefined,
+      {
+        numeric: true,
+        sensitivity: "base",
+      },
+    );
+  };
+
+  const sortedMembers = useMemo(() => {
+    return [...filteredMembers].sort((a, b) => {
+      let comparison = 0;
+
+      if (sortField === "membershipNo") {
+        comparison = compareMembershipNumbers(a, b);
+      }
+
+      if (sortField === "smallestPlotSize") {
+        const smallestA = getSmallestPlotSize(a);
+        const smallestB = getSmallestPlotSize(b);
+
+        /*
+         * Members without a valid plot size should stay at the bottom
+         * regardless of ascending/descending direction.
+         */
+        if (smallestA === null && smallestB !== null) {
+          return 1;
+        }
+
+        if (smallestA !== null && smallestB === null) {
+          return -1;
+        }
+
+        if (smallestA !== null && smallestB !== null) {
+          comparison = smallestA - smallestB;
+        }
+
+        /*
+         * Stable secondary ordering.
+         */
+        if (comparison === 0) {
+          comparison = compareMembershipNumbers(a, b);
+        }
+      }
+
+      return sortDirection === "desc" ? comparison * -1 : comparison;
+    });
+  }, [filteredMembers, sortField, sortDirection]);
+
+  /*
+   * ------------------------------------------------------------
+   * Pagination
+   * ------------------------------------------------------------
+   */
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedMembers.length / MEMBERS_PER_PAGE),
+  );
+
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const currentMembers = sortedMembers.slice(
+    (safeCurrentPage - 1) * MEMBERS_PER_PAGE,
+    safeCurrentPage * MEMBERS_PER_PAGE,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, plotSizeFilter, sortField, sortDirection]);
+
+
+
+  useEffect(() => {
+  setOpenDuePopover(null);
+}, [currentPage, searchTerm, plotSizeFilter]);
+
+
+useLayoutEffect(() => {
+  if (!openDuePopover) {
+    setDuePopoverPos(null);
+    return;
+  }
+
+  const button = dueBtnRefs.current[openDuePopover];
+
+  if (!button) return;
+
+  const rect = button.getBoundingClientRect();
+
+  const popoverHeight = 150;
+  const margin = 4;
+
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const opensUpward =
+    spaceBelow < popoverHeight + margin;
+
+  setDuePopoverPos({
+    top: opensUpward
+      ? Math.max(
+          rect.top - popoverHeight - margin,
+          margin,
+        )
+      : rect.bottom + margin,
+
+    left: rect.left,
+  });
+}, [openDuePopover]);
+
+  /*
+   * ------------------------------------------------------------
+   * Summary
+   * ------------------------------------------------------------
+   */
+
+  const activeCount = members.filter(
+    (member) => member.status === "active",
+  ).length;
+
+  const removedCount = members.filter(
+    (member) => member.status === "removed",
+  ).length;
+
+  /*
+   * ------------------------------------------------------------
+   * Edit handling
+   * ------------------------------------------------------------
+   */
+
+  const openEdit = (member) => {
+    setEditingMember(member);
+    setEditForm(buildEditForm(member));
+    setEditErrors({});
+  };
+
+  const closeEdit = () => {
+    if (saving) return;
+
+    setEditingMember(null);
+    setEditForm(null);
+    setEditErrors({});
+  };
+
+  const updateEditField = (field, value) => {
+    setEditForm((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+
+    setEditErrors((previous) => {
+      if (!previous[field]) return previous;
+
+      const next = { ...previous };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const updateEditPlot = (index, field, value) => {
+    setEditForm((previous) => {
+      const plots = [...previous.plots];
+
+      plots[index] = {
+        ...plots[index],
+        [field]: value,
+      };
+
+      return {
+        ...previous,
+        plots,
+      };
+    });
+
+    const errorKey = `plot.${index}.${field}`;
+
+    setEditErrors((previous) => {
+      if (!previous[errorKey]) return previous;
+
+      const next = { ...previous };
+      delete next[errorKey];
+      return next;
+    });
+  };
+
+  const addEditPlot = () => {
+    setEditForm((previous) => ({
+      ...previous,
+      plots: [...previous.plots, createEmptyPlot()],
+    }));
+  };
+
+  const removeEditPlot = (index) => {
+    if (editForm.plots.length <= 1) return;
+
+    setEditForm((previous) => ({
+      ...previous,
+      plots: previous.plots.filter((_, plotIndex) => plotIndex !== index),
+    }));
+  };
+
+  const updateNomineeField = (field, value) => {
+    setEditForm((previous) => ({
+      ...previous,
+      nominee: {
+        ...previous.nominee,
+        [field]: value,
+      },
+    }));
+
+    const errorKey = `nominee.${field}`;
+
+    setEditErrors((previous) => {
+      if (!previous[errorKey]) return previous;
+
+      const next = { ...previous };
+      delete next[errorKey];
+      return next;
+    });
+  };
+
+  /*
+   * ------------------------------------------------------------
+   * Edit validation
+   * ------------------------------------------------------------
+   */
+
+  const validateEditForm = () => {
+    const errors = {};
+
+    if (!editForm.name.trim()) {
+      errors.name = "Name is required.";
+    }
+
+    if (!isValidPhone(editForm.phone)) {
+      errors.phone = "Enter a valid phone number.";
+    }
+
+    if (!editForm.designation.trim()) {
+      errors.designation = "Designation is required.";
+    }
+
+    if (!editForm.permanentAddress.trim()) {
+      errors.permanentAddress = "Permanent address is required.";
+    }
+
+    if (!editForm.presentAddress.trim()) {
+      errors.presentAddress = "Present address is required.";
+    }
+
+    if (!Array.isArray(editForm.plots) || editForm.plots.length === 0) {
+      errors.plots = "At least one plot is required.";
+    } else {
+      editForm.plots.forEach((plot, index) => {
+        if (!plot.plotNo.trim()) {
+          errors[`plot.${index}.plotNo`] = "Plot number is required.";
+        }
+
+        if (!PLOT_SIZES.includes(Number(plot.plotSize))) {
+          errors[`plot.${index}.plotSize`] = "Select a valid plot size.";
+        }
+      });
+    }
+
+    if (!editForm.nominee.name.trim()) {
+      errors["nominee.name"] = "Nominee name is required.";
+    }
+
+    if (!isValidPhone(editForm.nominee.phone)) {
+      errors["nominee.phone"] = "Enter a valid phone number.";
+    }
+
+    if (!editForm.nominee.email.trim()) {
+      errors["nominee.email"] = "Nominee email is required.";
+    } else if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.nominee.email.trim())
+    ) {
+      errors["nominee.email"] = "Enter a valid email address.";
+    }
+
+    setEditErrors(errors);
+
+    return Object.keys(errors).length === 0;
+  };
+
+  /*
+   * ------------------------------------------------------------
+   * Save member
+   * ------------------------------------------------------------
+   */
+
+  const handleSave = async (event) => {
+    event.preventDefault();
+
+    if (!editForm || saving) return;
+
+    if (!validateEditForm()) {
+      toast.error("Please fix the highlighted fields.");
       return;
     }
 
-    setSaving(true);
     try {
+      setSaving(true);
+
       const token = await getToken();
-      // membershipNo is intentionally never sent — it is locked once a
-      // member is registered. The backend also ignores it even if a raw
-      // API request includes it (see adminController.js).
+
+      if (!token) {
+        toast.error("Your session has expired.");
+        return;
+      }
+
+      /*
+       * IMPORTANT:
+       *
+       * membershipNo is deliberately NOT included.
+       * email is deliberately NOT included.
+       *
+       * membershipNo is permanently locked.
+       * Email belongs to the authenticated identity.
+       */
+      const payload = {
+        name: editForm.name.trim(),
+
+        phone: normalizePhone(editForm.phone),
+
+        designation: editForm.designation.trim(),
+
+        permanentAddress: editForm.permanentAddress.trim(),
+
+        presentAddress: editForm.presentAddress.trim(),
+
+        plots: editForm.plots.map((plot) => ({
+          plotNo: plot.plotNo.trim().toUpperCase(),
+
+          plotSize: Number(plot.plotSize),
+        })),
+
+        nominee: {
+          name: editForm.nominee.name.trim(),
+
+          phone: normalizePhone(editForm.nominee.phone),
+
+          email: editForm.nominee.email.trim().toLowerCase(),
+        },
+      };
+
       const { data } = await axios.put(
         `/api/admin/members/${editingMember._id}`,
+        payload,
         {
-          name:        editingMember.name,
-          phone:       normalizedPhone,
-          address:     editingMember.address,
-          designation: editingMember.designation,
-          plotNo:      editingMember.plotNo,
-          role:        editingMember.role,
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-        { headers: { Authorization: `Bearer ${token}` } },
       );
 
-      if (data.success) {
-        setMembers((prev) =>
-          prev.map((m) => (m._id === editingMember._id ? data.member : m)),
-        );
-        setEditingMember(null);
-        toast.success("Member updated successfully");
-      } else {
-        toast.error(data.message || "Failed to update member");
+      if (!data?.success) {
+        toast.error(data?.message || "Failed to update member.");
+        return;
       }
-    } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to update member");
+
+      /*
+       * Update the row immediately instead of
+       * downloading the complete member list again.
+       */
+      if (data.member) {
+        setMembers((previous) =>
+          previous.map((member) =>
+            member._id === editingMember._id ? data.member : member,
+          ),
+        );
+      }
+
+      toast.success("Member updated successfully.");
+
+      closeEdit();
+    } catch (err) {
+      console.error("Update member error:", err);
+
+      toast.error(err?.response?.data?.message || "Failed to update member.");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id) => {
+  /*
+   * ------------------------------------------------------------
+   * Remove member
+   * ------------------------------------------------------------
+   */
+
+  const handleRemove = async () => {
+    if (!confirmRemove || removing) return;
+
     try {
+      setRemoving(true);
+
       const token = await getToken();
-      const { data } = await axios.delete(`/api/admin/members/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-          if (data.success) {
-        // Removed member stays in the list (backend keeps their soft-
-        // deleted record) — refetch instead of filtering it out, so
-        // the row correctly updates to show its new "Removed" status.
-        fetchMembers();
-        setConfirmDelete(null);
-        toast.success("Member removed — records preserved, membership number retired");
-      } else {
-        toast.error(data.message || "Failed to delete member");
+
+      if (!token) {
+        toast.error("Your session has expired.");
+        return;
       }
-    } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to delete member");
+
+      const { data } = await axios.delete(
+        `/api/admin/members/${confirmRemove._id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (!data?.success) {
+        toast.error(data?.message || "Failed to remove member.");
+        return;
+      }
+
+      /*
+       * This is a soft removal.
+       *
+       * The backend preserves:
+       * - member profile
+       * - payment history
+       * - financial records
+       * - audit history
+       *
+       * MemberSeat becomes retired.
+       */
+      if (data.member) {
+        setMembers((previous) =>
+          previous.map((member) =>
+            member._id === confirmRemove._id ? data.member : member,
+          ),
+        );
+      } else {
+        await fetchMembers();
+      }
+
+      toast.success("Member removed. Historical records have been preserved.");
+
+      setConfirmRemove(null);
+    } catch (err) {
+      console.error("Remove member error:", err);
+
+      toast.error(err?.response?.data?.message || "Failed to remove member.");
+    } finally {
+      setRemoving(false);
     }
   };
 
-  const handleApproveAdmin = async (id) => {
+  /*
+   * ------------------------------------------------------------
+   * Admin request approval
+   * ------------------------------------------------------------
+   */
+
+  const handleApproveAdmin = async (member) => {
     try {
       const token = await getToken();
+
+      if (!token) {
+        toast.error("Your session has expired.");
+        return;
+      }
+
       const { data } = await axios.put(
-        `/api/admin/members/${id}/approve`,
+        `/api/admin/members/${member._id}/approve`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
       );
-      if (data.success) {
-        setMembers((prev) =>
-          prev.map((m) =>
-            m._id === id ? { ...m, role: "admin", pendingAdmin: false } : m
-          )
-        );
-        toast.success("Member approved as admin");
-      } else {
-        toast.error(data.message || "Failed to approve admin");
+
+      if (!data?.success) {
+        toast.error(data?.message || "Failed to approve request.");
+        return;
       }
-    } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to approve admin");
+
+      setMembers((previous) =>
+        previous.map((item) =>
+          item._id === member._id
+            ? {
+                ...item,
+                role: "admin",
+                pendingAdmin: false,
+              }
+            : item,
+        ),
+      );
+
+      toast.success(`${member.name} is now an administrator.`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to approve request.");
     }
   };
 
-  const handleRejectAdmin = async (id) => {
-    if (rejecting) return;
+  /*
+   * ------------------------------------------------------------
+   * Admin request rejection
+   * ------------------------------------------------------------
+   */
 
+  const handleRejectAdmin = async (member) => {
+    if (rejectingMemberId) return;
+
+    setRejectingMemberId(member._id);
     setRejecting(true);
+
     try {
       const token = await getToken();
+
+      if (!token) {
+        toast.error("Your session has expired.");
+        return;
+      }
+
       const { data } = await axios.put(
-        `/api/admin/members/${id}/reject-admin-request`,
-        { reason: rejectReason.trim() },
-        { headers: { Authorization: `Bearer ${token}` } }
+        `/api/admin/members/${member._id}/reject-admin-request`,
+        {
+          reason: rejectReason.trim(),
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
       );
 
-      if (data.success) {
-        setMembers((prev) =>
-          prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
-        );
-        toast.success("Admin request rejected");
-        setRejectPopover(null);
-        setRejectReason("");
-      } else {
-        setMembers((prev) =>
-          prev.map((m) => (m._id === id ? { ...m, pendingAdmin: false } : m))
-        );
-        toast(data.message || "This request was already resolved", { icon: "ℹ️" });
-        setRejectPopover(null);
-        setRejectReason("");
+      if (!data?.success) {
+        toast.error(data?.message || "Failed to reject request.");
+        return;
       }
-    } catch (error) {
-      toast.error(error.response?.data?.message || "Failed to reject request");
+
+      setMembers((previous) =>
+        previous.map((item) =>
+          item._id === member._id
+            ? {
+                ...item,
+                pendingAdmin: false,
+              }
+            : item,
+        ),
+      );
+
+      toast.success("Admin request rejected.");
+      setRejectReason("");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to reject request.");
     } finally {
       setRejecting(false);
+      setRejectingMemberId(null);
     }
   };
 
-  // ── Loading / error states ──────────────────────────────────────────────
+  const handleDemoteMember = async () => {
+    if (!demotionTarget || demoting) return;
+
+    try {
+      setDemoting(true);
+
+      const token = await getToken();
+
+      if (!token) {
+        toast.error("Your session has expired.");
+        return;
+      }
+
+      const { data } = await axios.patch(
+        `/api/admin/members/${demotionTarget._id}/demote`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (!data?.success) {
+        toast.error(data?.message || "Failed to demote administrator.");
+        return;
+      }
+
+      setMembers((previous) =>
+        previous.map((member) =>
+          member._id === demotionTarget._id
+            ? {
+                ...member,
+                role: "member",
+                pendingAdmin: false,
+              }
+            : member,
+        ),
+      );
+
+      toast.success(`${demotionTarget.name} is no longer an administrator.`);
+
+      setDemotionTarget(null);
+    } catch (err) {
+      console.error("Demote member error:", err);
+
+      toast.error(
+        err?.response?.data?.message || "Failed to demote administrator.",
+      );
+    } finally {
+      setDemoting(false);
+    }
+  };
+
+  /*
+   * ------------------------------------------------------------
+   * Loading state
+   * ------------------------------------------------------------
+   */
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-[70vh]">
-        <Loader2 className="animate-spin h-8 w-8 text-gray-600" />
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <div className="flex items-center gap-3 text-sm text-slate-500">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Loading members...
+        </div>
       </div>
     );
   }
+
+  /*
+   * ------------------------------------------------------------
+   * Error state
+   * ------------------------------------------------------------
+   */
 
   if (error) {
     return (
-      <div className="text-center text-red-500 mt-10 font-medium">{error}</div>
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+          <AlertTriangle className="mx-auto h-8 w-8 text-red-500" />
+
+          <h2 className="mt-3 font-semibold text-red-800">
+            Unable to load members
+          </h2>
+
+          <p className="mt-2 text-sm text-red-700">{error}</p>
+
+          <Button variant="outline" className="mt-5" onClick={fetchMembers}>
+            Try again
+          </Button>
+        </div>
+      </div>
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
-    <motion.div
-      className="max-w-7xl mx-auto px-4 py-8"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.4 }}
-    >
-      <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-semibold text-gray-800">Manage Members</h1>
-          <Badge variant="secondary" className="font-medium">
-            {searchTerm.trim()
-              ? `${filtered.length} of ${members.length}`
-              : `${members.length} total`}
-          </Badge>
-        </div>
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-            <Input
-              type="text"
-              placeholder="Search by name or email..."
-              className="pl-9 w-full"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+    <>
+      <motion.main
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8"
+      >
+        {/* --------------------------------------------------------
+            Page header
+        --------------------------------------------------------- */}
+
+        <div className="mb-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-600">
+                Administration
+              </p>
+
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
+                Manage Members
+              </h1>
+
+              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                View member information, manage profiles, review access
+                requests, and preserve membership records.
+              </p>
+            </div>
           </div>
-          <Button
-            onClick={toggleSort}
-            variant="outline"
-            className="flex items-center gap-2 w-auto"
-          >
-            {sortOrder === "asc" ? (
-              <><SortAsc className="h-4 w-4" /> Sort A–Z</>
-            ) : (
-              <><SortDesc className="h-4 w-4" /> Sort Z–A</>
-            )}
-          </Button>
         </div>
-      </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-x-auto">
-        <table className="w-full min-w-[680px] text-sm text-left text-gray-600">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="p-3 font-medium text-gray-700">Name</th>
-              <th className="p-3 font-medium text-gray-700">Email</th>
-              <th className="p-3 font-medium text-gray-700">Phone</th>
-              <th className="p-3 font-medium text-gray-700">Membership No</th>
-              <th className="p-3 font-medium text-gray-700">Due Amount</th>
-              <th className="p-3 font-medium text-gray-700">Payment Status</th>
-              <th className="p-3 font-medium text-gray-700">Role</th>
-              <th className="p-3 font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {currentMembers.length > 0 ? (
-              currentMembers.map((member, index) => {
-                const due          = dueByMemberId[member._id];
-                const hasDueData   = !!due;
-                const isPopoverOpen = openDuePopover === member._id;
+        {/* --------------------------------------------------------
+            Summary cards
+        --------------------------------------------------------- */}
 
-                return (
-                  <motion.tr
-                    key={member._id}
-                    className="border-b hover:bg-gray-50"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                  >
-                    <td className="p-3">{member.name}</td>
-                    <td className="p-3">{member.email}</td>
-                    <td className="p-3">{member.phone || "N/A"}</td>
-                    <td className="p-3">{member.membershipNo || "N/A"}</td>
+        <div className="mb-6 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Total members
+            </p>
 
-                    {/* ── Due Amount — clickable badge with breakdown popover ── */}
-                    <td className="p-3 relative">
-                      {hasDueData ? (
-                        <button
-                          type="button"
-                          ref={el => { if (el) dueBtnRefs.current[member._id] = el; }}
-                          onClick={() =>
-                            setOpenDuePopover(isPopoverOpen ? null : member._id)
-                          }
-                          className="inline-flex items-center gap-1 group"
-                        >
-                          <Badge
-                            variant={due.totalDue > 0 ? "destructive" : "secondary"}
-                          >
-                            ৳{due.totalDue.toLocaleString()}
-                          </Badge>
-                          {due.totalDue > 0 && (
-                            <Info className="h-3 w-3 text-gray-400 group-hover:text-gray-600" />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
+            <p className="mt-2 text-2xl font-semibold text-slate-900">
+              {members.length}
+            </p>
+          </div>
 
-                      {/* Breakdown popover — position: fixed, computed
-                          from measured button coordinates, so it can
-                          never clip against the table or viewport. */}
-                      <AnimatePresence>
-                        {isPopoverOpen && due.totalDue > 0 && (
-                          <motion.div
-                            initial={{ opacity: 0, y: 4 }}
-                            animate={{ opacity: duePopoverPos ? 1 : 0, y: 0 }}
-                            exit={{ opacity: 0, y: 4 }}
-                            transition={{ duration: 0.12 }}
-                            style={{
-                              position: "fixed",
-                              top:  duePopoverPos?.top  ?? -9999,
-                              left: duePopoverPos?.left ?? 0,
-                              zIndex: 9999,
-                            }}
-                            className="w-48 bg-white border border-gray-200
-                              rounded-lg shadow-lg p-3"
-                          >
-                            <p className="text-[10px] font-semibold text-gray-400
-                              uppercase tracking-wide mb-2">
-                              Due Breakdown
-                            </p>
-                            <div className="space-y-1.5 text-xs">
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Monthly Dues</span>
-                                <span className="font-semibold text-gray-800">
-                                  ৳{due.monthlyDue.toLocaleString()}
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Extra Charges</span>
-                                <span className="font-semibold text-gray-800">
-                                  ৳{due.extraDue.toLocaleString()}
-                                </span>
-                              </div>
-                              <div className="flex justify-between pt-1.5 border-t border-gray-100">
-                                <span className="text-gray-700 font-medium">Total</span>
-                                <span className="font-bold text-red-600">
-                                  ৳{due.totalDue.toLocaleString()}
-                                </span>
-                              </div>
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">
+              Active
+            </p>
+
+            <p className="mt-2 text-2xl font-semibold text-emerald-800">
+              {activeCount}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Removed
+            </p>
+
+            <p className="mt-2 text-2xl font-semibold text-slate-700">
+              {removedCount}
+            </p>
+          </div>
+        </div>
+
+        {/* --------------------------------------------------------
+            Filters
+        --------------------------------------------------------- */}
+
+        <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Filter className="h-4 w-4 text-slate-500" />
+
+            <h2 className="text-sm font-semibold text-slate-800">
+              Find a member
+            </h2>
+          </div>
+
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+              <Input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search by name, membership number, or plot number..."
+                className="h-11 pl-9"
+              />
+            </div>
+
+            <select
+              value={plotSizeFilter}
+              onChange={(event) => setPlotSizeFilter(event.target.value)}
+              className="h-11 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+            >
+              <option value="all">All plot sizes</option>
+
+              {PLOT_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <select
+                value={sortField}
+                onChange={(event) => setSortField(event.target.value)}
+                aria-label="Sort members by"
+                className="h-11 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+              >
+                <option value="membershipNo">Membership No.</option>
+                <option value="smallestPlotSize">Smallest Plot Size</option>
+              </select>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  setSortDirection((previous) =>
+                    previous === "asc" ? "desc" : "asc",
+                  )
+                }
+                className="h-11 whitespace-nowrap"
+              >
+                {sortDirection === "asc" ? "Ascending ↑" : "Descending ↓"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span>
+              Showing{" "}
+              <strong className="text-slate-700">{sortedMembers.length}</strong>{" "}
+              of <strong className="text-slate-700">{members.length}</strong>{" "}
+              members
+            </span>
+
+            {(searchTerm || plotSizeFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm("");
+                  setPlotSizeFilter("all");
+                }}
+                className="font-medium text-emerald-700 hover:text-emerald-800"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* --------------------------------------------------------
+            Member table
+        --------------------------------------------------------- */}
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1050px] text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Member
+                  </th>
+
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Membership
+                  </th>
+
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Plot
+                  </th>
+
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Payment
+                  </th>
+
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Access
+                  </th>
+
+                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Status
+                  </th>
+
+                  <th className="px-5 py-3.5 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100">
+                {currentMembers.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-14 text-center">
+                      <Search className="mx-auto h-7 w-7 text-slate-300" />
+
+                      <p className="mt-3 text-sm font-medium text-slate-700">
+                        No members found
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        Try another name, membership number, plot number, or
+                        plot size.
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  currentMembers.map((member) => {
+                    const due = dueByMemberId[member._id];
+
+                    const plotCount = Array.isArray(member.plots)
+                      ? member.plots.length
+                      : 0;
+
+                    return (
+                      <motion.tr
+                        key={member._id}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.15 }}
+                        className="transition hover:bg-slate-50/70"
+                      >
+                        {/* Member */}
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-emerald-50">
+                              {member.profileImageUrl ? (
+                                <img
+                                  src={member.profileImageUrl}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-emerald-700">
+                                  {(
+                                    member.name?.trim()?.[0] || "M"
+                                  ).toUpperCase()}
+                                </div>
+                              )}
                             </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </td>
 
-                    {/* ── Payment Status ── */}
-                    <td className="p-3">
-                      {hasDueData ? (
-                        <Badge
-                          variant={
-                            due.paymentStatus === "Paid" ? "success" : "destructive"
-                          }
-                        >
-                          {due.paymentStatus}
-                        </Badge>
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                    </td>
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-slate-800">
+                                {member.name}
+                              </p>
 
-                    {/* ── Role — Approve + Reject popover for pending requests ── */}
-                    <td className="p-3 relative">
-                      <div className="flex items-center gap-1.5">
-                        <Badge
-                          variant={
-                            member.role === "admin" ? "destructive" : "outline"
-                          }
-                        >
-                          {member.role}
-                        </Badge>
-                        {member.pendingAdmin && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleApproveAdmin(member._id)}
-                              title="Approve admin access for this member"
-                              className="text-[10px] font-semibold px-1.5 py-0.5
-                                rounded-full bg-emerald-100 text-emerald-700
-                                hover:bg-emerald-200 transition-colors"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setRejectPopover(
-                                  rejectPopover === member._id ? null : member._id
-                                )
-                              }
-                              title="Reject this admin access request"
-                              className="text-[10px] font-semibold px-1.5 py-0.5
-                                rounded-full bg-red-100 text-red-700
-                                hover:bg-red-200 transition-colors"
-                            >
-                              Reject
-                            </button>
+                              <p className="truncate text-xs text-slate-500">
+                                {member.designation || "—"}
+                              </p>
+                            </div>
                           </div>
-                        )}
+                        </td>
+                        {/* Membership */}
+                        <td className="px-5 py-4">
+                          <span className="font-mono text-xs font-semibold text-slate-700">
+                            {member.membershipNo || "—"}
+                          </span>
+                        </td>
+                        {/* Plot */}
+                        <td className="px-5 py-4">
+                          <div className="space-y-1.5">
+                            {Array.isArray(member.plots) &&
+                            member.plots.length > 0 ? (
+                              <>
+                                <div className="flex items-center gap-1.5">
+                                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
+
+                                  <span className="font-medium text-slate-700">
+                                    {member.plots.length}{" "}
+                                    {member.plots.length === 1
+                                      ? "Plot"
+                                      : "Plots"}
+                                  </span>
+
+                                  <span className="text-slate-400">•</span>
+
+                                  <span className="font-medium text-slate-600">
+                                    {getTotalPlotSize(member)}
+                                  </span>
+                                </div>
+
+                                <p className="text-xs text-slate-400">
+                                  {member.plots
+                                    .map(
+                                      (plot) =>
+                                        `${plot.plotNo} (${plot.plotSize})`,
+                                    )
+                                    .join(", ")}
+                                </p>
+                              </>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </div>
+                        </td>
+                        {/* Payment */}
+                       {/* Payment */}
+<td className="px-5 py-4">
+  {due ? (
+    <>
+      <button
+        type="button"
+        ref={(element) => {
+          if (element) {
+            dueBtnRefs.current[member._id] = element;
+          }
+        }}
+        onClick={() =>
+          setOpenDuePopover((current) =>
+            current === member._id ? null : member._id,
+          )
+        }
+        className="inline-flex items-center gap-1.5"
+      >
+        <span
+          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+            due.totalDue > 0
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {due.totalDue > 0
+            ? `${formatCurrency(due.totalDue)} due`
+            : "Paid"}
+        </span>
+
+        {due.totalDue > 0 && (
+          <Info className="h-3.5 w-3.5 text-slate-400" />
+        )}
+      </button>
+
+      <AnimatePresence>
+        {openDuePopover === member._id &&
+          due.totalDue > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{
+                opacity: duePopoverPos ? 1 : 0,
+                y: 0,
+              }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.12 }}
+              style={{
+                position: "fixed",
+                top: duePopoverPos?.top ?? -9999,
+                left: duePopoverPos?.left ?? 0,
+                zIndex: 9999,
+              }}
+              className="w-52 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
+            >
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Due Breakdown
+              </p>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">
+                    Monthly Dues
+                  </span>
+
+                  <span className="font-semibold text-slate-800">
+                    ৳{due.monthlyDue.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">
+                    Extra Charges
+                  </span>
+
+                  <span className="font-semibold text-slate-800">
+                    ৳{due.extraDue.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex justify-between gap-4 border-t border-slate-100 pt-2">
+                  <span className="font-medium text-slate-700">
+                    Total
+                  </span>
+
+                  <span className="font-bold text-red-600">
+                    ৳{due.totalDue.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </motion.div>
+          )}
+      </AnimatePresence>
+    </>
+  ) : (
+    <span className="text-xs text-slate-400">—</span>
+  )}
+</td>
+                        {/* Access */}
+                        <td className="px-5 py-4">
+                          <div className="space-y-2">
+                            <span
+                              className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${getRoleClasses(
+                                member.role,
+                              )}`}
+                            >
+                              {member.role}
+                            </span>
+
+                            {member.pendingAdmin && member.role !== "admin" && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveAdmin(member)}
+                                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                                >
+                                  Approve
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRejectingMemberId(member._id);
+                                    setRejectReason("");
+                                  }}
+                                  className="text-xs font-semibold text-red-600 hover:text-red-700"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        {/* Status */}
+                        <td className="px-5 py-4">
+                          <span
+                            className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${getStatusClasses(
+                              member.status,
+                            )}`}
+                          >
+                            {member.status}
+                          </span>
+                        </td>
+                        {/* Actions */}
+                        {/* Actions */}
+                        <td className="px-5 py-4">
+                          <div className="flex justify-end gap-2">
+                            {member.status === "active" ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openEdit(member)}
+                                  className="gap-1.5"
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                  Edit
+                                </Button>
+
+                                {/* ADMIN DEMOTION — add this */}
+                                {member.role === "admin" && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setDemotionTarget(member)}
+                                    className="gap-1.5 border-amber-200 text-amber-700 hover:bg-amber-50"
+                                  >
+                                    <Shield className="h-3.5 w-3.5" />
+                                    Demote
+                                  </Button>
+                                )}
+
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setConfirmRemove(member)}
+                                  className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Remove
+                                </Button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-400">
+                                Record preserved
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="mt-5 flex items-center justify-between">
+            <p className="text-xs text-slate-500">
+              Page {safeCurrentPage} of {totalPages}
+            </p>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={safeCurrentPage === 1}
+                onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+                className="gap-1"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={safeCurrentPage === totalPages}
+                onClick={() =>
+                  setCurrentPage((page) => Math.min(page + 1, totalPages))
+                }
+                className="gap-1"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </motion.main>
+
+      {/* ============================================================
+          EDIT MEMBER MODAL
+      ============================================================ */}
+
+      <AnimatePresence>
+        {editingMember && editForm && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-950/50 backdrop-blur-sm"
+              onClick={closeEdit}
+            />
+
+            <div className="relative flex min-h-full items-start justify-center p-4 sm:p-6">
+              <motion.div
+                initial={{
+                  opacity: 0,
+                  y: 20,
+                  scale: 0.98,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                  scale: 1,
+                }}
+                exit={{
+                  opacity: 0,
+                  y: 20,
+                  scale: 0.98,
+                }}
+                transition={{
+                  duration: 0.2,
+                }}
+                onClick={(event) => event.stopPropagation()}
+                className="relative w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              >
+                {/* Modal header */}
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      Edit member
+                    </h2>
+
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Update the member's current information. Permanent
+                      identity fields remain protected.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closeEdit}
+                    disabled={saving}
+                    className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                    aria-label="Close"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={handleSave}
+                  className="max-h-[calc(100vh-8rem)] overflow-y-auto"
+                >
+                  <div className="space-y-6 p-5 sm:p-6">
+                    {/* Identity */}
+                    <section>
+                      <div className="mb-4 flex items-center gap-3">
+                        <div className="rounded-xl bg-slate-100 p-2 text-slate-600">
+                          <Shield className="h-4 w-4" />
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-800">
+                            Membership identity
+                          </h3>
+
+                          <p className="text-xs text-slate-500">
+                            These values identify the member and are not
+                            editable here.
+                          </p>
+                        </div>
                       </div>
 
-                      {/* ── Reject confirmation popover ── */}
-                      <AnimatePresence>
-                        {rejectPopover === member._id && (
-                          <motion.div
-                            initial={{ opacity: 0, y: 4 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: 4 }}
-                            transition={{ duration: 0.12 }}
-                            className="absolute z-20 top-full left-3 mt-1 w-64
-                              bg-white border border-gray-200 rounded-lg shadow-lg p-3"
-                          >
-                            <p className="text-xs font-semibold text-gray-700 mb-2">
-                              Reject admin request from {member.name}?
-                            </p>
-                            <textarea
-                              value={rejectReason}
-                              onChange={(e) => setRejectReason(e.target.value)}
-                              placeholder="Reason (optional) — e.g. 'Not required for your role'"
-                              rows={2}
-                              className="w-full p-2 border border-gray-300 rounded-md
-                                text-xs focus:outline-none focus:ring-2
-                                focus:ring-red-300 resize-none mb-2"
-                            />
-                            <div className="flex justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRejectPopover(null);
-                                  setRejectReason("");
-                                }}
-                                disabled={rejecting}
-                                className="text-xs px-2.5 py-1 rounded-md
-                                  text-gray-600 hover:bg-gray-100 transition-colors"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRejectAdmin(member._id)}
-                                disabled={rejecting}
-                                className="text-xs px-2.5 py-1 rounded-md
-                                  bg-red-600 text-white hover:bg-red-700
-                                  disabled:opacity-50 transition-colors
-                                  flex items-center gap-1"
-                              >
-                                {rejecting && (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                )}
-                                Confirm Reject
-                              </button>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </td>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Membership number
+                          </label>
 
-                    {/* ── Actions ── */}
-                                        <td className="p-3">
-                      {member.status === "removed" ? (
-                        <Badge variant="secondary" className="font-medium">
-                          Removed
-                        </Badge>
-                      ) : (
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleEdit(member)}
-                          >
-                            <Edit className="h-4 w-4 mr-1" /> Edit
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => setConfirmDelete(member)}
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" /> Delete
-                          </Button>
+                          <Input
+                            value={editForm.membershipNo}
+                            readOnly
+                            className="bg-slate-50 font-mono text-slate-500"
+                          />
+
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Permanently assigned.
+                          </p>
                         </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Email
+                          </label>
+
+                          <Input
+                            value={editForm.email}
+                            readOnly
+                            className="bg-slate-50 text-slate-500"
+                          />
+
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Managed by the sign-in identity.
+                          </p>
+                        </div>
+                      </div>
+                    </section>
+
+                    <div className="border-t border-slate-100" />
+
+                    {/* Personal information */}
+                    <section>
+                      <div className="mb-4">
+                        <h3 className="text-sm font-semibold text-slate-800">
+                          Personal information
+                        </h3>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Full name
+                          </label>
+
+                          <Input
+                            value={editForm.name}
+                            onChange={(event) =>
+                              updateEditField("name", event.target.value)
+                            }
+                            className={editErrors.name ? "border-red-400" : ""}
+                          />
+
+                          {editErrors.name && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors.name}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Current phone
+                          </label>
+
+                          <Input
+                            type="tel"
+                            value={editForm.phone}
+                            onChange={(event) =>
+                              updateEditField("phone", event.target.value)
+                            }
+                            className={editErrors.phone ? "border-red-400" : ""}
+                          />
+
+                          {editErrors.phone && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors.phone}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Designation
+                          </label>
+
+                          <Input
+                            value={editForm.designation}
+                            onChange={(event) =>
+                              updateEditField("designation", event.target.value)
+                            }
+                            className={
+                              editErrors.designation ? "border-red-400" : ""
+                            }
+                          />
+
+                          {editErrors.designation && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors.designation}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+
+                    <div className="border-t border-slate-100" />
+
+                    {/* Address */}
+                    <section>
+                      <div className="mb-4">
+                        <h3 className="text-sm font-semibold text-slate-800">
+                          Address information
+                        </h3>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Permanent address
+                          </label>
+
+                          <textarea
+                            rows={3}
+                            value={editForm.permanentAddress}
+                            onChange={(event) =>
+                              updateEditField(
+                                "permanentAddress",
+                                event.target.value,
+                              )
+                            }
+                            className={`w-full resize-y rounded-md border bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 ${
+                              editErrors.permanentAddress
+                                ? "border-red-400"
+                                : "border-slate-200"
+                            }`}
+                          />
+
+                          {editErrors.permanentAddress && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors.permanentAddress}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Present address
+                          </label>
+
+                          <textarea
+                            rows={3}
+                            value={editForm.presentAddress}
+                            onChange={(event) =>
+                              updateEditField(
+                                "presentAddress",
+                                event.target.value,
+                              )
+                            }
+                            className={`w-full resize-y rounded-md border bg-white px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 ${
+                              editErrors.presentAddress
+                                ? "border-red-400"
+                                : "border-slate-200"
+                            }`}
+                          />
+
+                          {editErrors.presentAddress && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors.presentAddress}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+
+                    <div className="border-t border-slate-100" />
+
+                    {/* Plots */}
+                    <section>
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-800">
+                            Plot information
+                          </h3>
+
+                          <p className="mt-1 text-xs text-slate-500">
+                            Plot number remains free-form; plot size is selected
+                            from the approved sizes.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={addEditPlot}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Add plot
+                        </button>
+                      </div>
+
+                      {editErrors.plots && (
+                        <p className="mb-3 text-xs font-medium text-red-600">
+                          {editErrors.plots}
+                        </p>
                       )}
-                    </td>
-                  </motion.tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan="8" className="p-3 text-center text-gray-500">
-                  No members found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
 
-      {/* ── Pagination ──────────────────────────────────────────────────── */}
-      {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-4 mt-6">
-          <Button
-            variant="outline"
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-            className="flex items-center gap-1"
-          >
-            <ChevronLeft className="h-4 w-4" /> Prev
-          </Button>
-          <span className="text-gray-600 font-medium">
-            Page {currentPage} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            disabled={currentPage === totalPages}
-            onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-            className="flex items-center gap-1"
-          >
-            Next <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+                      <div className="space-y-3">
+                        {editForm.plots.map((plot, index) => (
+                          <div
+                            key={index}
+                            className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                          >
+                            <div className="mb-3 flex items-center justify-between">
+                              <span className="text-xs font-semibold text-slate-700">
+                                Plot {index + 1}
+                              </span>
 
-      {/* ── Edit Modal ───────────────────────────────────────────────────── */}
-      {editingMember && (
-        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <motion.div
-            className="bg-white p-6 rounded-xl shadow-lg w-full max-w-md mt-4 mb-4"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            <h2 className="text-lg font-semibold text-gray-800 mb-1">
-              Edit Member
-            </h2>
-            <p className="text-xs text-gray-400 mb-4">
-              Payment status is calculated automatically from dues and payments
-              — it cannot be edited here.
-            </p>
-            <form onSubmit={handleSave} className="space-y-4">
-              {[
-                { label: "Name",         key: "name",         type: "text" },
-                {
-                  label: "Phone",
-                  key:   "phone",
-                  type:  "tel",
-                  error: phoneError,
-                  onChange: (e) => {
-                    setEditingMember({ ...editingMember, phone: e.target.value });
-                    validatePhone(e.target.value);
-                  },
-                },
-                { label: "Address",     key: "address",     type: "text" },
-                { label: "Designation", key: "designation", type: "text" },
-                {
-                  label:    "Membership No",
-                  key:      "membershipNo",
-                  type:     "text",
-                  readOnly: true,
-                },
-                { label: "Plot No", key: "plotNo", type: "text" },
-                {
-                  label:   "Role",
-                  key:     "role",
-                  type:    "select",
-                  options: ["member", "admin"],
-                },
-              ].map((field) => (
-                <div key={field.key} className="mb-4">
-                  <label className="block text-sm text-gray-600 mb-1 font-medium">
-                    {field.label}
-                    
-                  </label>
-                  {field.type === "select" ? (
-                    <select
-                      value={editingMember[field.key]}
-                      onChange={(e) =>
-                        setEditingMember({
-                          ...editingMember,
-                          [field.key]: e.target.value,
-                        })
-                      }
-                      className="w-full p-2 border border-gray-300 rounded-md
-                        focus:ring-2 focus:ring-blue-500"
+                              {editForm.plots.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeEditPlot(index)}
+                                  className="text-xs font-medium text-red-600 hover:text-red-700"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <div>
+                                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                                  Plot number
+                                </label>
+
+                                <Input
+                                  value={plot.plotNo}
+                                  placeholder="e.g. AD-10"
+                                  onChange={(event) =>
+                                    updateEditPlot(
+                                      index,
+                                      "plotNo",
+                                      event.target.value,
+                                    )
+                                  }
+                                  className={
+                                    editErrors[`plot.${index}.plotNo`]
+                                      ? "border-red-400"
+                                      : ""
+                                  }
+                                />
+
+                                {editErrors[`plot.${index}.plotNo`] && (
+                                  <p className="mt-1 text-xs text-red-600">
+                                    {editErrors[`plot.${index}.plotNo`]}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                                  Plot size
+                                </label>
+
+                                <select
+                                  value={plot.plotSize}
+                                  onChange={(event) =>
+                                    updateEditPlot(
+                                      index,
+                                      "plotSize",
+                                      event.target.value,
+                                    )
+                                  }
+                                  className={`h-10 w-full rounded-md border bg-white px-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 ${
+                                    editErrors[`plot.${index}.plotSize`]
+                                      ? "border-red-400"
+                                      : "border-slate-200"
+                                  }`}
+                                >
+                                  <option value="">Select plot size</option>
+
+                                  {PLOT_SIZES.map((size) => (
+                                    <option key={size} value={size}>
+                                      {size}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {editErrors[`plot.${index}.plotSize`] && (
+                                  <p className="mt-1 text-xs text-red-600">
+                                    {editErrors[`plot.${index}.plotSize`]}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <div className="border-t border-slate-100" />
+
+                    {/* Nominee */}
+                    <section>
+                      <div className="mb-4">
+                        <h3 className="text-sm font-semibold text-slate-800">
+                          Nominee information
+                        </h3>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Nominee name
+                          </label>
+
+                          <Input
+                            value={editForm.nominee.name}
+                            onChange={(event) =>
+                              updateNomineeField("name", event.target.value)
+                            }
+                            className={
+                              editErrors["nominee.name"] ? "border-red-400" : ""
+                            }
+                          />
+
+                          {editErrors["nominee.name"] && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors["nominee.name"]}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Nominee phone
+                          </label>
+
+                          <Input
+                            type="tel"
+                            value={editForm.nominee.phone}
+                            onChange={(event) =>
+                              updateNomineeField("phone", event.target.value)
+                            }
+                            className={
+                              editErrors["nominee.phone"]
+                                ? "border-red-400"
+                                : ""
+                            }
+                          />
+
+                          {editErrors["nominee.phone"] && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors["nominee.phone"]}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                            Nominee email
+                          </label>
+
+                          <Input
+                            type="email"
+                            value={editForm.nominee.email}
+                            onChange={(event) =>
+                              updateNomineeField("email", event.target.value)
+                            }
+                            className={
+                              editErrors["nominee.email"]
+                                ? "border-red-400"
+                                : ""
+                            }
+                          />
+
+                          {editErrors["nominee.email"] && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {editErrors["nominee.email"]}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+
+                    <div className="border-t border-slate-100" />
+                  </div>
+
+                  {/* Modal footer */}
+                  <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={closeEdit}
+                      disabled={saving}
                     >
-                      {field.options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Input
-                      type={field.type}
-                      value={editingMember[field.key] || ""}
-                      readOnly={field.readOnly}
-                      onChange={
-                        field.readOnly
-                          ? undefined
-                          : field.onChange ||
-                            ((e) =>
-                              setEditingMember({
-                                ...editingMember,
-                                [field.key]: e.target.value,
-                              }))
-                      }
-                      className={`${field.error ? "border-red-500" : ""} ${
-                        field.readOnly ? "bg-gray-100 text-gray-500 cursor-default" : ""
-                      }`}
-                    />
-                  )}
-                  {field.error && (
-                    <p className="text-red-500 text-sm mt-1">{field.error}</p>
-                  )}
+                      Cancel
+                    </Button>
+
+                    <Button
+                      type="submit"
+                      disabled={saving}
+                      className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+
+                      {saving ? "Saving..." : "Save changes"}
+                    </Button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ============================================================
+          REMOVE CONFIRMATION
+      ============================================================ */}
+
+      <AnimatePresence>
+        {confirmRemove && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+              onClick={() => !removing && setConfirmRemove(null)}
+            />
+
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+              }}
+              exit={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            >
+              <div className="flex items-start gap-3">
+                <div className="rounded-xl bg-red-50 p-2.5 text-red-600">
+                  <AlertTriangle className="h-5 w-5" />
                 </div>
-              ))}
-              <div className="flex justify-end gap-3">
-                <Button
-                  type="submit"
-                  disabled={saving || !!phoneError}
-                  className={`bg-blue-500 hover:bg-blue-600 text-white gap-2 ${
-                    saving || phoneError ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Save
-                </Button>
+
+                <div>
+                  <h2 className="font-semibold text-slate-900">
+                    Remove member?
+                  </h2>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    You are removing{" "}
+                    <strong className="text-slate-700">
+                      {confirmRemove.name}
+                    </strong>
+                    .
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm leading-6 text-amber-800">
+                  This does not erase the member's financial history. Their
+                  profile and payment records will be preserved, and the
+                  membership number will be retired so it cannot be used for
+                  future registration.
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setEditingMember(null)}
+                  disabled={removing}
+                  onClick={() => setConfirmRemove(null)}
                 >
                   Cancel
                 </Button>
+
+                <Button
+                  type="button"
+                  disabled={removing}
+                  onClick={handleRemove}
+                  className="gap-2 bg-red-600 text-white hover:bg-red-700"
+                >
+                  {removing && <Loader2 className="h-4 w-4 animate-spin" />}
+
+                  {removing ? "Removing..." : "Remove member"}
+                </Button>
               </div>
-            </form>
-          </motion.div>
-        </div>
-      )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-       {/* ── Confirm Delete Modal ───────────────────────────────────────────  */}
-      {confirmDelete && (
-        <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <motion.div
-            className="bg-white p-6 rounded-xl shadow-lg w-full max-w-sm mt-4 mb-4"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            <h2 className="text-lg font-semibold text-gray-800 mb-2">
-              Confirm Deletion
+
+
+
+
+
+
+      {/* ============================================================
+    ADMIN DEMOTION CONFIRMATION
+============================================================ */}
+
+<AnimatePresence>
+  {demotionTarget && (
+    <div className="fixed inset-0 z-[65] flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+        onClick={() => !demoting && setDemotionTarget(null)}
+      />
+
+      <motion.div
+        initial={{
+          opacity: 0,
+          y: 15,
+          scale: 0.98,
+        }}
+        animate={{
+          opacity: 1,
+          y: 0,
+          scale: 1,
+        }}
+        exit={{
+          opacity: 0,
+          y: 15,
+          scale: 0.98,
+        }}
+        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      >
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-amber-50 p-2.5 text-amber-600">
+            <Shield className="h-5 w-5" />
+          </div>
+
+          <div>
+            <h2 className="font-semibold text-slate-900">
+              Demote administrator?
             </h2>
-                        <p className="text-gray-600 mb-4">
-              Are you sure you want to remove{" "}
-              <span className="font-semibold">{confirmDelete.name}</span>?
-              Their profile and payment history will be preserved for your
-              records, and their membership number{" "}
-              <span className="font-mono font-semibold">{confirmDelete.membershipNo}</span>{" "}
-              will be permanently retired — it can never be used to register again.
-            </p>
 
-            
-            <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => handleDelete(confirmDelete._id)}
-              >
-                Delete
-              </Button>
-            </div>
-          </motion.div>
+            <p className="mt-1 text-sm text-slate-500">
+              You are removing administrator access from{" "}
+              <strong className="text-slate-700">
+                {demotionTarget.name}
+              </strong>
+              .
+            </p>
+          </div>
         </div>
-      )}
-    </motion.div>
+
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm leading-6 text-amber-800">
+            This will change the member's role from{" "}
+            <strong>admin</strong> to <strong>member</strong>.
+            Their profile and financial records will not be deleted.
+          </p>
+        </div>
+
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={demoting}
+            onClick={() => setDemotionTarget(null)}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            type="button"
+            disabled={demoting}
+            onClick={handleDemoteMember}
+            className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+          >
+            {demoting && (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            )}
+
+            {demoting
+              ? "Demoting..."
+              : "Demote administrator"}
+          </Button>
+        </div>
+      </motion.div>
+    </div>
+  )}
+</AnimatePresence>
+
+
+
+
+      {/* ============================================================
+          ADMIN REQUEST REJECTION
+      ============================================================ */}
+
+      <AnimatePresence>
+        {rejectingMemberId && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+              onClick={() => {
+                if (!rejecting) {
+                  setRejectingMemberId(null);
+                  setRejectReason("");
+                }
+              }}
+            />
+
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+              }}
+              exit={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            >
+              <h2 className="font-semibold text-slate-900">
+                Reject admin request
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Optionally provide a reason for the rejection.
+              </p>
+
+              <textarea
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                rows={3}
+                placeholder="Reason (optional)"
+                className="mt-4 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+              />
+
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={rejecting}
+                  onClick={() => {
+                    setRejectingMemberId(null);
+                    setRejectReason("");
+                  }}
+                >
+                  Cancel
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => {
+                    const member = members.find(
+                      (item) => item._id === rejectingMemberId,
+                    );
+
+                    if (member) {
+                      handleRejectAdmin(member);
+                    }
+                  }}
+                  disabled={rejecting}
+                  className="gap-2"
+                >
+                  {rejecting && <Loader2 className="h-4 w-4 animate-spin" />}
+
+                  {rejecting ? "Rejecting..." : "Reject request"}
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 };
 

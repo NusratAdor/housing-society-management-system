@@ -26,7 +26,6 @@ import { motion }        from "framer-motion";
 import {
   AlertCircle, ArrowRight, Bell, CreditCard,
   HelpCircle, ChevronRight, FileText, Activity,
-  Image as ImageIcon, CheckCircle2,
   IdCard, MapPin, Briefcase,
 } from "lucide-react";
 import { Link }          from "react-router-dom";
@@ -296,21 +295,29 @@ export default function OverviewCard({
       </div>
     </div>
 
-    {memberProfile?.plotNo && (
-      <div className="flex items-center gap-2.5">
-        <div className="p-1.5 rounded-md bg-blue-50 flex-shrink-0">
-          <MapPin className="h-3.5 w-3.5 text-blue-600" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-[10px] text-gray-400 uppercase tracking-wide">
-            Plot
-          </p>
-          <p className="text-xs font-semibold text-gray-800">
-            Plot {memberProfile.plotNo}
-          </p>
-        </div>
+   {Array.isArray(memberProfile?.plots) &&
+  memberProfile.plots.length > 0 && (
+    <div className="flex items-center gap-2.5">
+      <div className="p-1.5 rounded-md bg-blue-50 flex-shrink-0">
+        <MapPin className="h-3.5 w-3.5 text-blue-600" />
       </div>
-    )}
+
+      <div className="min-w-0">
+        <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+          Plots
+        </p>
+
+        <p className="text-xs font-semibold text-gray-800">
+          {memberProfile.plots
+            .map(
+              (plot) =>
+                `${plot.plotNo} (${plot.plotSize})`
+            )
+            .join(", ")}
+        </p>
+      </div>
+    </div>
+  )}
 
     {memberProfile?.designation && (
       <div className="flex items-center gap-2.5">

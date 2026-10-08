@@ -1,7 +1,7 @@
 // server/routes/adminRoutes.js
 // CHANGE: added member seat routes
 
-import express     from "express";
+import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { isAdmin } from "../middleware/adminMiddleware.js";
 
@@ -11,6 +11,7 @@ import {
   deleteMember,
   approveAdmin,
   rejectAdminRequest,
+  demoteMember,
 } from "../controllers/adminController.js";
 
 import { triggerMonthlyDue } from "../controllers/adminPaymentController.js";
@@ -38,23 +39,24 @@ router.use(protect, isAdmin);
 router.use("/seats", memberSeatRoutes);
 
 // ── Member management ─────────────────────────────────────────────────────────
-router.get(    "/members",                       getAllMembers);
-router.put(    "/members/:id",                   updateMemberProfile);
-router.delete( "/members/:id",                   deleteMember);
-router.put(    "/members/:id/approve",           approveAdmin);
-router.put(    "/members/:id/reject-admin-request", rejectAdminRequest);
+router.get("/members", getAllMembers);
+router.put("/members/:id", updateMemberProfile);
+router.delete("/members/:id", deleteMember);
+router.put("/members/:id/approve", approveAdmin);
+router.put("/members/:id/reject-admin-request", rejectAdminRequest);
+router.patch("/members/:id/demote", demoteMember);
 
 // ── Payment management ────────────────────────────────────────────────────────
 router.post("/trigger-monthly-due", triggerMonthlyDue);
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-router.get("/dashboard",                    getFullAdminDashboard);
-router.get("/dashboard/metrics",            getDashboardMetrics);
-router.get("/dashboard/trend",              getCollectionTrend);
-router.get("/dashboard/outstanding",        getOutstandingMembers);
-router.get("/dashboard/charge-analytics",   getChargeAnalytics);
-router.get("/dashboard/recent-payments",    getRecentPaymentsHandler);
-router.get("/dashboard/member-due-status",  getMemberDueStatus);
+router.get("/dashboard", getFullAdminDashboard);
+router.get("/dashboard/metrics", getDashboardMetrics);
+router.get("/dashboard/trend", getCollectionTrend);
+router.get("/dashboard/outstanding", getOutstandingMembers);
+router.get("/dashboard/charge-analytics", getChargeAnalytics);
+router.get("/dashboard/recent-payments", getRecentPaymentsHandler);
+router.get("/dashboard/member-due-status", getMemberDueStatus);
 
 router.get("/audit-log", getAuditLogHandler);
 

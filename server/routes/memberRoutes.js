@@ -7,6 +7,7 @@ import {
   getMemberProfile,
   requestAdmin,
   getMemberSeat,
+  updateOwnProfile,
 } from "../controllers/memberController.js";
 
 const router = express.Router();
@@ -21,6 +22,9 @@ router.post("/", protect, createMemberProfile);
 router.get("/me", protect, getMemberProfile);
 
 // Self-service actions — active members only
+
+router.patch("/me", protect, requireActiveMember, updateOwnProfile);
+
 router.post("/request-admin", protect, requireActiveMember, requestAdmin);
 router.get("/seat", protect, requireActiveMember, getMemberSeat);
 

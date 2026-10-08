@@ -151,8 +151,9 @@ export const createMonthlyChargesForMonth = async ({
 
   // Step 7 — Audit log
   // One audit entry for the entire batch operation
+  try {
   await AuditLog.create({
-    action:      "MONTHLY_DUES_ADDED",
+    action: "MONTHLY_DUES_ADDED",
     performedBy,
     description: `Monthly charges of ৳${fee} created for ${created} member(s) for ${month}/${year}`,
     metadata: {
@@ -164,6 +165,12 @@ export const createMonthlyChargesForMonth = async ({
       totalMembers: allMembers.length,
     },
   });
+} catch (auditError) {
+  console.error(
+    `[MonthlyCharge] Audit log creation failed for ${month}/${year}:`,
+    auditError.message
+  );
+}
 
   return { created, skipped, fee, month, year };
 };
