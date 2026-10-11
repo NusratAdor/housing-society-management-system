@@ -3,15 +3,13 @@
 // approvePayment is the ONLY place a payment ever actually clears dues,
 // generates a receipt, and notifies/emails the member.
 //
-// CHANGE (this pass): allocatePayment now handles the charges portion of
-// EVERY payment uniformly — including a pure-advance payment, where
-// pendingMonthlyIds/pendingExtraIds are simply empty arrays (allocatePayment
-// already handles empty selections correctly, creating zero
-// PaymentAllocation records and just marking the payment completed). If
-// payment.advanceAmount > 0, that amount becomes available credit purely
-// by virtue of sitting on the now-"completed" Payment document — no
-// separate deposit-recording step needed. The admin is shown, and the
-// member is emailed, the resulting credit balance when relevant.
+// CHANGE (this pass):
+//   1. triggerMonthlyDue validates month/year as real integers. The service
+//      (chargeService) now also refuses future months.
+//   2. rejectPayment is now transactional: status change + PAYMENT_REJECTED
+//      audit (required) commit together. The member notification is
+//      best-effort AFTER commit, so a notification failure can no longer
+//      turn a successful rejection into a 500.
 
 import Payment from "../models/Payment.js";
 import Member from "../models/Member.js";
@@ -19,13 +17,17 @@ import Notification from "../models/Notification.js";
 import { writeAuditLog } from "../services/auditService.js";
 import { createMonthlyChargesForMonth } from "../services/chargeService.js";
 import { allocatePayment } from "../services/allocationService.js";
-import { enqueueEmail } from "../services/emailQueueService.js"; // was: sendPaymentConfirmationEmail from emailService.js
-import { getMemberDueSummary } from "../services/paymentService.js";
+import { enqueueEmail } from "../services/emailQueueService.js";
+
+import { buildPaymentStatement } from "../services/paymentStatementService.js";
+import { notifyPaymentConfirmed } from "../services/paymentNotificationService.js";
+import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+import { getDhakaDateParts } from "../utils/dateTime.js";
 import {
-  getMemberCreditBalance,
   reconcileMemberCredit,
+  getMemberCreditBalance,
 } from "../services/creditService.js";
-import MonthlyCharge from "../models/MonthlyCharge.js";
+
 
 export const triggerMonthlyDue = async (req, res) => {
   if (process.env.DISABLE_MANUAL_TRIGGERS === "true") {
@@ -35,16 +37,17 @@ export const triggerMonthlyDue = async (req, res) => {
     });
   }
   try {
-    const now = new Date();
-    const month = req.query.month
-      ? parseInt(req.query.month, 10)
-      : now.getMonth() + 1;
-    const year = req.query.year
-      ? parseInt(req.query.year, 10)
-      : now.getFullYear();
+    const { year: dhakaYear, month: dhakaMonth } = getDhakaDateParts();
 
-    if (month < 1 || month > 12) {
+    const month = req.query.month ? Number(req.query.month) : dhakaMonth;
+    const year = req.query.year ? Number(req.query.year) : dhakaYear;
+
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
       return res.status(400).json({ success: false, message: "Invalid month" });
+    }
+
+    if (!Number.isInteger(year) || year < 2000 || year > dhakaYear) {
+      return res.status(400).json({ success: false, message: "Invalid year" });
     }
 
     const result = await createMonthlyChargesForMonth({
@@ -63,6 +66,9 @@ export const triggerMonthlyDue = async (req, res) => {
     });
   } catch (error) {
     console.error("triggerMonthlyDue error:", error.message);
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -95,12 +101,9 @@ export const getVerifiedPayments = async (req, res) => {
 
 // ─── PUT /api/payments/:id/confirm ─────────────────────────────────────────
 // verified -> processing is a real atomic claim: only one concurrent
-// request can win it. processingAt records WHEN it was claimed;
-// confirmedAt/confirmedBy are set later, inside the allocation
-// transaction, only when the payment actually completes. If allocation
-// throws, the claim is released (processing -> verified). If the
-// process dies mid-allocation, recoverStaleProcessingPayments
-// (paymentJobs.js) releases it.
+// request can win it. If allocation throws, the claim is released
+// (processing -> verified). If the process dies mid-allocation,
+// recoverStaleProcessingPayments (paymentJobs.js) releases it.
 
 export const approvePayment = async (req, res) => {
   try {
@@ -145,7 +148,11 @@ export const approvePayment = async (req, res) => {
       });
     }
 
-    let receiptNumber, allocations;
+    // Credit held BEFORE this payment's money exists (a "processing" payment
+    // is not counted as credit yet). Captured here so the statement never has
+    // to reconstruct history from today's balance.
+    
+       let receiptNumber, allocations, paidAt, creditBefore;
     try {
       const result = await allocatePayment({
         paymentId: claimed._id,
@@ -156,135 +163,87 @@ export const approvePayment = async (req, res) => {
       });
       receiptNumber = result.receiptNumber;
       allocations = result.allocations;
+      paidAt = result.paidAt;
+      creditBefore = result.creditBefore;
     } catch (allocationError) {
-      // Nothing was committed. Release the claim so the payment can be
-      // retried. The status filter means a payment that actually did
-      // complete (e.g. commit succeeded but the response was lost) is
-      // never touched.
       await Payment.updateOne(
         { _id: claimed._id, status: "processing" },
         { $set: { status: "verified" }, $unset: { processingAt: "" } },
       );
       throw allocationError;
     }
-
-    let creditCleared = [];
+    // ── Credit reconciliation (payment is already completed) ────────────
+    // notify:false → no separate "credit applied" message. The one
+    // confirmation message/email below states what the credit paid for.
+    let creditClearedIds = [];
     if (claimed.advanceAmount > 0) {
       try {
-        creditCleared = await reconcileMemberCredit(claimed.member);
+        creditClearedIds = await reconcileMemberCredit(claimed.member, {
+          notify: false,
+        });
       } catch (reconcileError) {
         console.error(
-          "[approvePayment] Credit reconciliation failed:",
+          `[approvePayment] Credit reconciliation failed for member ` +
+            `${claimed.member}. Payment ${claimed._id} remains completed; ` +
+            `reconciliation can be retried safely:`,
           reconcileError.message,
         );
       }
     }
 
-    const member = await Member.findById(claimed.member).lean();
+    // ── ONE statement → ONE notification + ONE email ────────────────────
+    const member = await Member.findById(claimed.member)
+      .select("clerkUserId name email")
+      .lean();
 
     let emailSent = false;
 
     if (member) {
+      let statement = null;
       try {
-        await Notification.create({
-          type: "Payment",
-          content:
-            `Payment of ৳${claimed.amount.toLocaleString()} confirmed. Receipt: ${receiptNumber}.` +
-            (claimed.advanceAmount > 0
-              ? ` ৳${claimed.advanceAmount.toLocaleString()} of it was added to your advance credit.`
-              : ""),
-          clerkUserId: member.clerkUserId,
-          adminOnly: false,
+        statement = await buildPaymentStatement({
+          payment: claimed,
+          receiptNumber,
+          paidAt,
+          creditBefore,
+          allocations,
+          creditClearedIds,
         });
-      } catch (notifError) {
+      } catch (statementError) {
         console.error(
-          "[approvePayment] Notification creation failed:",
-          notifError.message,
+          `[approvePayment] Could not build statement for ${claimed._id}:`,
+          statementError.message,
         );
       }
 
-      try {
-        const dueSummary = await getMemberDueSummary(claimed.member);
-        const creditBalance =
-          claimed.advanceAmount > 0
-            ? await getMemberCreditBalance(claimed.member)
-            : 0;
+      if (member.clerkUserId) {
+        await notifyPaymentConfirmed({
+          clerkUserId: member.clerkUserId,
+          paymentId: claimed._id,
+          statement: statement ?? {
+            amount: claimed.amount,
+            receiptNumber,
+          },
+        });
+      }
 
-        const creditApplied =
-          creditCleared.length > 0
-            ? (
-                await MonthlyCharge.find({ _id: { $in: creditCleared } })
-                  .select("month year amount")
-                  .sort({ year: 1, month: 1 })
-                  .lean()
-              ).map((c) => ({ month: c.month, year: c.year, amount: c.amount }))
-            : [];
-
-      const isPureAdvance = claimed.advanceAmount >= claimed.amount;
-
-        if (isPureAdvance) {
-          await enqueueEmail({
-            to: member.email,
-            subject: `Advance Payment Received — Receipt ${receiptNumber}`,
-            type: "advance_confirmation",
-            payload: {
-              name: member.name,
-              amount: claimed.amount,
-              receiptNumber,
-              paidAt: new Date(),
-              creditBalance,
-              creditApplied,
-              remainingDue: dueSummary.totalDue,
-            },
-          });
-        } else {
+      if (statement && member.email) {
+        try {
           await enqueueEmail({
             to: member.email,
             subject: `Payment Confirmed — Receipt ${receiptNumber}`,
             type: "payment_confirmation",
-            payload: {
-              name: member.name,
-              amount: claimed.amount,
-              receiptNumber,
-              paidAt: new Date(),
-              allocations,
-              remainingDue: dueSummary.totalDue,
-              advanceAmount: claimed.advanceAmount,
-              creditBalance,
-              creditApplied,
-            },
+            payload: { name: member.name, statement },
           });
+          emailSent = true;
+        } catch (queueErr) {
+          console.error(
+            "[approvePayment] Failed to queue confirmation email:",
+            queueErr.message,
+          );
         }
-        emailSent = true;
-      } catch (queueErr) {
-        console.error(
-          "[approvePayment] Failed to queue confirmation email:",
-          queueErr.message,
-        );
       }
     }
-
-    writeAuditLog({
-      action: "PAYMENT_APPROVED",
-      performedBy: req.clerkUserId,
-      targetId: claimed._id,
-      description:
-        `Admin confirmed payment of ৳${claimed.amount}` +
-        (claimed.advanceAmount > 0
-          ? ` (incl. ৳${claimed.advanceAmount} advance)`
-          : "") +
-        ` (${claimed.transactionId}). Receipt: ${receiptNumber}`,
-      after: { status: "completed", receiptNumber },
-      metadata: {
-        transactionId: claimed.transactionId,
-        amount: claimed.amount,
-        memberId: String(claimed.member),
-        advanceAmount: claimed.advanceAmount,
-        chargesPortion: claimed.amount - claimed.advanceAmount,
-        creditAppliedTo: creditCleared.map(String),
-        emailQueued: emailSent,
-      },
-    });
 
     return res.status(200).json({
       success: true,
@@ -295,10 +254,6 @@ export const approvePayment = async (req, res) => {
   } catch (error) {
     console.error("approvePayment error:", error.message);
 
-    // Allocation throws "already processed" when a charge in this
-    // payment was cleared by another payment — a duplicate. This
-    // handler previously sat in rejectPayment's catch, where it could
-    // never fire.
     if (/already processed/i.test(error.message)) {
       return res.status(409).json({
         success: false,
@@ -311,42 +266,76 @@ export const approvePayment = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-
 // ─── PUT /api/payments/:id/reject ──────────────────────────────────────────
-// Deliberately still allows rejecting a "pending" payment — this
-// matches the existing PendingPayments.jsx feature ("Use Reject only
-// for a session that appears permanently stuck"), which is real,
-// intentional functionality. The resurrection race this could
-// theoretically cause (reject a pending payment, then a late gateway
-// callback tries to revive it to "verified") is closed properly in
-// paymentCallback below via an atomic conditional transition, not by
-// removing this feature.
+// Still allows rejecting a "pending" payment (PendingPayments.jsx: "Use
+// Reject only for a session that appears permanently stuck").
+//
+// NOTE for the office: rejecting a "verified" payment means the gateway
+// already took the member's money. Rejecting does NOT refund it — the
+// refund must be handled through SSLCommerz separately.
 
 export const rejectPayment = async (req, res) => {
   try {
-    const { rejectedReason } = req.body;
+    const reason =
+      typeof req.body?.rejectedReason === "string"
+        ? req.body.rejectedReason.trim()
+        : "";
 
-    if (!rejectedReason?.trim()) {
+    if (!reason) {
       return res.status(400).json({
         success: false,
         message: "Rejection reason is required",
       });
     }
 
-    const claimed = await Payment.findOneAndUpdate(
-      { _id: req.params.id, status: { $in: ["pending", "verified"] } },
-      {
-        $set: {
-          status: "rejected",
-          rejectedAt: new Date(),
-          rejectedReason: rejectedReason.trim(),
-          rejectedBy: req.clerkUserId,
-        },
-      },
-      { new: true },
-    ).populate("member", "clerkUserId name");
+    if (reason.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "Rejection reason must be 500 characters or less",
+      });
+    }
 
-    if (!claimed) {
+    // Status change + required audit commit together or not at all.
+    const previous = await runInTransactionWithRetry(async (session) => {
+      // new:false returns the document as it was BEFORE the update,
+      // which is exactly the "before" state the audit needs.
+      const before = await Payment.findOneAndUpdate(
+        { _id: req.params.id, status: { $in: ["pending", "verified"] } },
+        {
+          $set: {
+            status: "rejected",
+            rejectedAt: new Date(),
+            rejectedReason: reason,
+            rejectedBy: req.clerkUserId,
+          },
+        },
+        { new: false, session },
+      );
+
+      if (!before) return null;
+
+      await writeAuditLog({
+        action: "PAYMENT_REJECTED",
+        performedBy: req.clerkUserId,
+        targetId: before._id,
+        description:
+          `Admin rejected payment of ৳${before.amount} ` +
+          `(${before.transactionId}) — ${reason}`,
+        before: { status: before.status },
+        after: { status: "rejected", rejectedReason: reason },
+        metadata: {
+          transactionId: before.transactionId,
+          amount: before.amount,
+          memberId: String(before.member),
+        },
+        session,
+        required: true,
+      });
+
+      return before;
+    });
+
+    if (!previous) {
       const existing = await Payment.findById(req.params.id)
         .select("status")
         .lean();
@@ -363,31 +352,28 @@ export const rejectPayment = async (req, res) => {
       });
     }
 
-    if (claimed.member?.clerkUserId) {
-      await Notification.create({
-        type: "Payment",
-        content:
-          `Your payment of ৳${claimed.amount.toLocaleString()} was not processed. ` +
-          `Reason: ${rejectedReason.trim()}`,
-        clerkUserId: claimed.member.clerkUserId,
-        adminOnly: false,
-      });
-    }
+    // Best-effort, AFTER commit: the rejection already happened.
+    try {
+      const member = await Member.findById(previous.member)
+        .select("clerkUserId")
+        .lean();
 
-    writeAuditLog({
-      action: "PAYMENT_REJECTED",
-      performedBy: req.clerkUserId,
-      targetId: claimed._id,
-      description:
-        `Admin rejected payment of ৳${claimed.amount} ` +
-        `(${claimed.transactionId}) — ${rejectedReason.trim()}`,
-      after: { status: "rejected", rejectedReason: rejectedReason.trim() },
-      metadata: {
-        transactionId: claimed.transactionId,
-        amount: claimed.amount,
-        memberId: String(claimed.member?._id || claimed.member),
-      },
-    });
+      if (member?.clerkUserId) {
+        await Notification.create({
+          type: "Payment",
+          content:
+            `Your payment of ৳${previous.amount.toLocaleString()} was not processed. ` +
+            `Reason: ${reason}`,
+          clerkUserId: member.clerkUserId,
+          adminOnly: false,
+        });
+      }
+    } catch (notifError) {
+      console.error(
+        "[rejectPayment] Notification creation failed:",
+        notifError.message,
+      );
+    }
 
     return res.status(200).json({ success: true, message: "Payment rejected" });
   } catch (error) {

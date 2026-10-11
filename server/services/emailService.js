@@ -36,8 +36,6 @@
 //   Each public function builds its own bodyContent and calls sendEmail()
 
 import { Resend } from "resend";
-import MonthlyCharge from "../models/MonthlyCharge.js";
-import ExtraCharge from "../models/ExtraCharge.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +69,7 @@ const fmtDate = (d) =>
     day: "numeric",
     month: "long",
     year: "numeric",
+    timeZone: "Asia/Dhaka",
   });
 
 /**
@@ -106,58 +105,53 @@ const sendEmail = async ({ to, subject, html }) => {
  * All emails use this so they have a consistent branded appearance.
  * Inline styles only — email clients strip external/head CSS.
  */
+const esc = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
 const emailLayout = ({ title, preheader, bodyContent }) => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>${title}</title>
+  <title>${esc(title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f1f5f9;
+<body style="margin:0;padding:0;background:#f6f7f9;
              font-family:'Segoe UI',Arial,sans-serif;-webkit-text-size-adjust:100%;">
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;
-              color:#f1f5f9;font-size:1px;">
-    ${preheader}&nbsp;‌&nbsp;‌&nbsp;‌&nbsp;‌
+              color:#f6f7f9;font-size:1px;">
+    ${esc(preheader)}&nbsp;‌&nbsp;‌&nbsp;‌&nbsp;‌
   </div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="background:#f1f5f9;padding:32px 0;">
-    <tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:32px 16px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="max-width:600px;">
-
+             style="max-width:560px;">
         <tr>
-          <td style="background:#064e3b;padding:28px 40px;
-                     border-radius:12px 12px 0 0;text-align:center;">
-            <p style="margin:0;color:#6ee7b7;font-size:11px;
-                      letter-spacing:2px;text-transform:uppercase;
-                      font-weight:600;">
-              ${SOCIETY}
-            </p>
-            <h1 style="margin:6px 0 0;color:#ffffff;font-size:22px;
-                        font-weight:700;letter-spacing:-0.3px;">
-              ${title}
-            </h1>
+          <td style="padding:0 0 14px;font-size:12px;font-weight:600;
+                     letter-spacing:0.4px;color:#6b7280;text-transform:uppercase;">
+            ${SOCIETY}
           </td>
         </tr>
-
         <tr>
-          <td style="background:#ffffff;padding:36px 40px;
-                     border-radius:0 0 12px 12px;
-                     box-shadow:0 2px 16px rgba(0,0,0,0.06);">
+          <td style="background:#ffffff;border:1px solid #e5e7eb;
+                     border-radius:8px;padding:32px;">
+            <h1 style="margin:0 0 20px;font-size:20px;font-weight:600;color:#111827;">
+              ${esc(title)}
+            </h1>
             ${bodyContent}
           </td>
         </tr>
-
         <tr>
-          <td style="padding:20px 40px;text-align:center;">
-            <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.6;">
-              © ${new Date().getFullYear()} ${SOCIETY}<br/>
-              This is an automated message — please do not reply directly.
-            </p>
+          <td style="padding:18px 0;text-align:center;font-size:12px;
+                     line-height:1.6;color:#9ca3af;">
+            © ${new Date().getFullYear()} ${SOCIETY}<br/>
+            This is an automated message — please do not reply directly.
           </td>
         </tr>
-
       </table>
     </td></tr>
   </table>
@@ -171,10 +165,10 @@ const chargeRow = ({ description, subtext, amount, isBold = false }) => `
   <tr>
     <td style="padding:10px 16px;border-bottom:1px solid #f1f5f9;
                font-size:14px;color:#374151;line-height:1.5;">
-      ${description}
+      ${esc(description)}
       ${
         subtext
-          ? `<br/><span style="font-size:12px;color:#9ca3af;">${subtext}</span>`
+          ? `<br/><span style="font-size:12px;color:#9ca3af;">${esc(subtext)}</span>`
           : ""
       }
     </td>
@@ -221,379 +215,322 @@ const totalRow = ({ label, amount, color = "#065f46" }) => `
  * Called from: adminPaymentController.approvePayment — the only call site.
  */
 
-const remainingBalanceHtml = (remainingDue) =>
-  remainingDue > 0
-    ? `
+// ─── Statement building blocks (payment / credit emails) ─────────────────────
+
+const money = (n) => `৳${fmt(n)}`;
+
+const lineRow = ({ label, detail, amount, bold = false }) => `
+  <tr>
+    <td style="padding:10px 0;border-bottom:1px solid #eef0f3;font-size:14px;
+               color:#111827;line-height:1.5;${bold ? "font-weight:700;" : ""}">
+      ${esc(label)}
+      ${detail ? `<br/><span style="font-size:12px;font-weight:400;color:#9ca3af;">${esc(detail)}</span>` : ""}
+    </td>
+    <td style="padding:10px 0;border-bottom:1px solid #eef0f3;font-size:14px;
+               color:#111827;text-align:right;white-space:nowrap;
+               ${bold ? "font-weight:700;" : ""}">
+      ${money(amount)}
+    </td>
+  </tr>`;
+
+const statementSection = (heading, rowsHtml) => `
+  <p style="margin:24px 0 2px;font-size:11px;font-weight:600;color:#9ca3af;
+            text-transform:uppercase;letter-spacing:0.5px;">${heading}</p>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="border:1px solid #fde68a;border-radius:10px;
-                overflow:hidden;margin-bottom:24px;background:#fffbeb;">
-    <tr>
-      <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#92400e;">
-        Remaining Outstanding Balance
-      </td>
-      <td style="padding:14px 20px;text-align:right;font-size:16px;
-                 font-weight:800;color:#b45309;white-space:nowrap;">
-        ৳${fmt(remainingDue)}
-      </td>
-    </tr>
-  </table>`
-    : "";
+         style="border-collapse:collapse;">${rowsHtml}</table>`;
 
-// Months cleared automatically from banked credit + credit still available.
-const creditSummaryHtml = ({ creditApplied = [], creditBalance = 0 }) => {
-  const appliedTable =
-    creditApplied.length > 0
-      ? `
-    <p style="font-size:13px;font-weight:600;color:#374151;
-              text-transform:uppercase;letter-spacing:0.5px;margin:0 0 10px;">
-      Applied From Your Credit
-    </p>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #e5e7eb;border-radius:10px;
-                  overflow:hidden;margin-bottom:20px;">
-      <tbody>
-        ${creditApplied
-          .map((m) =>
-            chargeRow({
-              description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
-              subtext: "Paid from your credit balance",
-              amount: m.amount,
-            }),
-          )
-          .join("")}
-      </tbody>
-    </table>`
-      : "";
+const noteParagraph = (text) =>
+  `<p style="margin:10px 0 0;font-size:12px;line-height:1.6;color:#6b7280;">${text}</p>`;
 
-  const balanceTable =
-    creditBalance > 0
-      ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #bbf7d0;border-radius:10px;
-                  overflow:hidden;margin-bottom:24px;background:#f0fdf4;">
-      <tr>
-        <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#065f46;">
-          Remaining Credit Balance
-        </td>
-        <td style="padding:14px 20px;text-align:right;font-size:16px;
-                   font-weight:800;color:#059669;white-space:nowrap;">
-          ৳${fmt(creditBalance)}
-        </td>
-      </tr>
-    </table>`
-      : "";
+const dashboardButton = () => `
+  <div style="margin-top:28px;">
+    <a href="${FRONTEND}/dashboard"
+       style="display:inline-block;background:#064e3b;color:#ffffff;
+              padding:12px 28px;border-radius:6px;font-size:14px;
+              font-weight:600;text-decoration:none;">
+      View dashboard
+    </a>
+  </div>`;
 
-  return appliedTable + balanceTable;
+/**
+ * sendPaymentConfirmationEmail
+ * Called by the dispatcher with the queue payload { name, statement }
+ * (statement built by paymentStatementService.buildPaymentStatement).
+ *
+ * Three separate things are shown, never mixed:
+ *   THIS PAYMENT       cash received = applied to charges + added to credit
+ *   CREDIT APPLIED     earlier credit that cleared a month (not new cash)
+ *   ACCOUNT AFTER      credit balance and what is still owed
+ */
+const CONFIRMATION_COPY = {
+  standard: { title: "Payment confirmed", subject: "Payment Confirmed" },
+  advance: {
+    title: "Advance payment confirmed",
+    subject: "Advance Payment Confirmed",
+  },
+  completion: {
+    title: "Monthly fee completed",
+    subject: "Monthly Fee Completed",
+  },
 };
 
-export const sendPaymentConfirmationEmail = async ({
-  to,
-  name,
-  amount,
-  receiptNumber,
-  paidAt,
-  allocations = [],
-  remainingDue = 0,
-  advanceAmount = 0,
-  creditBalance = 0,
-  creditApplied = [],
-}) => {
-  const monthlyAllocations = allocations.filter(
-    (a) => a.chargeType === "monthly",
-  );
-  const extraAllocations = allocations.filter((a) => a.chargeType === "extra");
+export const sendPaymentConfirmationEmail = async ({ to, name, statement }) => {
+  if (!statement) {
+    throw new Error("Payment confirmation email requires a statement payload");
+  }
 
-  const monthlyChargeIds = monthlyAllocations.map((a) => a.chargeId);
-  const extraChargeIds = extraAllocations.map((a) => a.chargeId);
+  const {
+    kind = "standard",
+    amount,
+    receiptNumber,
+    paidAt,
+    applied = [],
+    addedToCredit = 0,
+    creditUsed = [],
+    creditBefore = 0,
+    creditBalance,
+    monthlyDue,
+    extraDue,
+    totalDue,
+  } = statement;
 
-  // Only fetch descriptive metadata (month/year, label/purpose) here —
-  // never the charge's `amount` field, which is not reliable for what
-  // was paid in THIS transaction once partial payments are involved.
-  const [monthlyMeta, extraMeta] = await Promise.all([
-    monthlyChargeIds.length > 0
-      ? MonthlyCharge.find({ _id: { $in: monthlyChargeIds } })
-          .select("month year")
-          .lean()
-      : [],
-    extraChargeIds.length > 0
-      ? ExtraCharge.find({ _id: { $in: extraChargeIds } })
-          .select("label purpose")
-          .lean()
-      : [],
-  ]);
+  const copy = CONFIRMATION_COPY[kind] ?? CONFIRMATION_COPY.standard;
+  const creditUsedTotal = creditUsed.reduce((s, c) => s + c.amount, 0);
 
-  const monthlyMetaMap = Object.fromEntries(
-    monthlyMeta.map((c) => [String(c._id), c]),
-  );
-  const extraMetaMap = Object.fromEntries(
-    extraMeta.map((c) => [String(c._id), c]),
-  );
+  let middle;
+  let intro = `We have received your payment of <strong style="color:#111827;">${money(amount)}</strong> on ${fmtDate(paidAt)}.`;
 
-  const monthlyRowsBuilt = monthlyAllocations
-    .map((a) => {
-      const meta = monthlyMetaMap[String(a.chargeId)];
-      return meta
-        ? { month: meta.month, year: meta.year, amount: a.amount }
-        : null;
-    })
-    .filter(Boolean)
-    .sort((x, y) => (x.year !== y.year ? x.year - y.year : x.month - y.month));
+  if (kind === "completion") {
+    // Fee 400 = earlier credit 300 + this payment 100.
+    const fromEarlier = Math.min(creditBefore, creditUsedTotal);
+    const fromPayment = creditUsedTotal - fromEarlier;
 
-  const extraRowsBuilt = extraAllocations
-    .map((a) => {
-      const meta = extraMetaMap[String(a.chargeId)];
-      return meta
-        ? { label: meta.label, purpose: meta.purpose, amount: a.amount }
-        : null;
-    })
-    .filter(Boolean);
+    intro += ` It completes your ${creditUsed.map((c) => esc(c.label)).join(", ")} monthly fee.`;
 
-  const hasBreakdown =
-    monthlyRowsBuilt.length > 0 ||
-    extraRowsBuilt.length > 0 ||
-    advanceAmount > 0;
-
-  const breakdownRows = [
-    ...monthlyRowsBuilt.map((m) =>
-      chargeRow({
-        description: `Monthly Maintenance — ${MONTH_NAMES[m.month]} ${m.year}`,
-        amount: m.amount,
-      }),
-    ),
-    ...extraRowsBuilt.map((c) =>
-      chargeRow({
-        description: c.label,
-        subtext: c.purpose,
-        amount: c.amount,
-      }),
-    ),
-
-    ...(advanceAmount > 0
-      ? [
-          chargeRow({
-            description: "Advance Payment",
-            subtext: "Added to your credit balance",
-            amount: advanceAmount,
+    middle =
+      statementSection(
+        "This payment",
+        lineRow({ label: "Payment received", amount, bold: true }),
+      ) +
+      statementSection(
+        "Monthly fee",
+        [
+          ...creditUsed.map((c) =>
+            lineRow({
+              label: `Monthly maintenance — ${c.label}`,
+              amount: c.amount,
+            }),
+          ),
+          lineRow({
+            label: "Monthly fee settled",
+            amount: creditUsedTotal,
+            bold: true,
           }),
-        ]
-      : []),
-
-    totalRow({ label: "Total Paid", amount }),
-  ].join("");
-
-  const isFullyCleared = remainingDue <= 0;
-
-  const advanceNote =
-    advanceAmount > 0
-      ? ` ৳${fmt(advanceAmount)} of this payment was added to your advance credit.`
-      : "";
-
-  const introText = isFullyCleared
-    ? `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}.${advanceNote} Your account has been updated and your dues are fully cleared.`
-    : `We have received your payment of <strong style="color:#111827;">৳${fmt(amount)}</strong> on ${fmtDate(paidAt)}.${advanceNote} Your account has been updated accordingly.`;
-
-  const bodyContent = `
-    <div style="text-align:center;margin-bottom:28px;">
-      <div style="display:inline-block;background:#dcfce7;border-radius:50%;
-                  width:64px;height:64px;line-height:64px;font-size:32px;">
-        ✅
-      </div>
-      <p style="margin:12px 0 0;font-size:22px;font-weight:700;color:#064e3b;">
-        Payment Confirmed
-      </p>
-      <p style="margin:4px 0 0;font-size:14px;color:#059669;">
-        Your payment has been successfully processed
-      </p>
-    </div>
-
-    <p style="font-size:15px;color:#374151;margin:0 0 20px;">
-      Dear <strong>${name}</strong>,
-    </p>
-    <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.7;">
-      ${introText}
-    </p>
-
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="background:#f8fafc;border:1px solid #e2e8f0;
-                  border-radius:10px;margin-bottom:24px;">
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;color:#64748b;
-                   border-bottom:1px solid #e2e8f0;">
-          Receipt Number
-        </td>
-        <td style="padding:12px 20px;font-size:14px;font-weight:700;
-                   font-family:monospace;color:#1e293b;text-align:right;
-                   border-bottom:1px solid #e2e8f0;">
-          ${receiptNumber}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;color:#64748b;">
-          Payment Date
-        </td>
-        <td style="padding:12px 20px;font-size:14px;color:#1e293b;
-                   text-align:right;">
-          ${fmtDate(paidAt)}
-        </td>
-      </tr>
-    </table>
-
-    ${
-      hasBreakdown
-        ? `
-      <p style="font-size:13px;font-weight:600;color:#374151;
-                text-transform:uppercase;letter-spacing:0.5px;margin:0 0 10px;">
-        Payment Breakdown
-      </p>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-             style="border:1px solid #e5e7eb;border-radius:10px;
-                    overflow:hidden;margin-bottom:20px;">
-        <thead>
-          <tr style="background:#f9fafb;">
-            <th style="padding:10px 16px;text-align:left;font-size:11px;
-                       font-weight:600;color:#9ca3af;text-transform:uppercase;
-                       letter-spacing:0.5px;">
-              Description
-            </th>
-            <th style="padding:10px 16px;text-align:right;font-size:11px;
-                       font-weight:600;color:#9ca3af;text-transform:uppercase;
-                       letter-spacing:0.5px;">
-              Amount
-            </th>
-          </tr>
-        </thead>
-        <tbody>${breakdownRows}</tbody>
-      </table>
-    `
-        : ""
+        ].join(""),
+      ) +
+      statementSection(
+        "How it was paid",
+        [
+          lineRow({ label: "From your earlier credit", amount: fromEarlier }),
+          lineRow({ label: "From this payment", amount: fromPayment }),
+          lineRow({
+            label: "Credit remaining",
+            amount: creditBalance ?? 0,
+            bold: true,
+          }),
+        ].join(""),
+      );
+  } else {
+    if (kind === "advance") {
+      intro += " The full amount has been added to your credit balance.";
     }
 
-    ${creditSummaryHtml({ creditApplied, creditBalance })}
-${remainingBalanceHtml(remainingDue)}
+    const paymentRows = [
+      ...applied.map((a) =>
+        lineRow({ label: a.label, detail: a.detail, amount: a.amount }),
+      ),
+      ...(addedToCredit > 0
+        ? [lineRow({ label: "Added to credit balance", amount: addedToCredit })]
+        : []),
+      lineRow({ label: "Total received", amount, bold: true }),
+    ].join("");
 
-    <div style="text-align:center;margin-top:8px;">
+    middle =
+      statementSection("This payment", paymentRows) +
+      (creditUsed.length > 0
+        ? statementSection(
+            "Credit applied",
+            [
+              ...creditUsed.map((c) =>
+                lineRow({
+                  label: `Monthly maintenance — ${c.label}`,
+                  amount: c.amount,
+                }),
+              ),
+              lineRow({
+                label: "Total credit applied",
+                amount: creditUsedTotal,
+                bold: true,
+              }),
+            ].join(""),
+          ) +
+          noteParagraph(
+            "Paid from money you deposited earlier. This is not a new payment.",
+          )
+        : "");
+  }
+
+  const hasAccount = creditBalance !== undefined && totalDue !== undefined;
+  const accountSection = hasAccount
+    ? statementSection(
+        "Account after this payment",
+        [
+          lineRow({ label: "Credit balance", amount: creditBalance }),
+          lineRow({ label: "Monthly dues outstanding", amount: monthlyDue }),
+          lineRow({ label: "Extra charges outstanding", amount: extraDue }),
+          lineRow({ label: "Total outstanding", amount: totalDue, bold: true }),
+        ].join(""),
+      )
+    : "";
+
+  const closing = !hasAccount
+    ? ""
+    : totalDue > 0
+      ? noteParagraph(
+          "You still have dues outstanding. You can pay them from your dashboard.",
+        )
+      : creditBalance > 0
+        ? noteParagraph(
+            "Your credit balance is applied automatically when your next monthly fee is billed.",
+          )
+        : noteParagraph(
+            kind === "completion"
+              ? "Your monthly fee is fully paid. You can now pay ahead for future months from your dashboard."
+              : "Your dues are fully paid.",
+          );
+
+  const bodyContent = `
+    <p style="margin:0 0 6px;font-size:15px;color:#111827;">Dear ${esc(name)},</p>
+    <p style="margin:0;font-size:14px;line-height:1.7;color:#4b5563;">
+      ${intro}
+      Receipt <span style="font-family:monospace;color:#111827;">${esc(receiptNumber)}</span>.
+    </p>
+    ${middle}
+    ${accountSection}
+    ${closing}
+    ${dashboardButton()}
+  `;
+
+  return sendEmail({
+    to,
+    subject: `${copy.subject} — Receipt ${receiptNumber}`,
+    html: emailLayout({
+      title: copy.title,
+      preheader: `${money(amount)} received · Receipt ${receiptNumber}`,
+      bodyContent,
+    }),
+  });
+};
+
+export const sendAdvancePaymentConfirmationEmail = sendPaymentConfirmationEmail;
+
+/**
+ * sendCreditShortfallEmail
+ * Sent when a fee increase leaves a member's credit below the new monthly fee.
+ * ACTION REQUIRED: the member must pay the remaining amount.
+ */
+export const sendCreditShortfallEmail = async ({
+  to,
+  name,
+  month,
+  year,
+  feeAmount,
+  creditBalance,
+  amount,
+}) => {
+  const label = `${MONTH_NAMES[month]} ${year}`;
+
+  const bodyContent = `
+    <p style="margin:0 0 6px;font-size:15px;color:#111827;">Dear ${esc(name)},</p>
+    <p style="margin:0;font-size:14px;line-height:1.7;color:#4b5563;">
+      Your ${label} monthly fee is <strong style="color:#111827;">${money(feeAmount)}</strong>,
+      which is more than the credit you hold. Please pay the remaining
+      <strong style="color:#111827;">${money(amount)}</strong> to settle this month.
+    </p>
+    ${statementSection(
+      label,
+      [
+        lineRow({ label: "Monthly maintenance fee", amount: feeAmount }),
+        lineRow({ label: "Your credit balance", amount: creditBalance }),
+        lineRow({ label: "Remaining to pay", amount, bold: true }),
+      ].join(""),
+    )}
+    ${noteParagraph(
+      "Your credit is held unchanged and is used together with your payment. " +
+        "Advance payments for later months open once this month is settled.",
+    )}
+    <div style="margin-top:28px;">
       <a href="${FRONTEND}/dashboard"
-         style="display:inline-block;background:#064e3b;color:#ffffff;
-                padding:14px 36px;border-radius:8px;font-size:14px;
-                font-weight:600;text-decoration:none;letter-spacing:0.2px;">
-        View Dashboard
+         style="display:inline-block;background:#064e3b;color:#ffffff;padding:12px 28px;
+                border-radius:6px;font-size:14px;font-weight:600;text-decoration:none;">
+        Pay ${money(amount)}
       </a>
     </div>
   `;
 
   return sendEmail({
     to,
-    subject: `Payment Confirmed — Receipt ${receiptNumber}`,
+    subject: `Action required: ${money(amount)} remaining for ${label}`,
     html: emailLayout({
-      title: "Payment Confirmed",
-      preheader: `৳${fmt(amount)} received · Receipt ${receiptNumber}`,
+      title: "Action required: complete your monthly payment",
+      preheader: `${money(amount)} remaining for ${label}`,
       bodyContent,
     }),
   });
 };
 
 /**
- * sendAdvancePaymentConfirmationEmail
- * Sent after an admin confirms a gateway-verified advance/credit-deposit
- * payment. Distinct from sendPaymentConfirmationEmail because this money
- * isn't clearing any specific charge yet — it's becoming available
- * credit, automatically applied to future dues as they're created.
- *
- * Called from: adminPaymentController.approvePayment (credit-deposit branch)
+ * sendCreditAppliedEmail
+ * Sent when the monthly cron clears a new month from the member's credit.
+ * There is no new payment, so this is NOT a payment confirmation.
  */
-export const sendAdvancePaymentConfirmationEmail = async ({
+export const sendCreditAppliedEmail = async ({
   to,
   name,
+  month,
+  year,
   amount,
-  receiptNumber,
-  paidAt,
-  creditBalance,
-  creditApplied = [],
-  remainingDue = 0,
+  creditAfter,
 }) => {
+  const label = `${MONTH_NAMES[month]} ${year}`;
+
   const bodyContent = `
-    <div style="text-align:center;margin-bottom:28px;">
-      <div style="display:inline-block;background:#dcfce7;border-radius:50%;
-                  width:64px;height:64px;line-height:64px;font-size:32px;">
-        ✅
-      </div>
-      <p style="margin:12px 0 0;font-size:22px;font-weight:700;color:#064e3b;">
-        Advance Payment Received
-      </p>
-      <p style="margin:4px 0 0;font-size:14px;color:#059669;">
-        Thank you for paying ahead
-      </p>
-    </div>
-
-    <p style="font-size:15px;color:#374151;margin:0 0 20px;">
-      Dear <strong>${name}</strong>,
+    <p style="margin:0 0 6px;font-size:15px;color:#111827;">Dear ${esc(name)},</p>
+    <p style="margin:0;font-size:14px;line-height:1.7;color:#4b5563;">
+      Your ${label} monthly maintenance fee has been paid automatically from
+      your credit balance. No payment is needed for this month.
     </p>
-    <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.7;">
-  We have received your advance payment of
-  <strong style="color:#111827;">৳${fmt(amount)}</strong>
-  on ${fmtDate(paidAt)}.
-  ${
-    creditApplied.length > 0
-      ? "It has been applied to your outstanding monthly dues, shown below. Any remaining amount stays as credit and will be applied automatically to your upcoming dues."
-      : "This amount will be applied automatically to your upcoming monthly dues as they are billed — no further action is required until it is used up."
-  }
-</p>
-
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="background:#f8fafc;border:1px solid #e2e8f0;
-                  border-radius:10px;margin-bottom:24px;">
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;color:#64748b;
-                   border-bottom:1px solid #e2e8f0;">
-          Receipt Number
-        </td>
-        <td style="padding:12px 20px;font-size:14px;font-weight:700;
-                   font-family:monospace;color:#1e293b;text-align:right;
-                   border-bottom:1px solid #e2e8f0;">
-          ${receiptNumber}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:12px 20px;font-size:13px;color:#64748b;">
-          Payment Date
-        </td>
-        <td style="padding:12px 20px;font-size:14px;color:#1e293b;
-                   text-align:right;">
-          ${fmtDate(paidAt)}
-        </td>
-      </tr>
-    </table>
-
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #bbf7d0;border-radius:10px;
-                  overflow:hidden;margin-bottom:28px;background:#f0fdf4;">
-      <tr>
-        <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#065f46;">
-          Your Credit Balance
-        </td>
-        <td style="padding:14px 20px;text-align:right;font-size:16px;
-                   font-weight:800;color:#059669;white-space:nowrap;">
-          ৳${fmt(creditBalance)}
-        </td>
-      </tr>
-    </table>
-
-    <div style="text-align:center;margin-top:8px;">
-      <a href="${FRONTEND}/dashboard"
-         style="display:inline-block;background:#064e3b;color:#ffffff;
-                padding:14px 36px;border-radius:8px;font-size:14px;
-                font-weight:600;text-decoration:none;letter-spacing:0.2px;">
-        View Dashboard
-      </a>
-    </div>
+    ${statementSection(
+      "Monthly fee",
+      [
+        lineRow({ label: `Monthly maintenance — ${label}`, amount }),
+        lineRow({ label: "Paid from credit balance", amount }),
+        lineRow({ label: "Amount to pay", amount: 0, bold: true }),
+      ].join(""),
+    )}
+    ${statementSection(
+      "Your credit balance",
+      lineRow({ label: "Credit remaining", amount: creditAfter, bold: true }),
+    )}
+    ${dashboardButton()}
   `;
 
   return sendEmail({
     to,
-    subject: `Advance Payment Received — Receipt ${receiptNumber}`,
+    subject: `${label} fee paid from your credit`,
     html: emailLayout({
-      title: "Advance Payment Received",
-      preheader: `৳${fmt(amount)} added to your credit balance · Receipt ${receiptNumber}`,
+      title: "Monthly fee paid from credit",
+      preheader: `${label} · ${money(amount)} paid from credit · ${money(creditAfter)} remaining`,
       bodyContent,
     }),
   });
@@ -601,11 +538,9 @@ export const sendAdvancePaymentConfirmationEmail = async ({
 
 /**
  * sendDueReminderEmail
- * Sent 7 days before month-end to members with outstanding dues.
- * Called from the daily cron job (server/jobs/paymentJobs.js).
- * UNCHANGED — this email's amounts already come from live unpaid charge
- * queries, not from post-payment mutated fields, so it doesn't have the
- * bug described above.
+ * Sent once a month, 9 days before month-end, to members with outstanding dues.
+ * Called via the email queue dispatcher (server/jobs/paymentJobs.js).
+ * Amounts come from live unpaid-charge queries.
  */
 export const sendDueReminderEmail = async ({
   to,
@@ -615,6 +550,8 @@ export const sendDueReminderEmail = async ({
   totalExtraDue,
   unpaidMonths = [],
   unpaidCharges = [],
+  creditBalance = 0,
+  creditShortfall = 0,
 }) => {
   const monthlyRows = unpaidMonths
     .map((m) =>
@@ -638,6 +575,18 @@ export const sendDueReminderEmail = async ({
   const hasMonthly = unpaidMonths.length > 0;
   const hasExtra = unpaidCharges.length > 0;
 
+  const creditNote =
+    creditBalance > 0
+      ? `<p style="margin:0 0 24px;font-size:13px;line-height:1.6;color:#4b5563;">
+           You have ${money(creditBalance)} in credit.
+           ${
+             creditShortfall > 0
+               ? `Add ${money(creditShortfall)} to cover your oldest unpaid month with it, or pay the full amount above and keep your credit.`
+               : "Credit is applied to monthly fees only, not to extra charges."
+           }
+         </p>`
+      : "";
+
   const bodyContent = `
     <div style="text-align:center;margin-bottom:28px;">
       <div style="display:inline-block;background:#fef9c3;border-radius:50%;
@@ -653,7 +602,7 @@ export const sendDueReminderEmail = async ({
     </div>
 
     <p style="font-size:15px;color:#374151;margin:0 0 16px;">
-      Dear <strong>${name}</strong>,
+      Dear <strong>${esc(name)}</strong>,
     </p>
     <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.7;">
       This is a friendly reminder that you have outstanding dues of
@@ -713,6 +662,8 @@ export const sendDueReminderEmail = async ({
       </tr>
     </table>
 
+      ${creditNote}
+
     <div style="text-align:center;">
       <a href="${FRONTEND}/dashboard"
          style="display:inline-block;background:#dc2626;color:#ffffff;
@@ -720,9 +671,8 @@ export const sendDueReminderEmail = async ({
                 font-weight:700;text-decoration:none;">
         Pay Now
       </a>
-      <p style="margin:14px 0 0;font-size:12px;color:#9ca3af;">
-        You will receive this reminder 7 days before month-end
-        while dues remain outstanding.
+            <p style="margin:14px 0 0;font-size:12px;color:#9ca3af;">
+        You will receive this reminder once a month while dues remain outstanding.
       </p>
     </div>
   `;
@@ -754,7 +704,7 @@ export const sendNoticeEmail = async (to, notice) => {
 
   const bodyContent = `
     <h2 style="margin:0 0 6px;font-size:22px;font-weight:700;color:#1e293b;">
-      ${title}
+      ${esc(title)}
     </h2>
     <p style="margin:0 0 20px;font-size:13px;color:#94a3b8;">
       ${date ? fmtDate(date) : ""}
@@ -763,7 +713,7 @@ export const sendNoticeEmail = async (to, notice) => {
     ${
       optimisedImage
         ? `
-      <img src="${optimisedImage}" alt="${title}"
+            <img src="${esc(optimisedImage)}" alt="${esc(title)}"
            width="520" style="max-width:100%;height:auto;border-radius:10px;
                               display:block;margin:0 0 20px;" />
     `
@@ -777,7 +727,7 @@ export const sendNoticeEmail = async (to, notice) => {
                   padding:12px 16px;border-radius:0 6px 6px 0;margin:0 0 20px;">
         <p style="margin:0;font-size:15px;font-weight:500;color:#065f46;
                   line-height:1.6;">
-          ${summary}
+          ${esc(summary)}
         </p>
       </div>
     `
@@ -785,7 +735,7 @@ export const sendNoticeEmail = async (to, notice) => {
     }
 
     <div style="font-size:15px;color:#374151;line-height:1.8;margin:0 0 28px;">
-      ${content.replace(/\n/g, "<br/>")}
+            ${esc(content).replace(/\n/g, "<br/>")}
     </div>
 
     <div style="text-align:center;">

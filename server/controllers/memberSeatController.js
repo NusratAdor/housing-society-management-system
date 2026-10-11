@@ -23,6 +23,10 @@ import {
 import { importMemberSeats } from "../services/memberSeatImportService.js";
 import { getDhakaDateParts } from "../utils/dateTime.js";
 
+import { writeAuditLog } from "../services/auditService.js";
+import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+import { httpError } from "../utils/httpError.js";
+
 const PAID_THROUGH_PATTERN =
   /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -167,412 +171,271 @@ export const getAllSeats = async (req, res) => {
 
 // ─── POST /api/admin/seats ─────────────────────────────────────────────────
 
+const sendSeatError = (res, label, error, fallback) => {
+  if (error.statusCode) {
+    return res.status(error.statusCode).json({ success: false, message: error.message });
+  }
+  if (error?.code === 11000) {
+    return res.status(409).json({
+      success: false,
+      message: "A seat already exists for this membership number",
+    });
+  }
+  console.error(`${label} error:`, error.message);
+  return res.status(500).json({ success: false, message: fallback });
+};
+
+const parseSeatInput = ({ membershipNo, phone, paidThroughMonth }) => {
+  const number = normalizeMembershipNo(membershipNo);
+  const paidThrough = normalizePaidThroughMonth(paidThroughMonth);
+
+  if (!number || !MEMBERSHIP_NO_PATTERN.test(number)) {
+    return { error: "Membership number must contain digits only" };
+  }
+  if (!phone || !String(phone).trim()) return { error: "Phone number is required" };
+
+  let normalizedPhone = null;
+  try {
+    normalizedPhone = normalizePhone(phone);
+  } catch {
+    normalizedPhone = null;
+  }
+  if (!normalizedPhone || !isValidPhone(normalizedPhone)) return { error: "Invalid phone number" };
+
+  if (!PAID_THROUGH_PATTERN.test(paidThrough)) {
+    return { error: "paidThroughMonth must be in YYYY-MM format" };
+  }
+  if (isFuturePaidThroughMonth(paidThrough)) {
+    return { error: "paidThroughMonth cannot be in the future" };
+  }
+
+  return { membershipNo: number, phone: normalizedPhone, paidThroughMonth: paidThrough };
+};
+
+// ─── POST /api/admin/seats ───────────────────────────────────────────────────
+// The registered phone is a registration credential: it is never written to the audit log.
+
 export const createSeat = async (req, res) => {
   try {
-    const {
-      membershipNo,
-      phone,
-      paidThroughMonth,
-    } = req.body;
+    const input = parseSeatInput(req.body ?? {});
+    if (input.error) return res.status(400).json({ success: false, message: input.error });
 
-    const normalizedMembershipNo =
-      normalizeMembershipNo(membershipNo);
+    const seat = await runInTransactionWithRetry(async (session) => {
+      const existing = await MemberSeat.findOne({ membershipNo: input.membershipNo }).session(session);
 
-    const normalizedPaidThroughMonth =
-      normalizePaidThroughMonth(paidThroughMonth);
-
-    if (
-      !normalizedMembershipNo ||
-      !MEMBERSHIP_NO_PATTERN.test(
-        normalizedMembershipNo,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Membership number must contain digits only",
-      });
-    }
-
-    if (!phone || !String(phone).trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number is required",
-      });
-    }
-
-    let normalizedPhone;
-
-    try {
-      normalizedPhone = normalizePhone(phone);
-    } catch {
-      normalizedPhone = null;
-    }
-
-    if (
-      !normalizedPhone ||
-      !isValidPhone(normalizedPhone)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number",
-      });
-    }
-
-    if (
-      !PAID_THROUGH_PATTERN.test(
-        normalizedPaidThroughMonth,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "paidThroughMonth must be in YYYY-MM format",
-      });
-    }
-
-    if (
-      isFuturePaidThroughMonth(
-        normalizedPaidThroughMonth,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "paidThroughMonth cannot be in the future",
-      });
-    }
-
-    const existing = await MemberSeat.findOne({
-      membershipNo: normalizedMembershipNo,
-    });
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message:
+      if (existing) {
+        throw httpError(
+          409,
           existing.isRetired
             ? "This membership number is retired and cannot be reused"
             : "A seat already exists for this membership number",
+        );
+      }
+
+      const [created] = await MemberSeat.create(
+        [
+          {
+            membershipNo: input.membershipNo,
+            registeredPhone: input.phone,
+            paidThroughMonth: input.paidThroughMonth,
+            isClaimed: false,
+            isRetired: false,
+          },
+        ],
+        { session },
+      );
+
+      await writeAuditLog({
+        action: "SEAT_CREATED",
+        performedBy: req.clerkUserId,
+        targetId: created._id,
+        description: `Member seat ${created.membershipNo} created`,
+        after: { membershipNo: created.membershipNo, paidThroughMonth: created.paidThroughMonth },
+        session,
+        required: true,
       });
-    }
 
-    const seat = await MemberSeat.create({
-      membershipNo: normalizedMembershipNo,
-      registeredPhone: normalizedPhone,
-      paidThroughMonth:
-        normalizedPaidThroughMonth,
-      isClaimed: false,
-      isRetired: false,
+      return created;
     });
 
-    return res.status(201).json({
-      success: true,
-      message: "Member seat created",
-      seat,
-    });
+    return res.status(201).json({ success: true, message: "Member seat created", seat });
   } catch (error) {
-    console.error(
-      "createSeat error:",
-      error.message,
-    );
-
-    if (error?.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "A seat already exists for this membership number",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create member seat",
-    });
+    return sendSeatError(res, "createSeat", error, "Failed to create member seat");
   }
 };
 
-// ─── PUT /api/admin/seats/:id ──────────────────────────────────────────────
-//
-// Claimed seats are completely immutable.
-//
-// If an admin needs to change the member's current phone,
-// that belongs to Member.phone — NOT MemberSeat.registeredPhone.
+// ─── PUT /api/admin/seats/:id ────────────────────────────────────────────────
+// Claimed or retired seats are immutable. The write itself is conditional on
+// "still unclaimed", so a member claiming the seat mid-edit can never be
+// overwritten. A current phone change belongs on Member.phone, not here.
 
 export const updateSeat = async (req, res) => {
   try {
-    const { id } = req.params;
+    const input = parseSeatInput(req.body ?? {});
+    if (input.error) return res.status(400).json({ success: false, message: input.error });
 
-    const seat = await MemberSeat.findById(id);
+    const seat = await runInTransactionWithRetry(async (session) => {
+      const existing = await MemberSeat.findById(req.params.id).session(session);
 
-    if (!seat) {
-      return res.status(404).json({
-        success: false,
-        message: "Member seat not found",
+      if (!existing) throw httpError(404, "Member seat not found");
+      if (existing.isRetired) throw httpError(400, "Retired seats cannot be edited");
+      if (existing.isClaimed) throw httpError(400, "Claimed seats are locked and cannot be edited");
+
+      const conflict = await MemberSeat.findOne({
+        membershipNo: input.membershipNo,
+        _id: { $ne: existing._id },
+      })
+        .select("_id")
+        .session(session);
+
+      if (conflict) throw httpError(409, "Another seat already uses this membership number");
+
+      const updated = await MemberSeat.findOneAndUpdate(
+        { _id: existing._id, isClaimed: false, isRetired: false },
+        {
+          $set: {
+            membershipNo: input.membershipNo,
+            registeredPhone: input.phone,
+            paidThroughMonth: input.paidThroughMonth,
+          },
+        },
+        { new: true, session },
+      );
+
+      if (!updated) throw httpError(409, "This seat was just claimed and can no longer be edited");
+
+      await writeAuditLog({
+        action: "SEAT_UPDATED",
+        performedBy: req.clerkUserId,
+        targetId: updated._id,
+        description: `Member seat ${existing.membershipNo} updated`,
+        before: { membershipNo: existing.membershipNo, paidThroughMonth: existing.paidThroughMonth },
+        after: { membershipNo: updated.membershipNo, paidThroughMonth: updated.paidThroughMonth },
+        metadata: { registeredPhoneChanged: existing.registeredPhone !== updated.registeredPhone },
+        session,
+        required: true,
       });
-    }
 
-    if (seat.isRetired) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Retired seats cannot be edited",
-      });
-    }
-
-    if (seat.isClaimed) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Claimed seats are locked and cannot be edited",
-      });
-    }
-
-    const {
-      membershipNo,
-      phone,
-      paidThroughMonth,
-    } = req.body;
-
-    const normalizedMembershipNo =
-      normalizeMembershipNo(membershipNo);
-
-    const normalizedPaidThroughMonth =
-      normalizePaidThroughMonth(paidThroughMonth);
-
-    if (
-      !normalizedMembershipNo ||
-      !MEMBERSHIP_NO_PATTERN.test(
-        normalizedMembershipNo,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Membership number must contain digits only",
-      });
-    }
-
-    let normalizedPhone;
-
-    try {
-      normalizedPhone = normalizePhone(phone);
-    } catch {
-      normalizedPhone = null;
-    }
-
-    if (
-      !normalizedPhone ||
-      !isValidPhone(normalizedPhone)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number",
-      });
-    }
-
-    if (
-      !PAID_THROUGH_PATTERN.test(
-        normalizedPaidThroughMonth,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "paidThroughMonth must be in YYYY-MM format",
-      });
-    }
-
-    if (
-      isFuturePaidThroughMonth(
-        normalizedPaidThroughMonth,
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "paidThroughMonth cannot be in the future",
-      });
-    }
-
-    const membershipConflict =
-      await MemberSeat.findOne({
-        membershipNo: normalizedMembershipNo,
-        _id: { $ne: seat._id },
-      }).select("_id isRetired");
-
-    if (membershipConflict) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Another seat already uses this membership number",
-      });
-    }
-
-    seat.membershipNo = normalizedMembershipNo;
-    seat.registeredPhone = normalizedPhone;
-    seat.paidThroughMonth =
-      normalizedPaidThroughMonth;
-
-    await seat.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Member seat updated",
-      seat,
+      return updated;
     });
+
+    return res.status(200).json({ success: true, message: "Member seat updated", seat });
   } catch (error) {
-    console.error(
-      "updateSeat error:",
-      error.message,
-    );
-
-    if (error?.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Another seat already uses this membership number",
-      });
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update member seat",
-    });
+    return sendSeatError(res, "updateSeat", error, "Failed to update member seat");
   }
 };
 
-// ─── DELETE /api/admin/seats/:id ───────────────────────────────────────────
+// ─── DELETE /api/admin/seats/:id ─────────────────────────────────────────────
 
 export const deleteSeat = async (req, res) => {
   try {
-    const { id } = req.params;
+    await runInTransactionWithRetry(async (session) => {
+      const existing = await MemberSeat.findById(req.params.id).session(session);
 
-    const seat = await MemberSeat.findById(id);
+      if (!existing) throw httpError(404, "Member seat not found");
+      if (existing.isClaimed) throw httpError(400, "Claimed seats cannot be deleted");
+      if (existing.isRetired) throw httpError(400, "Retired seats cannot be deleted");
 
-    if (!seat) {
-      return res.status(404).json({
-        success: false,
-        message: "Member seat not found",
+      const result = await MemberSeat.deleteOne(
+        { _id: existing._id, isClaimed: false, isRetired: false },
+        { session },
+      );
+
+      if (result.deletedCount === 0) {
+        throw httpError(409, "This seat was just claimed and can no longer be deleted");
+      }
+
+      await writeAuditLog({
+        action: "SEAT_DELETED",
+        performedBy: req.clerkUserId,
+        targetId: existing._id,
+        description: `Member seat ${existing.membershipNo} deleted`,
+        before: { membershipNo: existing.membershipNo, paidThroughMonth: existing.paidThroughMonth },
+        session,
+        required: true,
       });
-    }
-
-    if (seat.isClaimed) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Claimed seats cannot be deleted",
-      });
-    }
-
-    if (seat.isRetired) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Retired seats cannot be deleted",
-      });
-    }
-
-    await MemberSeat.deleteOne({
-      _id: seat._id,
     });
 
-    return res.status(200).json({
-      success: true,
-      message: "Member seat deleted",
-    });
+    return res.status(200).json({ success: true, message: "Member seat deleted" });
   } catch (error) {
-    console.error(
-      "deleteSeat error:",
-      error.message,
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to delete member seat",
-    });
+    return sendSeatError(res, "deleteSeat", error, "Failed to delete member seat");
   }
 };
 
-// ─── POST /api/admin/seats/import ──────────────────────────────────────────
+// ─── POST /api/admin/seats/import ────────────────────────────────────────────
+// The whole import and its audit are one transaction. (performedBy used
+// req.auth?.userId, which does not exist in current Clerk, so it was always
+// "UNKNOWN_ADMIN".)
 
-export const importSeatsFromCSV = async (
-  req,
-  res,
-) => {
+export const importSeatsFromCSV = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "CSV file is required",
-      });
+      return res.status(400).json({ success: false, message: "CSV file is required" });
     }
 
-    const text = req.file.buffer.toString("utf8");
-
-    const { headers, rows } = parseCSV(text);
+    const { headers, rows } = parseCSV(req.file.buffer.toString("utf8"));
 
     if (rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "CSV contains no data rows",
-      });
+      return res.status(400).json({ success: false, message: "CSV contains no data rows" });
     }
-
     if (rows.length > MAX_CSV_ROWS) {
       return res.status(400).json({
         success: false,
-        message:
-          `CSV cannot contain more than ${MAX_CSV_ROWS} rows`,
+        message: `CSV cannot contain more than ${MAX_CSV_ROWS} rows`,
       });
     }
 
-    const missingHeaders =
-      validateCSVHeaders(headers);
-
+    const missingHeaders = validateCSVHeaders(headers);
     if (missingHeaders.length > 0) {
       return res.status(400).json({
         success: false,
-        message:
-          `Missing required CSV columns: ${missingHeaders.join(
-            ", ",
-          )}`,
+        message: `Missing required CSV columns: ${missingHeaders.join(", ")}`,
       });
     }
 
-    const result = await importMemberSeats({
-      rows,
-      performedBy:
-        req.auth?.userId ||
-        req.user?.id ||
-        "UNKNOWN_ADMIN",
+    const result = await runInTransactionWithRetry(async (session) => {
+      const importResult = await importMemberSeats({
+        rows,
+        performedBy: req.clerkUserId,
+        session,
+      });
+
+      if (importResult.errors.length === 0) {
+        await writeAuditLog({
+          action: "SEAT_IMPORTED",
+          performedBy: req.clerkUserId,
+          description:
+            `Member seat CSV import: ${importResult.created} created, ` +
+            `${importResult.updated} updated, ${importResult.skippedClaimed + importResult.skippedRetired} skipped`,
+          metadata: {
+            totalRows: importResult.totalRows,
+            created: importResult.created,
+            updated: importResult.updated,
+            skippedClaimed: importResult.skippedClaimed,
+            skippedRetired: importResult.skippedRetired,
+          },
+          session,
+          required: true,
+        });
+      }
+
+      return importResult;
     });
 
-    // Validation errors mean nothing was imported.
     if (result.errors.length > 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "CSV validation failed. No changes were made.",
+        message: "CSV validation failed. No changes were made.",
         results: result,
       });
     }
 
     return res.status(200).json({
       success: true,
-      message:
-        "Member seat import completed",
+      message: "Member seat import completed",
       results: result,
     });
   } catch (error) {
-    console.error(
-      "importSeatsFromCSV error:",
-      error.message,
-    );
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to import member seats",
-    });
+    return sendSeatError(res, "importSeatsFromCSV", error, "Failed to import member seats");
   }
 };

@@ -170,7 +170,7 @@ const paymentSchema = new mongoose.Schema(
       },
     },
 
-     processingAt: {
+    processingAt: {
       type: Date,
     },
   },
@@ -186,5 +186,18 @@ paymentSchema.index({ member: 1, status: 1 });
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ status: 1, verifiedAt: -1 });
 paymentSchema.index({ member: 1, advanceAmount: 1, status: 1 });
+
+paymentSchema.index(
+  { member: 1 },
+  {
+    unique: true,
+    name: "one_active_payment_per_member",
+    partialFilterExpression: {
+      status: {
+        $in: ["pending", "verified", "processing"],
+      },
+    },
+  },
+);
 
 export default mongoose.model("Payment", paymentSchema);

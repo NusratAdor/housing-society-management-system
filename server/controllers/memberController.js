@@ -18,18 +18,19 @@ import {
 } from "../services/memberService.js";
 import { generateBackdatedCharges } from "../services/memberSeatService.js";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils.js";
+import { clerkClient } from "@clerk/express";
+import { writeAuditLog } from "../services/auditService.js";
+import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+import { httpError } from "../utils/httpError.js";
 
 // ── createMemberProfile ───────────────────────────────────────────────────────
 
 // ── createMemberProfile ───────────────────────────────────────────────────────
 
 export const createMemberProfile = async (req, res) => {
-  const session = await Member.startSession();
-
   try {
     const {
       name,
-      email,
       phone,
       designation,
       permanentAddress,
@@ -37,93 +38,54 @@ export const createMemberProfile = async (req, res) => {
       membershipNo,
       plots,
       nominee,
-    } = req.body;
+    } = req.body; // email is deliberately NOT read: it comes from Clerk below
 
     const { clerkUserId } = req;
 
-    // ── Basic request validation ────────────────────────────────────────────
-
+    // ── Basic request validation (no database yet) ──────────────────────
     if (!clerkUserId) {
-      return res.status(400).json({
-        success: false,
-        message: "User ID missing",
-      });
+      return res.status(400).json({ success: false, message: "User ID missing" });
     }
 
-    if (!email?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Email required",
-      });
+    let normalizedPhone = null;
+    try {
+      normalizedPhone = normalizePhone(phone);
+    } catch {
+      normalizedPhone = null;
     }
-
-    const normalizedPhone = normalizePhone(phone);
-
     if (!normalizedPhone) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number",
-      });
+      return res.status(400).json({ success: false, message: "Invalid phone number" });
     }
 
     const cleanMembership = membershipNo?.trim().toUpperCase();
-
     if (!cleanMembership) {
-      return res.status(400).json({
-        success: false,
-        message: "Membership number is required",
-      });
+      return res.status(400).json({ success: false, message: "Membership number is required" });
     }
-
-    // ── Validate new profile structure ─────────────────────────────────────
 
     if (!name?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Name is required",
-      });
+      return res.status(400).json({ success: false, message: "Name is required" });
     }
-
     if (!designation?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Designation is required",
-      });
+      return res.status(400).json({ success: false, message: "Designation is required" });
     }
-
     if (!permanentAddress?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Permanent address is required",
-      });
+      return res.status(400).json({ success: false, message: "Permanent address is required" });
     }
-
     if (!presentAddress?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Present address is required",
-      });
+      return res.status(400).json({ success: false, message: "Present address is required" });
     }
 
     if (!Array.isArray(plots) || plots.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "At least one plot is required",
-      });
+      return res.status(400).json({ success: false, message: "At least one plot is required" });
     }
 
     const allowedPlotSizes = [13, 10, 9, 7, 6.5];
-
     const normalizedPlots = plots.map((plot) => ({
       plotNo: plot?.plotNo?.trim().toUpperCase(),
       plotSize: Number(plot?.plotSize),
     }));
 
-    const invalidPlot = normalizedPlots.some(
-      (plot) => !plot.plotNo || !allowedPlotSizes.includes(plot.plotSize),
-    );
-
-    if (invalidPlot) {
+    if (normalizedPlots.some((p) => !p.plotNo || !allowedPlotSizes.includes(p.plotSize))) {
       return res.status(400).json({
         success: false,
         message: "Each plot must have a valid plot number and plot size",
@@ -142,193 +104,157 @@ export const createMemberProfile = async (req, res) => {
     }
 
     const normalizedNomineePhone = normalizePhone(nominee.phone);
-
     if (!normalizedNomineePhone) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid nominee phone number",
-      });
+      return res.status(400).json({ success: false, message: "Invalid nominee phone number" });
     }
 
-    // ── Start transaction ──────────────────────────────────────────────────
+    // ── Email comes from Clerk (verified), never from the request body ──
+    // Network call, so it runs OUTSIDE the transaction.
+    const clerkUser = await clerkClient.users.getUser(clerkUserId);
+    const primaryEmail = clerkUser.emailAddresses.find(
+      (e) => e.id === clerkUser.primaryEmailAddressId,
+    );
 
-    await session.startTransaction();
-
-    // ── Find existing member ───────────────────────────────────────────────
-
-    const existingMember = await Member.findOne({
-      clerkUserId,
-    }).session(session);
-
-    // A removed member must never be silently resurrected.
-    if (existingMember) {
-      await session.abortTransaction();
-
-      return res.status(409).json({
+    if (!primaryEmail || primaryEmail.verification?.status !== "verified") {
+      return res.status(400).json({
         success: false,
-        message:
+        message: "Please verify your email address before registering.",
+      });
+    }
+    const verifiedEmail = primaryEmail.emailAddress.trim().toLowerCase();
+
+    // ── One transaction: member + seat claim + backdated charges + audit ──
+    // The callback may run again after a transient conflict, so it must hold
+    // only database work.
+    const member = await runInTransactionWithRetry(async (session) => {
+      const existingMember = await Member.findOne({ clerkUserId }).session(session);
+
+      // A removed member must never be silently resurrected.
+      if (existingMember) {
+        throw httpError(
+          409,
           existingMember.status === "removed"
             ? "This account has been removed. Please contact the admin."
             : "Profile already exists. Please use your profile page to make changes.",
-      });
-    }
+        );
+      }
 
-    // ── Find registration seat ─────────────────────────────────────────────
-    //
-    // IMPORTANT:
-    // membershipNo alone is NOT enough.
-    //
-    // The member must prove that both:
-    //
-    //   membershipNo + registeredPhone
-    //
-    // match the admin-provisioned MemberSeat.
-
-    const seat = await MemberSeat.findOne({
-      membershipNo: cleanMembership,
-      registeredPhone: normalizedPhone,
-      isRetired: false,
-    }).session(session);
-
-    if (!seat) {
-      await session.abortTransaction();
-
-      return res.status(400).json({
-        success: false,
-        message:
-          "Membership number and registered phone number do not match our records. Please contact the admin.",
-      });
-    }
-
-    // ── Check seat ownership ───────────────────────────────────────────────
-
-    if (seat.isClaimed && seat.claimedByClerkId !== clerkUserId) {
-      await session.abortTransaction();
-
-      return res.status(400).json({
-        success: false,
-        message:
-          "This membership number has already been registered. Contact admin if this is an error.",
-      });
-    }
-
-    // ── Check membership ownership ─────────────────────────────────────────
-
-    const existingMembership = await Member.findOne({
-      membershipNo: cleanMembership,
-    }).session(session);
-
-    if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
-      await session.abortTransaction();
-
-      return res.status(400).json({
-        success: false,
-        message: "Membership number already in use",
-      });
-    }
-
-    // ---------------------------------------------------------
-    // Create member
-    // ---------------------------------------------------------
-
-    const [member] = await Member.create(
-      [
-        {
-          clerkUserId,
-          name: name.trim(),
-          email: email.trim().toLowerCase(),
-          phone: normalizedPhone,
-          designation: designation.trim(),
-          permanentAddress: permanentAddress.trim(),
-          presentAddress: presentAddress.trim(),
-          membershipNo: cleanMembership,
-
-          plots: normalizedPlots,
-
-          nominee: {
-            name: nominee.name.trim(),
-            phone: normalizedNomineePhone,
-            email: nominee.email.trim().toLowerCase(),
-          },
-
-          role: "member",
-          pendingAdmin: false,
-          status: "active",
-        },
-      ],
-      { session },
-    );
-
-    // ---------------------------------------------------------
-    // Atomically claim the seat
-    // ---------------------------------------------------------
-
-    const now = new Date();
-
-    const claimedSeat = await MemberSeat.findOneAndUpdate(
-      {
-        _id: seat._id,
-        isClaimed: false,
+      // membershipNo alone is NOT enough: both it and the registered phone
+      // must match the admin-provisioned seat.
+      const seat = await MemberSeat.findOne({
+        membershipNo: cleanMembership,
+        registeredPhone: normalizedPhone,
         isRetired: false,
-      },
-      {
-        $set: {
-          isClaimed: true,
-          claimedByClerkId: clerkUserId,
-          claimedAt: now,
-          joinDate: now,
+      }).session(session);
+
+      if (!seat) {
+        throw httpError(
+          400,
+          "Membership number and registered phone number do not match our records. Please contact the admin.",
+        );
+      }
+
+      if (seat.isClaimed && seat.claimedByClerkId !== clerkUserId) {
+        throw httpError(
+          400,
+          "This membership number has already been registered. Contact admin if this is an error.",
+        );
+      }
+
+      const existingMembership = await Member.findOne({
+        membershipNo: cleanMembership,
+      }).session(session);
+
+      if (existingMembership && existingMembership.clerkUserId !== clerkUserId) {
+        throw httpError(400, "Membership number already in use");
+      }
+
+      const [created] = await Member.create(
+        [
+          {
+            clerkUserId,
+            name: name.trim(),
+            email: verifiedEmail,
+            profileImageUrl: clerkUser.hasImage ? clerkUser.imageUrl : null, 
+            phone: normalizedPhone,
+            designation: designation.trim(),
+            permanentAddress: permanentAddress.trim(),
+            presentAddress: presentAddress.trim(),
+            membershipNo: cleanMembership,
+            plots: normalizedPlots,
+            nominee: {
+              name: nominee.name.trim(),
+              phone: normalizedNomineePhone,
+              email: nominee.email.trim().toLowerCase(),
+            },
+            role: "member",
+            pendingAdmin: false,
+            status: "active",
+          },
+        ],
+        { session },
+      );
+
+      // Atomic claim: only succeeds if the seat is still unclaimed.
+      const now = new Date();
+      const claimedSeat = await MemberSeat.findOneAndUpdate(
+        { _id: seat._id, isClaimed: false, isRetired: false },
+        {
+          $set: {
+            isClaimed: true,
+            claimedByClerkId: clerkUserId,
+            claimedAt: now,
+            joinDate: now,
+          },
         },
-      },
-      {
-        new: true,
+        { new: true, session },
+      );
+
+      if (!claimedSeat) {
+        throw httpError(
+          409,
+          "This membership seat was claimed by another request. Please try again.",
+        );
+      }
+
+      // seat.paidThroughMonth stays untouched: historical provisioning data.
+      const backfill = await generateBackdatedCharges({
+        memberId: created._id,
+        paidThroughMonth: seat.paidThroughMonth,
         session,
-      },
-    );
+      });
 
-    if (!claimedSeat) {
-      throw new Error(
-        "This membership seat was claimed by another request. Please try again.",
-      );
-    }
+      // The registered phone is a credential, so it is NOT written to the audit log.
+      await writeAuditLog({
+        action: "MEMBER_REGISTERED",
+        performedBy: clerkUserId,
+        targetId: created._id,
+        description: `Member ${created.name} (${cleanMembership}) registered and claimed their seat`,
+        after: { membershipNo: cleanMembership, status: "active" },
+        metadata: {
+          paidThroughMonth: seat.paidThroughMonth,
+          backdatedMonths: backfill.created,
+        },
+        session,
+        required: true,
+      });
 
-    // ---------------------------------------------------------
-    // Generate historical monthly charges
-    // ---------------------------------------------------------
-
-    const result = await generateBackdatedCharges({
-      memberId: member._id,
-      paidThroughMonth: seat.paidThroughMonth,
-      session,
+      return created;
     });
 
-    if (result.created > 0) {
-      console.info(
-        `[MemberSeat] Backfilled ${result.created} month(s) for ${cleanMembership}`,
-      );
-    }
-
-    // IMPORTANT:
-    // Do NOT clear seat.paidThroughMonth.
-    // It remains historical provisioning/audit information.
-
-    await session.commitTransaction();
-
-    return res.status(201).json({
-      success: true,
-      message: "Profile created",
-      member,
-    });
+    return res.status(201).json({ success: true, message: "Profile created", member });
   } catch (error) {
-    await session.abortTransaction();
-
-    console.error("createMemberProfile error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
-  } finally {
-    await session.endSession();
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "An account with this email or membership number already exists.",
+      });
+    }
+    console.error("createMemberProfile error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 

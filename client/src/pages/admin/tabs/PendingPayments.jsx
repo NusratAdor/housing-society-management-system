@@ -28,6 +28,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAppContext } from "../../../context/AppContext";
 
+import { formatDate, DATE_TIME } from "../../../utils/formatDate";
+import { describePaymentContents } from "../../../utils/paymentSummary";
+
 const MONTH_NAMES = [
   "",
   "Jan",
@@ -79,7 +82,9 @@ export default function PendingPayments({ onCountChange }) {
 
   useEffect(() => {
     fetchPending(false);
-    const interval = setInterval(() => fetchPending(true), 60_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchPending(true); // fetchVerified in Verified
+    }, 60_000);
     return () => clearInterval(interval);
   }, [fetchPending]);
 
@@ -173,7 +178,8 @@ export default function PendingPayments({ onCountChange }) {
           within moments. Use Reject only for a session that appears permanently
           stuck — and check the SSLCommerz merchant panel for this transaction
           first, because rejecting a payment the gateway already collected is
-          not automatically reversed.
+          not automatically reversed. Sessions not completed within 60 minutes
+          are closed automatically.
         </p>
       </div>
 
@@ -207,8 +213,12 @@ export default function PendingPayments({ onCountChange }) {
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">
                     ৳{payment.amount.toLocaleString()} ·{" "}
-                    {new Date(payment.createdAt).toLocaleString("en-GB")}
+                    {formatDate(payment.createdAt, DATE_TIME)}
                   </p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    {describePaymentContents(payment)}
+                  </p>
+
                   <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate">
                     {payment.transactionId}
                   </p>
@@ -258,7 +268,10 @@ export default function PendingPayments({ onCountChange }) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={rejecting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleReject}
+              onClick={(e) => {
+                e.preventDefault();
+                handleReject();
+              }}
               disabled={rejecting || !rejectReason.trim()}
               className="bg-red-600 hover:bg-red-700 gap-1.5"
             >

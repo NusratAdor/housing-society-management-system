@@ -31,6 +31,8 @@ import { getAuditLogHandler } from "../controllers/auditController.js";
 // NEW — member seat management
 import memberSeatRoutes from "./memberSeatRoutes.js";
 
+import { validateObjectId } from "../middleware/validateObjectId.js";
+
 const router = express.Router();
 
 router.use(protect, isAdmin);
@@ -40,12 +42,11 @@ router.use("/seats", memberSeatRoutes);
 
 // ── Member management ─────────────────────────────────────────────────────────
 router.get("/members", getAllMembers);
-router.put("/members/:id", updateMemberProfile);
-router.delete("/members/:id", deleteMember);
-router.put("/members/:id/approve", approveAdmin);
-router.put("/members/:id/reject-admin-request", rejectAdminRequest);
-router.patch("/members/:id/demote", demoteMember);
-
+router.put("/members/:id", validateObjectId(), updateMemberProfile);
+router.delete("/members/:id", validateObjectId(), deleteMember);
+router.put("/members/:id/approve", validateObjectId(), approveAdmin);
+router.put("/members/:id/reject-admin-request", validateObjectId(), rejectAdminRequest);
+router.patch("/members/:id/demote", validateObjectId(), demoteMember);
 // ── Payment management ────────────────────────────────────────────────────────
 router.post("/trigger-monthly-due", triggerMonthlyDue);
 

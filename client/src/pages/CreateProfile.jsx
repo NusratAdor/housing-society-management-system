@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
-import { useUser } from "@clerk/clerk-react";
 import { Navigate } from "react-router-dom";
 
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils";
@@ -56,8 +55,6 @@ const CreateProfile = () => {
     staffProfile,
     loadingStaffProfile,
   } = useAppContext();
-
-  const { user } = useUser();
 
   usePageTitle("Create Profile");
 
@@ -268,6 +265,10 @@ const CreateProfile = () => {
    * ------------------------------------------------------------
    * Submit
    * ------------------------------------------------------------
+   *
+   * The member's own email is NOT sent from the client. The server
+   * reads it from the verified Clerk session and rejects the request
+   * if it is missing or unverified.
    */
 
   const onSubmitHandler = useCallback(
@@ -286,16 +287,8 @@ const CreateProfile = () => {
       try {
         const token = await getToken();
 
-        const email = user?.primaryEmailAddress?.emailAddress;
-
-        if (!email) {
-          toast.error("No primary email found in your Clerk account.");
-          return;
-        }
-
         const payload = {
           name: form.name.trim(),
-          email,
           phone: normalizePhone(form.phone),
           designation: form.designation.trim(),
 
@@ -342,16 +335,7 @@ const CreateProfile = () => {
         setLoading(false);
       }
     },
-    [
-      loading,
-      validateForm,
-      getToken,
-      user,
-      form,
-      axios,
-      setMemberProfile,
-      navigate,
-    ],
+    [loading, validateForm, getToken, form, axios, setMemberProfile, navigate],
   );
 
   /*
@@ -647,7 +631,7 @@ const CreateProfile = () => {
 
                       {PLOT_SIZES.map((size) => (
                         <option key={size} value={size}>
-                          {size}
+                          {size} 
                         </option>
                       ))}
                     </select>

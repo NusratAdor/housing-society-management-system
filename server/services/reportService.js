@@ -1,82 +1,94 @@
 // server/services/reportService.js
 //
-// Generates the raw data objects that both PDF and CSV renderers consume.
-// Pure data functions — no HTTP, no PDF, no CSV concern here.
-// The PDF builder and CSV builder each call these functions and format
-// the data in their own way.
+// Builds the data objects the PDF and CSV renderers consume.
 //
-// All data comes from source records (Payment, PaymentAllocation,
-// MonthlyCharge, ExtraCharge) — never from stored summary fields.
-// This means every exported report is always financially accurate.
+// CHANGE (this pass):
+//   - Plots: Member has a `plots` array (no `plotNo`). A readable
+//     `plotsLabel` is attached to every member object returned.
+//   - Each payment now carries monthlyApplied / extraApplied /
+//     advanceAmount / covers, so one payment = one row everywhere and
+//     received = monthly + extra + advance always holds.
+//   - summary now includes totalAdvance (it was calculated but never
+//     returned), plus credit-applied history and the current credit balance.
+//   - Credit applied to charges is NOT new cash. It is read from the
+//     PAYMENT_CREDIT_APPLIED audit entries and reported separately.
+//   - Existing return shapes are preserved (fields were only added).
 
-import mongoose          from "mongoose";
-import Member            from "../models/Member.js";
-import Payment           from "../models/Payment.js";
+import mongoose from "mongoose";
+import Member from "../models/Member.js";
+import Payment from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
-import MonthlyCharge     from "../models/MonthlyCharge.js";
-import ExtraCharge       from "../models/ExtraCharge.js";
+import MonthlyCharge from "../models/MonthlyCharge.js";
+import ExtraCharge from "../models/ExtraCharge.js";
+import AuditLog from "../models/AuditLog.js";
 import { getMemberDueBreakdown } from "./paymentService.js";
-import { getDirectAllocations, buildAdvanceItem } from "../utils/paymentBreakdown.js";
-
+import { getMemberCreditBalance } from "./creditService.js";
+import {
+  getDirectAllocations,
+  buildAdvanceItem,
+} from "../utils/paymentBreakdown.js";
 
 const MONTH_NAMES = [
-  "", "January", "February", "March", "April",
-  "May", "June", "July", "August", "September",
-  "October", "November", "December",
+  "", "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
 ];
 
-// ─── getMemberReportData ──────────────────────────────────────────────────────
-// Returns structured transaction data for a single member.
-// Used by: member PDF report, member CSV export.
-//
-// Parameters:
-//   memberId  — MongoDB _id
-//   startDate — Date (inclusive)
-//   endDate   — Date (inclusive, set to end of day)
-//
-// Returns:
-//   member            — member profile
-//   payments          — completed payments in range with allocation breakdown
-//   summary           — totals for the period
-//   currentDueBreakdown — live due snapshot at time of export
+const SHORT_MONTHS = [
+  "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
-export const getMemberReportData = async ({
-  memberId,
-  startDate,
-  endDate,
-}) => {
+const formatPlots = (member) => {
+  const plots = Array.isArray(member?.plots) ? member.plots : [];
+  if (plots.length === 0) return "-";
+  return plots.map((p) => `${p.plotNo} (${p.plotSize} Katha)`).join(", ");
+};
+
+// ─── getMemberReportData ──────────────────────────────────────────────────────
+
+export const getMemberReportData = async ({ memberId, startDate, endDate }) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
 
-  // Normalise end date to end of day so "up to 31 March" includes all of March
-  const endOfDay = new Date(endDate);
-  endOfDay.setHours(23, 59, 59, 999);
+    // endDate is already the last millisecond of the end day in Dhaka (reportController).
+  const endOfDay = endDate;
 
-  // Fetch member profile and completed payments in parallel
-  const [member, payments, dueBreakdown] = await Promise.all([
-    Member.findById(memberObjectId).lean(),
+  const [member, payments, dueBreakdown, creditBalance, creditAudits] =
+    await Promise.all([
+      Member.findById(memberObjectId).lean(),
 
-    Payment.find({
-      member:  memberObjectId,
-      status:  "completed",
-      paidAt:  { $gte: startDate, $lte: endOfDay },
-    })
-      .sort({ paidAt: 1 })
-      .lean(),
+      Payment.find({
+        member: memberObjectId,
+        status: "completed",
+        paidAt: { $gte: startDate, $lte: endOfDay },
+      })
+        .sort({ paidAt: 1 })
+        .lean(),
 
-    getMemberDueBreakdown(memberObjectId),
-  ]);
+      getMemberDueBreakdown(memberObjectId),
+
+      getMemberCreditBalance(memberObjectId),
+
+      // Existing credit used to clear a monthly charge (no new cash).
+      AuditLog.find({
+        action: "PAYMENT_CREDIT_APPLIED",
+        "metadata.memberId": String(memberObjectId),
+        createdAt: { $gte: startDate, $lte: endOfDay },
+      })
+        .sort({ createdAt: 1 })
+        .select("createdAt metadata")
+        .lean(),
+    ]);
 
   if (!member) throw new Error("Member not found");
 
-  // Enrich each payment with its allocation breakdown
-  // Single batch query — not N queries
-  const paymentIds = payments.map(p => p._id);
+  // One batch query for every allocation, not N queries.
+  const paymentIds = payments.map((p) => p._id);
 
-  const allAllocations = paymentIds.length > 0
-    ? await PaymentAllocation.find({ payment: { $in: paymentIds } }).lean()
-    : [];
+  const allAllocations =
+    paymentIds.length > 0
+      ? await PaymentAllocation.find({ payment: { $in: paymentIds } }).lean()
+      : [];
 
-  // Group allocations by payment
   const allocByPayment = {};
   for (const alloc of allAllocations) {
     const pid = String(alloc.payment);
@@ -84,13 +96,12 @@ export const getMemberReportData = async ({
     allocByPayment[pid].push(alloc);
   }
 
-  // Collect all charge IDs for batch fetch
   const monthlyChargeIds = allAllocations
-    .filter(a => a.chargeType === "monthly")
-    .map(a => a.chargeId);
+    .filter((a) => a.chargeType === "monthly")
+    .map((a) => a.chargeId);
   const extraChargeIds = allAllocations
-    .filter(a => a.chargeType === "extra")
-    .map(a => a.chargeId);
+    .filter((a) => a.chargeType === "extra")
+    .map((a) => a.chargeId);
 
   const [monthlyCharges, extraCharges] = await Promise.all([
     monthlyChargeIds.length > 0
@@ -101,132 +112,171 @@ export const getMemberReportData = async ({
       : [],
   ]);
 
-  const monthlyMap = Object.fromEntries(monthlyCharges.map(c => [String(c._id), c]));
-  const extraMap   = Object.fromEntries(extraCharges.map(c => [String(c._id), c]));
+  const monthlyMap = Object.fromEntries(
+    monthlyCharges.map((c) => [String(c._id), c]),
+  );
+  const extraMap = Object.fromEntries(
+    extraCharges.map((c) => [String(c._id), c]),
+  );
 
-  // Build enriched payment objects
- const enrichedPayments = payments.map(payment => {
-  const allocations = getDirectAllocations(
-    payment,
-    allocByPayment[String(payment._id)] || [], );
+  const enrichedPayments = payments.map((payment) => {
+    // Only the charges this payment's own cash cleared (not credit-funded ones).
+    const allocations = getDirectAllocations(
+      payment,
+      allocByPayment[String(payment._id)] || [],
+    );
 
-    const breakdown = allocations.map(alloc => {
+    const monthlyItems = [];
+    const extraItems = [];
+    let monthlyApplied = 0;
+    let extraApplied = 0;
+
+    for (const alloc of allocations) {
       if (alloc.chargeType === "monthly") {
+        monthlyApplied += alloc.amount;
         const charge = monthlyMap[String(alloc.chargeId)];
-        return charge ? {
-          type:        "monthly",
-          description: `Monthly Maintenance — ${MONTH_NAMES[charge.month]} ${charge.year}`,
-          month:       charge.month,
-          year:        charge.year,
-          amount:      alloc.amount,
-        } : null;
+        if (charge) {
+          monthlyItems.push({
+            type: "monthly",
+            description: `Monthly Maintenance — ${MONTH_NAMES[charge.month]} ${charge.year}`,
+            month: charge.month,
+            year: charge.year,
+            amount: alloc.amount,
+          });
+        }
       } else {
+        extraApplied += alloc.amount;
         const charge = extraMap[String(alloc.chargeId)];
-        return charge ? {
-          type:        "extra",
-          description: charge.label,
-          purpose:     charge.purpose,
-          amount:      alloc.amount,
-        } : null;
+        if (charge) {
+          extraItems.push({
+            type: "extra",
+            description: charge.label,
+            purpose: charge.purpose,
+            amount: alloc.amount,
+          });
+        }
       }
-    }).filter(Boolean);
+    }
 
-      const advanceItem = buildAdvanceItem(payment);
-  return { ...payment, breakdown: advanceItem ? [...breakdown, advanceItem] : breakdown };
+    monthlyItems.sort((a, b) => a.year - b.year || a.month - b.month);
+
+    const advanceAmount = payment.advanceAmount || 0;
+
+    const covers = [
+      ...monthlyItems.map((i) => `${SHORT_MONTHS[i.month]} ${i.year}`),
+      ...extraItems.map((i) => i.description),
+      ...(advanceAmount > 0 ? ["Advance credit"] : []),
+    ].join(", ");
+
+    const advanceItem = buildAdvanceItem(payment);
+    const breakdown = [...monthlyItems, ...extraItems];
+    if (advanceItem) breakdown.push(advanceItem);
+
+    return {
+      ...payment,
+      monthlyApplied,
+      extraApplied,
+      advanceAmount,
+      covers,
+      breakdown,
+    };
   });
 
-  // Compute period summary
-  const directAllocations = payments.flatMap(p =>
-  getDirectAllocations(p, allocByPayment[String(p._id)] || []),
-);
-const totalPaid    = payments.reduce((sum, p) => sum + p.amount, 0);
-const totalMonthly = directAllocations
-  .filter(a => a.chargeType === "monthly")
-  .reduce((sum, a) => sum + a.amount, 0);
-const totalExtra   = directAllocations
-  .filter(a => a.chargeType === "extra")
-  .reduce((sum, a) => sum + a.amount, 0);
-const totalAdvance = payments.reduce((sum, p) => sum + (p.advanceAmount || 0), 0);
+  const totalPaid = enrichedPayments.reduce((s, p) => s + p.amount, 0);
+  const totalMonthly = enrichedPayments.reduce((s, p) => s + p.monthlyApplied, 0);
+  const totalExtra = enrichedPayments.reduce((s, p) => s + p.extraApplied, 0);
+  const totalAdvance = enrichedPayments.reduce((s, p) => s + p.advanceAmount, 0);
+
+  const creditAppliedItems = creditAudits.map((a) => ({
+    date: a.createdAt,
+    month: a.metadata?.month,
+    year: a.metadata?.year,
+    amount: a.metadata?.amount || 0,
+  }));
 
   return {
-    member,
+    member: { ...member, plotsLabel: formatPlots(member) },
     payments: enrichedPayments,
     summary: {
       totalPaid,
       totalMonthly,
       totalExtra,
-      paymentCount:  payments.length,
-      periodStart:   startDate,
-      periodEnd:     endOfDay,
+      totalAdvance,
+      paymentCount: enrichedPayments.length,
+      periodStart: startDate,
+      periodEnd: endOfDay,
+      creditAppliedItems,
+      creditAppliedTotal: creditAppliedItems.reduce((s, i) => s + i.amount, 0),
+      creditBalance,
     },
     currentDueBreakdown: dueBreakdown,
   };
 };
 
 // ─── getAdminReportData ───────────────────────────────────────────────────────
-// Returns society-wide payment data for a date range.
-// Used by: admin PDF report, admin CSV export.
-//
-// Returns:
-//   payments     — all completed payments in range, grouped by member
-//   summary      — society-level totals
-//   memberRows   — flat per-member summary (for table in PDF / rows in CSV)
+// Collection = actual cash received. Split into "applied to dues" and
+// "added to advance credit". Credit applied later is never counted again.
 
 export const getAdminReportData = async ({ startDate, endDate }) => {
-  const endOfDay = new Date(endDate);
-  endOfDay.setHours(23, 59, 59, 999);
+    const endOfDay = endDate;
 
-  const payments = await Payment
-    .find({
-      status: "completed",
-      paidAt: { $gte: startDate, $lte: endOfDay },
-    })
-    .populate("member", "name email membershipNo plotNo")
+  const payments = await Payment.find({
+    status: "completed",
+    paidAt: { $gte: startDate, $lte: endOfDay },
+  })
+    .populate("member", "name email membershipNo plots")
     .sort({ paidAt: 1 })
     .lean();
 
-  // Per-member aggregation
   const memberTotals = {};
   for (const payment of payments) {
     const memberId = String(payment.member?._id || payment.member);
     if (!memberTotals[memberId]) {
       memberTotals[memberId] = {
-        member:       payment.member,
-        totalPaid:    0,
+        member: payment.member,
+        totalPaid: 0,
+        duesApplied: 0,
+        advanceTotal: 0,
         paymentCount: 0,
-        payments:     [],
+        payments: [],
       };
     }
-    memberTotals[memberId].totalPaid    += payment.amount;
-    memberTotals[memberId].paymentCount += 1;
-    memberTotals[memberId].payments.push(payment);
+    const advance = payment.advanceAmount || 0;
+    const row = memberTotals[memberId];
+    row.totalPaid += payment.amount;
+    row.advanceTotal += advance;
+    row.duesApplied += payment.amount - advance;
+    row.paymentCount += 1;
+    row.payments.push(payment);
   }
 
-  const memberRows = Object.values(memberTotals)
-    .sort((a, b) => (b.totalPaid - a.totalPaid));
+  const memberRows = Object.values(memberTotals).sort(
+    (a, b) => b.totalPaid - a.totalPaid,
+  );
 
-  const totalCollection = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalCollection = payments.reduce((s, p) => s + p.amount, 0);
+  const totalAdvance = payments.reduce((s, p) => s + (p.advanceAmount || 0), 0);
 
   return {
     payments,
     memberRows,
     summary: {
       totalCollection,
-      totalPayments:    payments.length,
-      membersWhoPayd:   memberRows.length,
-      periodStart:      startDate,
-      periodEnd:        endOfDay,
+      totalAdvance,
+      totalDuesApplied: totalCollection - totalAdvance,
+      totalPayments: payments.length,
+      membersWhoPayd: memberRows.length,
+      periodStart: startDate,
+      periodEnd: endOfDay,
     },
   };
 };
 
 // ─── getSingleReceiptData ─────────────────────────────────────────────────────
-// Returns data for one payment receipt.
-// Used by the "Download Receipt" button on individual transactions.
 
 export const getSingleReceiptData = async ({ paymentId, memberId }) => {
   const paymentObjectId = new mongoose.Types.ObjectId(paymentId);
-  const memberObjectId  = new mongoose.Types.ObjectId(memberId);
+  const memberObjectId = new mongoose.Types.ObjectId(memberId);
 
   const [payment, member] = await Promise.all([
     Payment.findOne({ _id: paymentObjectId, member: memberObjectId }).lean(),
@@ -234,19 +284,23 @@ export const getSingleReceiptData = async ({ paymentId, memberId }) => {
   ]);
 
   if (!payment) throw new Error("Payment not found or does not belong to member");
-  if (!member)  throw new Error("Member not found");
+  if (!member) throw new Error("Member not found");
 
   if (payment.status !== "completed") {
     throw new Error("Receipts can only be generated for completed payments");
   }
 
- const allocations = getDirectAllocations(
-  payment,
-  await PaymentAllocation.find({ payment: paymentObjectId }).lean(),
-);
+  const allocations = getDirectAllocations(
+    payment,
+    await PaymentAllocation.find({ payment: paymentObjectId }).lean(),
+  );
 
-  const monthlyIds = allocations.filter(a => a.chargeType === "monthly").map(a => a.chargeId);
-  const extraIds   = allocations.filter(a => a.chargeType === "extra").map(a => a.chargeId);
+  const monthlyIds = allocations
+    .filter((a) => a.chargeType === "monthly")
+    .map((a) => a.chargeId);
+  const extraIds = allocations
+    .filter((a) => a.chargeType === "extra")
+    .map((a) => a.chargeId);
 
   const [monthlyCharges, extraCharges] = await Promise.all([
     monthlyIds.length > 0
@@ -257,36 +311,52 @@ export const getSingleReceiptData = async ({ paymentId, memberId }) => {
       : [],
   ]);
 
-  const monthlyMap = Object.fromEntries(monthlyCharges.map(c => [String(c._id), c]));
-  const extraMap   = Object.fromEntries(extraCharges.map(c => [String(c._id), c]));
+  const monthlyMap = Object.fromEntries(
+    monthlyCharges.map((c) => [String(c._id), c]),
+  );
+  const extraMap = Object.fromEntries(
+    extraCharges.map((c) => [String(c._id), c]),
+  );
 
-  const lineItems = allocations.map(alloc => {
-    if (alloc.chargeType === "monthly") {
-      const c = monthlyMap[String(alloc.chargeId)];
-      return c ? {
-        type:        "monthly",
-        description: `Monthly Maintenance — ${MONTH_NAMES[c.month]} ${c.year}`,
-        amount:      alloc.amount,
-      } : null;
-    } else {
+  const lineItems = allocations
+    .map((alloc) => {
+      if (alloc.chargeType === "monthly") {
+        const c = monthlyMap[String(alloc.chargeId)];
+        return c
+          ? {
+              type: "monthly",
+              description: `Monthly Maintenance — ${MONTH_NAMES[c.month]} ${c.year}`,
+              month: c.month,
+              year: c.year,
+              amount: alloc.amount,
+            }
+          : null;
+      }
       const c = extraMap[String(alloc.chargeId)];
-      return c ? {
-        type:        "extra",
-        description: c.label,
-        purpose:     c.purpose,
-        amount:      alloc.amount,
-      } : null;
-    }
-  }).filter(Boolean);
+      return c
+        ? {
+            type: "extra",
+            description: c.label,
+            purpose: c.purpose,
+            amount: alloc.amount,
+          }
+        : null;
+    })
+    .filter(Boolean);
 
-  // Sort monthly items chronologically, extras after
+  // Monthly (oldest first), then extras.
   lineItems.sort((a, b) => {
-    if (a.type === b.type) return 0;
-    return a.type === "monthly" ? -1 : 1;
+    if (a.type !== b.type) return a.type === "monthly" ? -1 : 1;
+    if (a.type === "monthly") return a.year - b.year || a.month - b.month;
+    return 0;
   });
 
   const advanceItem = buildAdvanceItem(payment);
-if (advanceItem) lineItems.push(advanceItem);
+  if (advanceItem) lineItems.push(advanceItem);
 
-  return { payment, member, lineItems };
+  return {
+    payment,
+    member: { ...member, plotsLabel: formatPlots(member) },
+    lineItems,
+  };
 };

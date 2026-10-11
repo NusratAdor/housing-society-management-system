@@ -38,6 +38,7 @@ import mongoose from "mongoose";
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import { getFeeForMonth } from "./feeService.js";
 import { getDhakaDateParts } from "../utils/dateTime.js";
+import { getFeesForMonths } from "./feeService.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -172,25 +173,10 @@ export const generateBackdatedCharges = async ({
     };
   }
 
-  // Historical fee lookup.
-  //
-  // These are independent reads, so Promise.all is appropriate.
-  // Every lookup receives the same transaction session.
-  const fees = await Promise.all(
-    missingPeriods.map(async ({ month, year }) => {
-      const amount = await getFeeForMonth(
-        month,
-        year,
-        session,
-      );
-
-      return {
-        month,
-        year,
-        amount,
-      };
-    }),
-  );
+  // Historical fee lookup: ONE FeeHistory query for every missing month,
+  // matched in memory. (Do not use Promise.all with a transaction session:
+  // MongoDB does not support parallel operations inside one transaction.)
+  const fees = await getFeesForMonths(missingPeriods, session);
 
   const documents = fees.map(
     ({ month, year, amount }) => ({

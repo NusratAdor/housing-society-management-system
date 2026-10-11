@@ -113,5 +113,15 @@ app.use("/api/reports", reportRoutes);
 app.use("/payment", paymentRedirects);
 app.use("/test", testRoutes);
 
+
+// Last: turns upload/validation errors into JSON instead of Express's default page.
+app.use((err, req, res, next) => {
+  if (err?.name === "MulterError" || err?.message === "Only CSV files are allowed") {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+  console.error("Unhandled error:", err?.message);
+  return res.status(500).json({ success: false, message: "Server error" });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

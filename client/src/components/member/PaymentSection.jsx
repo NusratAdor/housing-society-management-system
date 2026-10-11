@@ -50,12 +50,11 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAppContext } from "../../context/AppContext";
-
-// Month arithmetic on a { month: 1-12, year } pair.
-const shiftMonth = ({ month, year }, n) => {
-  const idx = year * 12 + (month - 1) + n;
-  return { month: (idx % 12) + 1, year: Math.floor(idx / 12) };
-};
+import {
+  formatDate,
+  getDhakaDateInputValue,
+  getDhakaDateMonthsAgo,
+} from "../../utils/formatDate";
 
 const monthName = (month, format = "long") =>
   new Date(2000, month - 1).toLocaleDateString(undefined, { month: format });
@@ -110,14 +109,8 @@ const ExportControl = ({ t }) => {
   // used both to decide top/right and to gate visibility so the panel
   // never flashes at a stale or wrong position before it's placed.
   const [dropdownPos, setDropdownPos] = useState(null);
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 3);
-    return d.toISOString().slice(0, 10);
-  });
-  const [endDate, setEndDate] = useState(() =>
-    new Date().toISOString().slice(0, 10),
-  );
+  const [startDate, setStartDate] = useState(() => getDhakaDateMonthsAgo(3));
+  const [endDate, setEndDate] = useState(getDhakaDateInputValue);
   const [downloading, setDownloading] = useState(null);
 
   const btnRef = useRef(null);
@@ -271,7 +264,7 @@ const ExportControl = ({ t }) => {
                   type="date"
                   value={endDate}
                   min={startDate}
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={getDhakaDateInputValue()}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="w-full p-1.5 border border-gray-200 rounded-lg
                     text-xs focus:outline-none focus:ring-2
@@ -399,48 +392,15 @@ export default function PaymentSection({ onPaymentSuccess }) {
   );
   const realMonthCount = realMonths.length;
 
-  // Prepay options: only months beyond what banked credit already covers,
-  // priced net of leftover credit. Credit is spent on future charges
-  // oldest-first (creditService), so it covers the first `covered` months
-  // that will be billed.
-  const prepay = useMemo(() => {
-    const fee = breakdown?.currentFee || 0;
-    if (!breakdown || fee <= 0) return { coveredThrough: null, options: [] };
-
-    // First month not yet billed: the month after the newest charge on
-    // record, but never earlier than the current month.
-    const now = new Date();
-    const current = { month: now.getMonth() + 1, year: now.getFullYear() };
-    const newest = breakdown.last12Months?.[0];
-    const afterNewest = newest ? shiftMonth(newest, 1) : current;
-    const key = (m) => m.year * 12 + m.month;
-    const firstUnbilled =
-      key(afterNewest) >= key(current) ? afterNewest : current;
-
-    const credit = breakdown.creditBalance || 0;
-    const covered = Math.floor(credit / fee);
-    const remainder = credit - covered * fee;
-
-    const options = Array.from(
-      { length: Math.max(0, maxPrepayMonths - covered) },
-      (_, i) => ({
-        ...shiftMonth(firstUnbilled, covered + i),
-        cost: (i + 1) * fee - remainder,
-      }),
-    );
-
-    return {
-      coveredThrough:
-        covered > 0 ? shiftMonth(firstUnbilled, covered - 1) : null,
-      options,
-    };
-  }, [breakdown, maxPrepayMonths]);
+  // Prepay options come from the backend, priced at each month's real fee.
+  const prepay = breakdown?.prepay ?? { coveredThrough: null, options: [] };
 
   // Prepay ahead is only meaningful once nothing real is left unpaid —
   // paying ahead while a real month is still due would silently violate
   // the FIFO order every other part of the system enforces.
   const allRealMonthsSelected =
-    realMonthCount === 0 || selectedMonthlyIds.length === realMonthCount;
+    realMonthCount === 0 ||
+    realMonths.every((month) => selectedMonthlyIds.includes(month.id));
 
   // ── Month range picker ───────────────────────────────────────────────────
   // Two-click range selection over the combined (real + projected) list.
@@ -590,10 +550,10 @@ export default function PaymentSection({ onPaymentSuccess }) {
   const remainingAfterSelection = totalDue - chargesSelectedTotal;
 
   const oldestUnpaid = breakdown?.unpaidMonthlyCharges?.[0] ?? null;
-  const creditShortfall =
-    oldestUnpaid && creditBalance > 0 && creditBalance < oldestUnpaid.amount
-      ? oldestUnpaid.amount - creditBalance
-      : 0;
+  const creditShortfall = breakdown?.creditShortfall ?? 0;
+
+  const shortfall = breakdown?.shortfall ?? null;
+  const advanceLock = breakdown?.advanceLock ?? { locked: false, reason: null };
 
   const handleTopUp = async () => {
     if (creditShortfall <= 0) return;
@@ -759,7 +719,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
                   </p>
                   <p className="text-xs font-semibold text-gray-700 mt-0.5">
                     ৳{lastPayment.amount.toLocaleString()} ·{" "}
-                    {new Date(lastPayment.paidAt).toLocaleDateString("en-GB", {
+                    {formatDate(lastPayment.paidAt, {
                       day: "numeric",
                       month: "short",
                     })}
@@ -793,32 +753,33 @@ export default function PaymentSection({ onPaymentSuccess }) {
           </div>
           <div className="text-sm">
             <p className="font-semibold text-gray-800">
-              Credit balance:{" "}
+              Available credit:{" "}
               <span className="text-indigo-600">
                 ৳{creditBalance.toLocaleString()}
               </span>
             </p>
             <p className="text-gray-500 text-xs mt-0.5">
-              Applied automatically to future dues
+              Used automatically when your next monthly fee is billed
             </p>
           </div>
         </div>
       )}
 
       {/* ── Credit top-up ──────────────────────────────────────────── */}
-      {!loadingData && creditShortfall > 0 && (
+      {!loadingData && shortfall && (
         <div
           className="flex items-center justify-between gap-4 p-4
           bg-indigo-50 border border-indigo-200 rounded-xl"
         >
           <div className="text-sm">
             <p className="font-semibold text-indigo-900">
-              You need ৳{creditShortfall.toLocaleString()} more to cover{" "}
-              {monthName(oldestUnpaid.month)} {oldestUnpaid.year}
+              Complete {monthName(shortfall.month)} {shortfall.year} payment — ৳
+              {shortfall.amount.toLocaleString()} remaining
             </p>
             <p className="text-xs text-indigo-700 mt-0.5">
-              Add this amount and your available credit will be applied to that
-              month automatically after the payment is confirmed.
+              The fee is ৳{shortfall.feeAmount.toLocaleString()} and your credit
+              is ৳{shortfall.creditBalance.toLocaleString()}. Pay the remaining
+              amount and the month is settled once an admin confirms it.
             </p>
           </div>
           <button
@@ -831,7 +792,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
             {paying ? (
               <Loader2 className="animate-spin h-3.5 w-3.5" />
             ) : (
-              `Add ৳${creditShortfall.toLocaleString()}`
+              `Pay ৳${creditShortfall.toLocaleString()}`
             )}
           </button>
         </div>
@@ -1038,7 +999,7 @@ export default function PaymentSection({ onPaymentSuccess }) {
               <label className="text-xs font-medium text-gray-600">
                 Prepay ahead{" "}
                 <span className="text-gray-400 font-normal">
-                  (optional, at today's rate)
+                  (optional, priced at each month's fee)
                 </span>
               </label>
               <select
@@ -1046,18 +1007,16 @@ export default function PaymentSection({ onPaymentSuccess }) {
                 onChange={handlePrepayMonthsChange}
                 disabled={
                   !allRealMonthsSelected ||
+                  advanceLock.locked ||
                   paymentInFlight ||
                   prepay.options.length === 0
                 }
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs
-    focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white
-    min-w-[220px] disabled:bg-gray-50 disabled:text-gray-300
-    disabled:cursor-not-allowed"
+                className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white min-w-[220px] disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
               >
                 <option value={0}>None</option>
                 {prepay.options.map((o, i) => (
                   <option key={`${o.year}-${o.month}`} value={i + 1}>
-                    Through {monthName(o.month, "short")} {o.year} — ~৳
+                    Through {monthName(o.month, "short")} {o.year} — ৳
                     {o.cost.toLocaleString()}
                   </option>
                 ))}
@@ -1071,6 +1030,16 @@ export default function PaymentSection({ onPaymentSuccess }) {
                 {prepay.coveredThrough.year}.
               </p>
             )}
+
+            {breakdown?.upcomingFeeChange && (
+              <p className="text-[11px] text-amber-600 mt-2">
+                The monthly fee is ৳
+                {breakdown.upcomingFeeChange.fee.toLocaleString()} from{" "}
+                {monthName(breakdown.upcomingFeeChange.month)}{" "}
+                {breakdown.upcomingFeeChange.year}.
+              </p>
+            )}
+
             {prepay.options.length === 0 && !loadingData && (
               <p className="text-[11px] text-gray-400 mt-2">
                 You have already prepaid the maximum of {maxPrepayMonths}{" "}
@@ -1079,12 +1048,15 @@ export default function PaymentSection({ onPaymentSuccess }) {
             )}
             {!allRealMonthsSelected && (
               <p className="text-[11px] text-gray-400 mt-2">
-                Clear current dues to unlock prepay
+                {advanceLock.locked
+                  ? advanceLock.reason
+                  : "Clear current dues to unlock prepay"}
               </p>
             )}
             {allRealMonthsSelected && selectedFutureCount > 0 && (
-              <p className="text-xs text-emerald-600 mt-2">
-                ৳{projectedFutureTotal.toLocaleString()} will be added as credit
+              <p className="text-xs text-emerald-700 mt-2">
+                ৳{projectedFutureTotal.toLocaleString()} will be added to your
+                credit balance.
               </p>
             )}
           </div>
@@ -1144,10 +1116,11 @@ export default function PaymentSection({ onPaymentSuccess }) {
                       >
                         <Clock className="h-3 w-3" />
                         {t("extra.dueBy", {
-                          date: new Date(charge.dueDate).toLocaleDateString(
-                            "en-GB",
-                            { day: "numeric", month: "short", year: "numeric" },
-                          ),
+                          date: formatDate(charge.dueDate, {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          }),
                         })}
                       </p>
                     )}
@@ -1210,8 +1183,9 @@ export default function PaymentSection({ onPaymentSuccess }) {
                     </p>
                   )}
                   {totalAdvanceAmount > 0 && (
-                    <p className="text-xs text-emerald-600">
-                      + ৳{totalAdvanceAmount.toLocaleString()} credit
+                    <p className="text-xs text-emerald-700">
+                      Added to credit balance: ৳
+                      {totalAdvanceAmount.toLocaleString()}
                     </p>
                   )}
                   {remainingAfterSelection > 0 && (
@@ -1332,18 +1306,11 @@ export default function PaymentSection({ onPaymentSuccess }) {
                               <StatusBadge status={payment.status} />
                             </div>
                             <p className="text-xs text-gray-400 mt-0.5">
-                              {payment.paidAt
-                                ? new Date(payment.paidAt).toLocaleDateString(
-                                    "en-GB",
-                                    {
-                                      day: "numeric",
-                                      month: "short",
-                                      year: "numeric",
-                                    },
-                                  )
-                                : new Date(
-                                    payment.createdAt,
-                                  ).toLocaleDateString("en-GB")}
+                              {formatDate(payment.paidAt ?? payment.createdAt, {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              })}
                               {payment.receiptNumber && (
                                 <span className="ml-2 font-mono">
                                   {payment.receiptNumber}

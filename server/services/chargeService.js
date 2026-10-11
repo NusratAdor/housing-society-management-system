@@ -3,199 +3,171 @@
 // Core business logic for creating and querying MonthlyCharge records.
 // No req/res knowledge — pure functions called by controllers and cron jobs.
 //
-// Why this lives in a service and not a controller:
-//   The cron job and the admin manual trigger both need createMonthlyChargesForMonth().
-//   If this lived in a controller, the cron job would have to import from a controller
-//   which is an architectural violation (controllers depend on services, never the reverse).
-//   One service function, two callers — no duplication.
+// CHANGE (this pass): createMonthlyChargesForMonth now refuses a FUTURE
+// month. Business rule: future payment is handled through credit, never by
+// creating fake future monthly charges. The guard lives here (not only in
+// the controller) so the cron job and the manual trigger are both covered.
 
-import mongoose        from "mongoose";
-import Member          from "../models/Member.js";
-import MonthlyCharge   from "../models/MonthlyCharge.js";
-import AuditLog        from "../models/AuditLog.js";
-import { getFeeForMonth } from "./feeService.js";
+import mongoose from "mongoose";
+import Member from "../models/Member.js";
+import MonthlyCharge from "../models/MonthlyCharge.js";
 import Payment from "../models/Payment.js";
-
-import { reconcileMemberCredit } from "./creditService.js";   // was: applyCreditToMonthlyCharge
+import { getFeeForMonth } from "./feeService.js";
+import { reconcileMemberCredit } from "./creditService.js";
+import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+import { writeAuditLog } from "./auditService.js";
+import { getDhakaDateParts } from "../utils/dateTime.js";
+import { notifyMonthlyFeeAdded } from "./paymentNotificationService.js";
 
 // ─── createMonthlyChargesForMonth ─────────────────────────────────────────────
-// Creates one MonthlyCharge per member for the given month/year,
-// with the amount locked from FeeHistory at the moment of creation.
+// One MonthlyCharge per ACTIVE member for the given month/year, amount locked
+// from FeeHistory. Idempotent: members who already have a charge are skipped.
 //
-// Design decisions:
-//   1. Batch existence check first — one query instead of N findOne calls
-//      (avoids the N+1 problem for 500 members)
-//   2. insertMany with ordered:false — if one document fails the unique
-//      constraint (somehow called twice), the rest still insert
-//   3. Returns a result object so the caller can log what happened
-//
-// Idempotent: calling this twice for the same month is safe.
-// Members who already have a charge are skipped.
-//
-// Called by:
-//   - paymentJobs.js cron (automatically on the 1st of each month)
-//   - adminController.triggerMonthlyDue (manual trigger for testing)
+// Called by: paymentJobs.js cron, adminPaymentController.triggerMonthlyDue.
 
 export const createMonthlyChargesForMonth = async ({
   month,
   year,
-  performedBy = "SYSTEM", // "SYSTEM" for cron, clerkUserId for manual trigger
+  performedBy = "SYSTEM",
 }) => {
-  // Step 1 — Get the fee locked to this month from FeeHistory
-  // This is the amount ALL charges for this month will use.
-  // It never changes after this point regardless of future fee updates.
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) {
+    const error = new Error("Invalid month or year");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const { year: currentYear, month: currentMonth } = getDhakaDateParts();
+  if (year > currentYear || (year === currentYear && month > currentMonth)) {
+    const error = new Error("Monthly charges cannot be created for a future month");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // FeeHistory is the financial source of truth.
   const fee = await getFeeForMonth(month, year);
 
-  // Step 2 — Fetch all current members
-  // We only need _id for the charge creation — no need for full documents
-  // Only active members get new monthly charges. A removed member's
-  // Member document is preserved (soft delete), but they must never
-  // keep accumulating new dues after being removed — that would defeat
-  // the entire purpose of removing them.
-  const allMembers = await Member
-    .find({ status: "active" })
-    .select("_id")
-    .lean();
+  const result = await runInTransactionWithRetry(async (session) => {
+    const allMembers = await Member.find({ status: "active" })
+      .select("_id")
+      .session(session)
+      .lean();
 
+    if (allMembers.length === 0) {
+      return { created: 0, skipped: 0, totalMembers: 0 };
+    }
 
-    
+    const operations = allMembers.map(({ _id }) => ({
+      updateOne: {
+        filter: { member: _id, month, year },
+        update: {
+          $setOnInsert: {
+            member: _id,
+            month,
+            year,
+            amount: fee,
+            status: "Unpaid",
+          },
+        },
+        upsert: true,
+      },
+    }));
 
-  if (allMembers.length === 0) {
-    return { created: 0, skipped: 0, fee, month, year };
-  }
-
-  const allMemberIds = allMembers.map(m => m._id);
-
-  // Step 3 — Single batch query to find members who ALREADY have a charge
-  // for this month. This avoids N individual findOne() calls.
-  // For 500 members this is one DB round trip instead of 500.
-  const existingCharges = await MonthlyCharge
-    .find({ month, year, member: { $in: allMemberIds } })
-    .select("member")
-    .lean();
-
-  const existingMemberIds = new Set(
-    existingCharges.map(c => String(c.member))
-  );
-
-  // Step 4 — Filter to members who do NOT yet have a charge this month
-  const membersNeedingCharge = allMemberIds.filter(
-    id => !existingMemberIds.has(String(id))
-  );
-
-  const skipped = allMembers.length - membersNeedingCharge.length;
-
-  if (membersNeedingCharge.length === 0) {
-    // All members already have charges — idempotent call, nothing to do
-    return { created: 0, skipped, fee, month, year };
-  }
-
-  // Step 5 — Build the charge documents
-  // Using the locked fee amount for every document
-  const chargeDocuments = membersNeedingCharge.map(memberId => ({
-    member: memberId,
-    month,
-    year,
-    amount: fee,
-    status: "Unpaid",
-  }));
-
-  // Step 6 — Bulk insert
-  // ordered: false means if any individual insert fails (e.g. duplicate key
-  // race condition), the remaining inserts still proceed
-  const insertResult = await MonthlyCharge.insertMany(
-    chargeDocuments,
-    { ordered: false }
-  );
-
-  const created = insertResult.length;
-
-
-  // ── Step 6b: Auto-apply any available credit balance ──────────────────
-  // Members who previously made an advance payment may have unapplied
-  // credit. As soon as their new charge for this month exists, check and
-  // apply it immediately — the member should never have to manually pay
-  // a due they've already covered in advance.
-  //
-  // Only members who have ever made a completed credit deposit are
-  // checked at all — this keeps the common case (no one has used advance
-  // payment) essentially free, instead of querying every member's credit
-  // balance on every monthly run.
-  try {
-    const memberIdsWithCredit = await Payment.distinct("member", {
-      advanceAmount: { $gt: 0 },
-      status:        "completed",
+    const bulkResult = await MonthlyCharge.bulkWrite(operations, {
+      session,
+      ordered: false,
     });
 
-    if (memberIdsWithCredit.length > 0) {
-      const creditMemberSet = new Set(memberIdsWithCredit.map(String));
-      const membersToReconcile = insertResult
-        .filter(charge => creditMemberSet.has(String(charge.member)))
-        .map(charge => String(charge.member));
-      const uniqueMemberIds = [...new Set(membersToReconcile)];
+    const created = bulkResult.upsertedCount || 0;
+    const skipped = allMembers.length - created;
 
-      for (const memberId of uniqueMemberIds) {
+    // Critical financial audit is part of the same transaction.
+    if (created > 0) {
+      await writeAuditLog({
+        action: "MONTHLY_DUES_ADDED",
+        performedBy,
+        description:
+          `Monthly charges of ৳${fee} created for ${created} member(s) ` +
+          `for ${month}/${year}.`,
+        metadata: {
+          month,
+          year,
+          fee,
+          created,
+          skipped,
+          totalMembers: allMembers.length,
+        },
+        session,
+        required: true,
+      });
+    }
+
+    return { created, skipped, totalMembers: allMembers.length };
+  });
+
+   // Announce the new month BEFORE credit is applied, so a member's messages
+  // read in order: "fee added" → "paid from credit" (or "credit short").
+  // Idempotent: the event key is per month, so catch-up runs never repeat it.
+ if (result.created > 0) {
+  try {
+    await notifyMonthlyFeeAdded({ month, year, fee });
+  } catch (notificationError) {
+    console.error(
+      "[MonthlyCharge] Monthly fee notification failed:",
+      notificationError.message,
+    );
+  }
+}
+
+
+  if (result.created > 0) {
+    try {
+      const memberIdsWithCredit = await Payment.distinct("member", {
+        advanceAmount: { $gt: 0 },
+        status: "completed",
+      });
+
+      for (const memberId of memberIdsWithCredit) {
         try {
           await reconcileMemberCredit(memberId);
         } catch (creditError) {
           console.error(
             `[MonthlyCharge] Credit reconciliation failed for member ${memberId}:`,
-            creditError.message
+            creditError.message,
           );
         }
       }
+    } catch (creditCheckError) {
+      console.error(
+        "[MonthlyCharge] Credit auto-apply check failed:",
+        creditCheckError.message,
+      );
     }
-  } catch (creditCheckError) {
-    console.error("[MonthlyCharge] Credit auto-apply check failed:", creditCheckError.message);
   }
 
-  // Step 7 — Audit log
-  // One audit entry for the entire batch operation
-  try {
-  await AuditLog.create({
-    action: "MONTHLY_DUES_ADDED",
-    performedBy,
-    description: `Monthly charges of ৳${fee} created for ${created} member(s) for ${month}/${year}`,
-    metadata: {
-      month,
-      year,
-      fee,
-      created,
-      skipped,
-      totalMembers: allMembers.length,
-    },
-  });
-} catch (auditError) {
-  console.error(
-    `[MonthlyCharge] Audit log creation failed for ${month}/${year}:`,
-    auditError.message
-  );
-}
-
-  return { created, skipped, fee, month, year };
+  return {
+    created: result.created,
+    skipped: result.skipped,
+    fee,
+    month,
+    year,
+  };
 };
 
-// ─── getMonthlyChargesForMember ───────────────────────────────────────────────
-// Returns monthly charges for a member, used by the due breakdown service.
-// Returns last N months in chronological order (oldest first).
+// ─── Unpaid monthly charges, oldest first (FIFO order for the payment UI) ────
 
 export const getUnpaidMonthlyChargesForMember = async (memberId) => {
-  return MonthlyCharge
-    .find({
-      member: new mongoose.Types.ObjectId(memberId),
-      status: "Unpaid",
-    })
-    .sort({ year: 1, month: 1 }) // oldest first — FIFO order for payment UI
+  return MonthlyCharge.find({
+    member: new mongoose.Types.ObjectId(memberId),
+    status: "Unpaid",
+  })
+    .sort({ year: 1, month: 1 })
     .lean();
 };
 
-// ─── getLast12MonthlyChargesForMember ─────────────────────────────────────────
-// Returns the last 12 monthly charges (paid or unpaid) for the history strip.
-// Most recent first for display.
+// ─── Last 12 monthly charges (paid or unpaid), most recent first ─────────────
 
 export const getLast12MonthlyChargesForMember = async (memberId) => {
-  return MonthlyCharge
-    .find({ member: new mongoose.Types.ObjectId(memberId) })
+  return MonthlyCharge.find({ member: new mongoose.Types.ObjectId(memberId) })
     .sort({ year: -1, month: -1 })
     .limit(12)
     .lean();

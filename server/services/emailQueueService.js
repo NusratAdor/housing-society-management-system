@@ -12,10 +12,18 @@
 import EmailQueueItem from "../models/EmailQueueItem.js";
 import { getStartOfDhakaDay } from "../utils/dateTime.js";
 
-export const enqueueEmail = async ({ to, subject, type, payload }) => {
-  return EmailQueueItem.create({ to, subject, type, payload });
+export const enqueueEmail = async ({ to, subject, type, payload, dedupeKey }) => {
+  try {
+    return await EmailQueueItem.create({
+      to, subject, type, payload,
+      ...(dedupeKey ? { dedupeKey } : {}),
+    });
+  } catch (error) {
+    // The same business event is already queued/sent: not an error.
+    if (error?.code === 11000 && dedupeKey) return null;
+    throw error;
+  }
 };
-
 
 export const getSentTodayCount = async () => {
   const startOfToday = getStartOfDhakaDay();

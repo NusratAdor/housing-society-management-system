@@ -93,7 +93,11 @@ const Navbar = () => {
           path: "/about-us/vision-mission",
           icon: Target,
         },
-        { name: "Advisory Committee", path: "/about-us/advisory-committee", icon: Lightbulb },
+        {
+          name: "Advisory Committee",
+          path: "/about-us/advisory-committee",
+          icon: Lightbulb,
+        },
         { name: "President", path: "/about-us/president", icon: Crown },
         {
           name: "General Secretary",
@@ -178,10 +182,16 @@ const Navbar = () => {
   }, [user, axios, getToken]);
 
   useEffect(() => {
+    if (!user) {
+      setNotifications([]);
+      return;
+    }
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 60_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchNotifications();
+    }, 60_000);
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [user, fetchNotifications]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -359,6 +369,7 @@ const Navbar = () => {
             {user && (
               <NotificationBell
                 notifications={notifications}
+                onMarkedRead={fetchNotifications}
                 iconClassName={isScrolled ? "text-gray-600" : "text-white"}
                 hoverBgClassName={
                   isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"
@@ -382,6 +393,7 @@ const Navbar = () => {
             {user && !isMenuOpen && (
               <NotificationBell
                 notifications={notifications}
+                onMarkedRead={fetchNotifications}
                 iconClassName={isScrolled ? "text-gray-600" : "text-white"}
                 hoverBgClassName={
                   isScrolled ? "hover:bg-gray-100" : "hover:bg-white/15"

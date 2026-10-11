@@ -1,17 +1,30 @@
 // server/services/adminDashboardService.js
 //
 // A monthly charge is either Unpaid or Paid — no partial state — so
-// "who owes how much on monthly dues" is a plain sum of Unpaid charge
-// amounts per member. Kept as a shared helper (getMonthlyDueByMemberMap)
-// so this calculation lives in exactly one place instead of being
-// duplicated across getCollectionMetrics, getOutstandingMembersList,
-// and getAllMembersWithDueStatus.
+// "who owes how much" is a plain sum of Unpaid charge amounts per member.
+//
+// CHANGE (this pass):
+//   - "Today", "this month" and the 12-month trend use the DHAKA calendar
+//     (they used the server timezone / UTC).
+//   - The "Pending" card counts payments awaiting ADMIN CONFIRMATION
+//     ("verified"), not gateway sessions ("pending").
+//   - Outstanding totals count ACTIVE members only, matching the member counts.
+//   - Extra-charge analytics exclude Cancelled charges from "charged".
+//   - Collection = actual cash (completed Payment.amount); credit applied to a
+//     month creates no Payment, so it is never counted twice.
 
 import mongoose      from "mongoose";
 import Member        from "../models/Member.js";
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import ExtraCharge   from "../models/ExtraCharge.js";
 import Payment       from "../models/Payment.js";
+import {
+  getDhakaDateParts,
+  getStartOfDhakaDay,
+  getStartOfDhakaMonth,
+} from "../utils/dateTime.js";
+
+const TIMEZONE = "Asia/Dhaka";
 
 // ─── getMonthlyDueByMemberMap ──────────────────────────────────────────────
 
@@ -22,111 +35,105 @@ const getMonthlyDueByMemberMap = async () => {
   ]);
 
   const dueByMember = {};
-  for (const r of agg) {
-    dueByMember[String(r._id)] = r.total;
-  }
+  for (const r of agg) dueByMember[String(r._id)] = r.total;
   return dueByMember;
 };
+
+const sumCompleted = (match = {}) =>
+  Payment.aggregate([
+    { $match: { status: "completed", ...match } },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
 
 // ─── getCollectionMetrics ─────────────────────────────────────────────────
 
 export const getCollectionMetrics = async () => {
-  const now              = new Date();
-  const startOfToday     = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const { year, month } = getDhakaDateParts();
+  const startOfToday     = getStartOfDhakaDay();
+  const startOfThisMonth = getStartOfDhakaMonth(year, month);
 
   const [
     allTimeAgg,
     thisMonthAgg,
     todayAgg,
     monthlyDueByMember,
-    outstandingExtraAgg,
-    totalMembersCount,
-    unpaidExtraMembers,
-    allMemberIds,
+    extraDueAgg,
+    activeMemberIds,
   ] = await Promise.all([
-
-    Payment.aggregate([
-      { $match: { status: "completed" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]),
-
-    Payment.aggregate([
-      { $match: { status: "completed", paidAt: { $gte: startOfThisMonth } } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]),
-
-    Payment.aggregate([
-      { $match: { status: "completed", paidAt: { $gte: startOfToday } } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]),
-
+    sumCompleted(),
+    sumCompleted({ paidAt: { $gte: startOfThisMonth } }),
+    sumCompleted({ paidAt: { $gte: startOfToday } }),
     getMonthlyDueByMemberMap(),
-
     ExtraCharge.aggregate([
       { $match: { status: "Unpaid" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
+      { $group: { _id: "$member", total: { $sum: "$amount" } } },
     ]),
-
-    Member.countDocuments({ status: "active" }),
-
-    ExtraCharge.distinct("member", { status: "Unpaid" }),
-
     Member.distinct("_id", { status: "active" }),
   ]);
 
-  const realMemberIds = new Set(allMemberIds.map(String));
+  const activeSet = new Set(activeMemberIds.map(String));
+  const membersWithDues = new Set();
 
-  const membersWithDuesSet = new Set([
-    ...Object.keys(monthlyDueByMember).filter(id => realMemberIds.has(id)),
-    ...unpaidExtraMembers.map(String).filter(id => realMemberIds.has(id)),
-  ]);
+  let outstandingMonthly = 0;
+  for (const [memberId, total] of Object.entries(monthlyDueByMember)) {
+    if (!activeSet.has(memberId)) continue;
+    outstandingMonthly += total;
+    membersWithDues.add(memberId);
+  }
 
-  const membersWithDuesCount = membersWithDuesSet.size;
+  let outstandingExtra = 0;
+  for (const row of extraDueAgg) {
+    const memberId = String(row._id);
+    if (!activeSet.has(memberId)) continue;
+    outstandingExtra += row.total;
+    membersWithDues.add(memberId);
+  }
 
-  const outstandingMonthlyTotal = Object.values(monthlyDueByMember).reduce((s, v) => s + v, 0);
-  const totalOutstanding = outstandingMonthlyTotal + (outstandingExtraAgg[0]?.total || 0);
+  const totalMembers = activeMemberIds.length;
 
   return {
-    totalCollection:     allTimeAgg[0]?.total     || 0,
-    thisMonthCollection: thisMonthAgg[0]?.total    || 0,
-    todayCollection:     todayAgg[0]?.total        || 0,
-    totalOutstanding,
-    outstandingMonthly:  outstandingMonthlyTotal,
-    outstandingExtra:    outstandingExtraAgg[0]?.total || 0,
-    membersWithDues:     membersWithDuesCount,
-    membersPaid:         totalMembersCount - membersWithDuesCount,
-    totalMembers:        totalMembersCount,
+    totalCollection:     allTimeAgg[0]?.total  || 0,
+    thisMonthCollection: thisMonthAgg[0]?.total || 0,
+    todayCollection:     todayAgg[0]?.total     || 0,
+    totalOutstanding:    outstandingMonthly + outstandingExtra,
+    outstandingMonthly,
+    outstandingExtra,
+    membersWithDues:     membersWithDues.size,
+    membersPaid:         totalMembers - membersWithDues.size,
+    totalMembers,
   };
 };
 
-// ─── getMonthlyCollectionTrend ─── (unchanged)
+// ─── getMonthlyCollectionTrend ────────────────────────────────────────────
+// Months are DHAKA calendar months: a payment at 02:00 Dhaka on the 1st belongs
+// to that month even though it is still the previous month in UTC.
 
 export const getMonthlyCollectionTrend = async (months = 12) => {
-  const now    = new Date();
-  const cutoff = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
+  const { year, month } = getDhakaDateParts();
+  const cutoff = getStartOfDhakaMonth(year, month - months + 1);
 
   const trend = await Payment.aggregate([
     { $match: { status: "completed", paidAt: { $gte: cutoff } } },
     {
       $group: {
-        _id:       { year: { $year: "$paidAt" }, month: { $month: "$paidAt" } },
+        _id: {
+          year:  { $year:  { date: "$paidAt", timezone: TIMEZONE } },
+          month: { $month: { date: "$paidAt", timezone: TIMEZONE } },
+        },
         collected: { $sum: "$amount" },
         payments:  { $sum: 1 },
       },
     },
-    { $sort: { "_id.year": 1, "_id.month": 1 } },
   ]);
+
+  const byKey = new Map(trend.map((t) => [`${t._id.year}-${t._id.month}`, t]));
 
   const result = [];
   for (let i = months - 1; i >= 0; i--) {
-    const targetDate  = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const targetYear  = targetDate.getFullYear();
-    const targetMonth = targetDate.getMonth() + 1;
-
-    const found = trend.find(
-      t => t._id.year === targetYear && t._id.month === targetMonth
-    );
+    const index = year * 12 + (month - 1) - i;
+    const targetYear = Math.floor(index / 12);
+    const targetMonth = (index % 12) + 1;
+    const found = byKey.get(`${targetYear}-${targetMonth}`);
 
     result.push({
       year:      targetYear,
@@ -152,7 +159,6 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
   ]);
 
   const activeIdSet = new Set(activeMemberIds.map(String));
-
   const dueMap = {};
 
   for (const [memberId, monthlyDue] of Object.entries(monthlyDueByMember)) {
@@ -177,16 +183,16 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
   const total     = sorted.length;
   const pageItems = sorted.slice((page - 1) * limit, (page - 1) * limit + limit);
 
-  const memberIds     = pageItems.map(item => new mongoose.Types.ObjectId(item.memberId));
+  const memberIds     = pageItems.map((item) => new mongoose.Types.ObjectId(item.memberId));
   const memberDetails = await Member
     .find({ _id: { $in: memberIds } })
-    .select("name email membershipNo plotNo phone")
+    .select("name email membershipNo plots phone")
     .lean();
 
-  const memberMap = Object.fromEntries(memberDetails.map(m => [String(m._id), m]));
+  const memberMap = Object.fromEntries(memberDetails.map((m) => [String(m._id), m]));
 
   return {
-    members:    pageItems.map(item => ({ ...item, member: memberMap[item.memberId] || null })),
+    members:    pageItems.map((item) => ({ ...item, member: memberMap[item.memberId] || null })),
     total,
     page,
     limit,
@@ -194,26 +200,30 @@ export const getOutstandingMembersList = async ({ page = 1, limit = 20 } = {}) =
   };
 };
 
-// ─── getExtraChargeAnalytics ─── (unchanged)
+// ─── getExtraChargeAnalytics ──────────────────────────────────────────────
+// Cancelled charges are not "charged": they would otherwise understate the rate.
 
 export const getExtraChargeAnalytics = async () => {
+  const notCancelled = { $ne: ["$status", "Cancelled"] };
+
   const analytics = await ExtraCharge.aggregate([
     {
       $group: {
         _id:          "$label",
-        totalCharged: { $sum: "$amount" },
-        totalPaid:    { $sum: { $cond: [{ $eq: ["$status", "Paid"] },      "$amount", 0] } },
-        totalUnpaid:  { $sum: { $cond: [{ $eq: ["$status", "Unpaid"] },    "$amount", 0] } },
-        countTotal:     { $sum: 1 },
+        totalCharged: { $sum: { $cond: [notCancelled, "$amount", 0] } },
+        totalPaid:    { $sum: { $cond: [{ $eq: ["$status", "Paid"] },   "$amount", 0] } },
+        totalUnpaid:  { $sum: { $cond: [{ $eq: ["$status", "Unpaid"] }, "$amount", 0] } },
+        countTotal:     { $sum: { $cond: [notCancelled, 1, 0] } },
         countPaid:      { $sum: { $cond: [{ $eq: ["$status", "Paid"] },      1, 0] } },
         countUnpaid:    { $sum: { $cond: [{ $eq: ["$status", "Unpaid"] },    1, 0] } },
         countCancelled: { $sum: { $cond: [{ $eq: ["$status", "Cancelled"] }, 1, 0] } },
       },
     },
+    { $match: { countTotal: { $gt: 0 } } },
     { $sort: { totalCharged: -1 } },
   ]);
 
-  return analytics.map(item => ({
+  return analytics.map((item) => ({
     label:          item._id,
     totalCharged:   item.totalCharged,
     totalPaid:      item.totalPaid,
@@ -228,7 +238,7 @@ export const getExtraChargeAnalytics = async () => {
   }));
 };
 
-// ─── getRecentPayments / getPendingPaymentsCount ─── (unchanged)
+// ─── getRecentPayments ────────────────────────────────────────────────────
 
 export const getRecentPayments = async (limit = 10) => {
   return Payment
@@ -239,8 +249,12 @@ export const getRecentPayments = async (limit = 10) => {
     .lean();
 };
 
+// ─── getPendingPaymentsCount ──────────────────────────────────────────────
+// Payments the gateway has confirmed that are waiting for an admin to confirm
+// them. ("pending" sessions are still at the gateway: nothing for an admin to do.)
+
 export const getPendingPaymentsCount = async () => {
-  return Payment.countDocuments({ status: "pending", gateway: "sslcommerz" });
+  return Payment.countDocuments({ status: "verified" });
 };
 
 // ─── getAllMembersWithDueStatus ────────────────────────────────────────────
@@ -256,7 +270,7 @@ export const getAllMembersWithDueStatus = async () => {
   ]);
 
   const extraMap = Object.fromEntries(
-    extraDuePerMember.map(r => [String(r._id), r.extraDue])
+    extraDuePerMember.map((r) => [String(r._id), r.extraDue]),
   );
 
   return allMembers.map(({ _id }) => {

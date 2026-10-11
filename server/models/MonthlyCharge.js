@@ -70,12 +70,17 @@ const monthlyChargeSchema = new mongoose.Schema(
   }
 );
 
-monthlyChargeSchema.index(
-  { member: 1, month: 1, year: 1 },
-  { unique: true }
-);
+
 
 monthlyChargeSchema.index({ member: 1, status: 1 });
 monthlyChargeSchema.index({ member: 1, year: -1, month: -1 });
+
+monthlyChargeSchema.index(
+  { member: 1, year: 1, month: 1 },
+  {
+    unique: true,
+    name: "unique_member_monthly_charge",
+  },
+);
 
 export default mongoose.model("MonthlyCharge", monthlyChargeSchema);

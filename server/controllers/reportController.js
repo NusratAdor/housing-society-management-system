@@ -1,14 +1,17 @@
 // server/controllers/reportController.js
 //
 // HTTP layer for report generation.
-// Each endpoint:
-//   1. Validates the date range and member ownership
-//   2. Calls the appropriate reportService function to get data
-//   3. Calls pdfService or csvService to format the data
-//   4. Sets correct Content-Type and Content-Disposition headers
-//   5. Sends the binary buffer or CSV string
+//
+// CHANGE (this pass):
+//   - Dates are YYYY-MM-DD in DHAKA time. The range is the first ms of the
+//     start day to the last ms of the end day in Dhaka. (It used the server
+//     timezone, so 00:00–06:00 Dhaka on the first day was missed and the
+//     same hours after the last day were included.)
+//   - Filenames use the requested date strings.
+//   - paymentId is validated; 500 responses no longer leak internal messages.
 
-import Member     from "../models/Member.js";
+import mongoose from "mongoose";
+import Member from "../models/Member.js";
 import {
   getMemberReportData,
   getAdminReportData,
@@ -23,30 +26,61 @@ import {
   generateMemberCsv,
   generateAdminCsv,
 } from "../services/csvService.js";
+import { parseDateString, getDhakaDayBounds } from "../utils/dateTime.js";
 
-// ─── Shared date validation ────────────────────────────────────────────────────
+// Messages that are safe to show to the client.
+const isClientError = (message) =>
+  ["Invalid", "must be", "cannot exceed"].some((m) => message.includes(m));
+
+const sendReportError = (res, label, error) => {
+  console.error(`${label} error:`, error.message);
+  if (isClientError(error.message)) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+  return res.status(500).json({ success: false, message: "Server error" });
+};
+
+// ─── Shared date validation ───────────────────────────────────────────────────
+
+const MAX_RANGE_DAYS = 366 * 5;
 
 const parseDateRange = (startStr, endStr) => {
-  const startDate = new Date(startStr);
-  const endDate   = new Date(endStr);
+  const start = parseDateString(startStr);
+  const end = parseDateString(endStr);
 
-  if (isNaN(startDate.getTime())) throw new Error("Invalid startDate");
-  if (isNaN(endDate.getTime()))   throw new Error("Invalid endDate");
-  if (startDate > endDate)        throw new Error("startDate must be before endDate");
+  if (!start) throw new Error("Invalid startDate (use YYYY-MM-DD)");
+  if (!end) throw new Error("Invalid endDate (use YYYY-MM-DD)");
 
-  // Prevent absurdly large ranges (> 5 years) that would be very slow
-  const diffMs    = endDate - startDate;
-  const diffYears = diffMs / (1000 * 60 * 60 * 24 * 365);
-  if (diffYears > 5) throw new Error("Date range cannot exceed 5 years");
+  const startDate = getDhakaDayBounds(start).start;
+  const endDate = getDhakaDayBounds(end).end; // last ms of the end day, Dhaka
 
-  return { startDate, endDate };
+  if (startDate > endDate) throw new Error("startDate must be before endDate");
+
+  if ((endDate - startDate) / (24 * 60 * 60 * 1000) > MAX_RANGE_DAYS) {
+    throw new Error("Date range cannot exceed 5 years");
+  }
+
+  return { startDate, endDate, rangeLabel: `${startStr}-${endStr}` };
+};
+
+const sendFile = (res, { contentType, filename, body }) => {
+  res.set({
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "Cache-Control": "no-store",
+    ...(Buffer.isBuffer(body) ? { "Content-Length": body.length } : {}),
+  });
+  return res.send(body);
 };
 
 // ─── GET /api/reports/me/receipt/:paymentId ───────────────────────────────────
-// Member downloads receipt for one specific payment.
 
 export const downloadMemberReceipt = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.paymentId)) {
+      return res.status(400).json({ success: false, message: "Invalid payment ID" });
+    }
+
     const member = await Member.findOne({ clerkUserId: req.clerkUserId }).lean();
     if (!member) {
       return res.status(404).json({ success: false, message: "Member not found" });
@@ -54,37 +88,38 @@ export const downloadMemberReceipt = async (req, res) => {
 
     const data = await getSingleReceiptData({
       paymentId: req.params.paymentId,
-      memberId:  member._id,
+      memberId: member._id,
     });
 
     const pdfBuffer = await drawReceipt(data);
+    const safeReceipt = (data.payment.receiptNumber || "receipt").replace(
+      /[^A-Za-z0-9-]/g,
+      "-",
+    );
 
-    const safeReceipt = (data.payment.receiptNumber || "receipt").replace(/[^A-Za-z0-9-]/g, "-");
-
-    res.set({
-      "Content-Type":        "application/pdf",
-      "Content-Disposition": `attachment; filename="${safeReceipt}.pdf"`,
-      "Content-Length":      pdfBuffer.length,
-      "Cache-Control":       "no-store",
+    return sendFile(res, {
+      contentType: "application/pdf",
+      filename: `${safeReceipt}.pdf`,
+      body: pdfBuffer,
     });
-    return res.send(pdfBuffer);
   } catch (error) {
-    console.error("downloadMemberReceipt error:", error.message);
-    const status = error.message.includes("not found") ? 404
-      : error.message.includes("Receipts can only") ? 400
-      : 500;
-    return res.status(status).json({ success: false, message: error.message });
+    if (error.message.includes("not found")) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    if (error.message.includes("Receipts can only")) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    return sendReportError(res, "downloadMemberReceipt", error);
   }
 };
 
 // ─── GET /api/reports/me/pdf ──────────────────────────────────────────────────
-// Member downloads their transaction history as PDF.
-// Query params: startDate (YYYY-MM-DD), endDate (YYYY-MM-DD)
 
 export const downloadMemberPdf = async (req, res) => {
   try {
-    const { startDate, endDate } = parseDateRange(
-      req.query.startDate, req.query.endDate
+    const { startDate, endDate, rangeLabel } = parseDateRange(
+      req.query.startDate,
+      req.query.endDate,
     );
 
     const member = await Member.findOne({ clerkUserId: req.clerkUserId }).lean();
@@ -92,41 +127,26 @@ export const downloadMemberPdf = async (req, res) => {
       return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    const data = await getMemberReportData({
-      memberId: member._id,
-      startDate,
-      endDate,
-    });
-
+    const data = await getMemberReportData({ memberId: member._id, startDate, endDate });
     const pdfBuffer = await drawMemberReport(data);
 
-    const filename =
-      `payment-history-${member.membershipNo}-` +
-      `${startDate.toISOString().slice(0, 10)}-` +
-      `${endDate.toISOString().slice(0, 10)}.pdf`;
-
-    res.set({
-      "Content-Type":        "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Content-Length":      pdfBuffer.length,
-      "Cache-Control":       "no-store",
+    return sendFile(res, {
+      contentType: "application/pdf",
+      filename: `payment-history-${member.membershipNo}-${rangeLabel}.pdf`,
+      body: pdfBuffer,
     });
-    return res.send(pdfBuffer);
   } catch (error) {
-    console.error("downloadMemberPdf error:", error.message);
-    const status = ["Invalid", "must be"].some(m => error.message.includes(m)) ? 400 : 500;
-    return res.status(status).json({ success: false, message: error.message });
+    return sendReportError(res, "downloadMemberPdf", error);
   }
 };
 
 // ─── GET /api/reports/me/csv ──────────────────────────────────────────────────
-// Member downloads their transaction history as CSV.
-// Query params: startDate, endDate
 
 export const downloadMemberCsv = async (req, res) => {
   try {
-    const { startDate, endDate } = parseDateRange(
-      req.query.startDate, req.query.endDate
+    const { startDate, endDate, rangeLabel } = parseDateRange(
+      req.query.startDate,
+      req.query.endDate,
     );
 
     const member = await Member.findOne({ clerkUserId: req.clerkUserId }).lean();
@@ -134,87 +154,60 @@ export const downloadMemberCsv = async (req, res) => {
       return res.status(404).json({ success: false, message: "Member not found" });
     }
 
-    const data    = await getMemberReportData({ memberId: member._id, startDate, endDate });
+    const data = await getMemberReportData({ memberId: member._id, startDate, endDate });
     const csvText = generateMemberCsv(data);
 
-    const filename =
-      `payment-history-${member.membershipNo}-` +
-      `${startDate.toISOString().slice(0, 10)}-` +
-      `${endDate.toISOString().slice(0, 10)}.csv`;
-
-    res.set({
-      "Content-Type":        "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control":       "no-store",
+    // UTF-8 BOM so Excel opens the file with the right encoding.
+    return sendFile(res, {
+      contentType: "text/csv; charset=utf-8",
+      filename: `payment-history-${member.membershipNo}-${rangeLabel}.csv`,
+      body: "\uFEFF" + csvText,
     });
-    // UTF-8 BOM — makes Excel open the file correctly without encoding issues
-    return res.send("\uFEFF" + csvText);
   } catch (error) {
-    console.error("downloadMemberCsv error:", error.message);
-    const status = ["Invalid", "must be"].some(m => error.message.includes(m)) ? 400 : 500;
-    return res.status(status).json({ success: false, message: error.message });
+    return sendReportError(res, "downloadMemberCsv", error);
   }
 };
 
 // ─── GET /api/reports/admin/pdf ───────────────────────────────────────────────
-// Admin downloads society-wide collection report as PDF.
-// Query params: startDate, endDate
 
 export const downloadAdminPdf = async (req, res) => {
   try {
-    const { startDate, endDate } = parseDateRange(
-      req.query.startDate, req.query.endDate
+    const { startDate, endDate, rangeLabel } = parseDateRange(
+      req.query.startDate,
+      req.query.endDate,
     );
 
-    const data      = await getAdminReportData({ startDate, endDate });
+    const data = await getAdminReportData({ startDate, endDate });
     const pdfBuffer = await drawAdminReport(data);
 
-    const filename =
-      `collection-report-` +
-      `${startDate.toISOString().slice(0, 10)}-` +
-      `${endDate.toISOString().slice(0, 10)}.pdf`;
-
-    res.set({
-      "Content-Type":        "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Content-Length":      pdfBuffer.length,
-      "Cache-Control":       "no-store",
+    return sendFile(res, {
+      contentType: "application/pdf",
+      filename: `collection-report-${rangeLabel}.pdf`,
+      body: pdfBuffer,
     });
-    return res.send(pdfBuffer);
   } catch (error) {
-    console.error("downloadAdminPdf error:", error.message);
-    const status = ["Invalid", "must be"].some(m => error.message.includes(m)) ? 400 : 500;
-    return res.status(status).json({ success: false, message: error.message });
+    return sendReportError(res, "downloadAdminPdf", error);
   }
 };
 
 // ─── GET /api/reports/admin/csv ───────────────────────────────────────────────
-// Admin downloads all payments as CSV.
-// Query params: startDate, endDate
 
 export const downloadAdminCsv = async (req, res) => {
   try {
-    const { startDate, endDate } = parseDateRange(
-      req.query.startDate, req.query.endDate
+    const { startDate, endDate, rangeLabel } = parseDateRange(
+      req.query.startDate,
+      req.query.endDate,
     );
 
-    const data    = await getAdminReportData({ startDate, endDate });
+    const data = await getAdminReportData({ startDate, endDate });
     const csvText = generateAdminCsv(data);
 
-    const filename =
-      `collection-report-` +
-      `${startDate.toISOString().slice(0, 10)}-` +
-      `${endDate.toISOString().slice(0, 10)}.csv`;
-
-    res.set({
-      "Content-Type":        "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control":       "no-store",
+    return sendFile(res, {
+      contentType: "text/csv; charset=utf-8",
+      filename: `collection-report-${rangeLabel}.csv`,
+      body: "\uFEFF" + csvText,
     });
-    return res.send("\uFEFF" + csvText);
   } catch (error) {
-    console.error("downloadAdminCsv error:", error.message);
-    const status = ["Invalid", "must be"].some(m => error.message.includes(m)) ? 400 : 500;
-    return res.status(status).json({ success: false, message: error.message });
+    return sendReportError(res, "downloadAdminCsv", error);
   }
 };

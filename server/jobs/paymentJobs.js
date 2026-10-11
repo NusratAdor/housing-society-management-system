@@ -41,10 +41,21 @@ import {
 import {
   sendPaymentConfirmationEmail,
   sendAdvancePaymentConfirmationEmail,
+  sendCreditAppliedEmail,
+  sendCreditShortfallEmail,
   sendDueReminderEmail,
 } from "../services/emailService.js";
 
 import { getDhakaDateParts } from "../utils/dateTime.js";
+import { getStartOfDhakaDay } from "../utils/dateTime.js";
+
+import MonthlyCharge from "../models/MonthlyCharge.js";
+import {
+  reconcileMemberCredit,
+  getMemberCreditBalance,
+} from "../services/creditService.js";
+
+
 
 // ============================================================================
 // CONFIGURATION
@@ -54,6 +65,9 @@ const TIMEZONE = "Asia/Dhaka";
 
 const SAFE_DAILY_CAP = 90;
 const REMINDER_DAILY_CAP = 70;
+// Credit-applied notices are informational. Capping them keeps room in the
+// daily budget for payment receipts (a 1st-of-month burst can't starve them).
+const CREDIT_APPLIED_DAILY_CAP = 50;
 
 const MAX_RETRY_ATTEMPTS = 3;
 
@@ -64,6 +78,10 @@ const SEND_GAP_MS = 120;
 // A payment stuck in "processing" beyond this period is treated as
 // an abandoned admin-confirmation lock and released back to "verified".
 const STALE_PROCESSING_MINUTES = 10;
+
+// A checkout session the member never completed. SSLCommerz sessions are
+// short-lived; after this long the member cannot still be paying.
+const STALE_PENDING_MINUTES = 60;
 
 const CONFIRMATION_TYPES = ["payment_confirmation", "advance_confirmation"];
 
@@ -123,6 +141,24 @@ const getLastDayOfMonth = (year, month) => {
  * application restarts.
  */
 const sendQueueItem = async (item) => {
+  if (item.type === "due_reminder" && item.payload?.memberId) {
+    const live = await getLiveReminderPayload(item.payload.memberId);
+
+    if (!live) {
+      await EmailQueueItem.updateOne(
+        { _id: item._id, status: "pending" },
+        {
+          $set: {
+            status: "skipped",
+            error: "No dues outstanding at send time",
+          },
+        },
+      );
+      return null; // neither sent nor failed
+    }
+    item = { ...item, payload: { ...item.payload, ...live } };
+  }
+
   try {
     if (item.type === "payment_confirmation") {
       await sendPaymentConfirmationEmail({
@@ -139,9 +175,19 @@ const sendQueueItem = async (item) => {
         to: item.to,
         ...item.payload,
       });
+    } else if (item.type === "credit_applied") {
+      await sendCreditAppliedEmail({
+        to: item.to,
+        ...item.payload,
+      });
+    } else if (item.type === "credit_shortfall") {
+      await sendCreditShortfallEmail({
+        to: item.to,
+        ...item.payload,
+      });
     } else {
       throw new Error(`Unsupported email queue type: ${item.type}`);
-    }
+    } 
 
     await EmailQueueItem.updateOne(
       {
@@ -214,61 +260,70 @@ export const runMonthlyChargeJob = async (month, year) => {
       `month=${month}/${year}`,
   );
 
-  // If nothing was created, this was simply an idempotent/catch-up check.
-  //
-  // Do not create a notification on every daily cron run.
-  if (result.created === 0) {
-    return result;
-  }
-
-  // --------------------------------------------------------------------------
-  // Monthly notification
-  // --------------------------------------------------------------------------
-  //
-  // Because the monthly charge job is intentionally catch-up capable,
-  // result.created > 0 can technically happen after the first day.
-  //
-  // Example:
-  //
-  // Oct 1 -> 480 charges created
-  // Oct 2 -> remaining 20 charges created
-  //
-  // We therefore also check whether the notification for this exact
-  // month already exists.
-  //
-  // This uses fields already present in the current Notification model
-  // usage and does not require introducing another notification system.
-  // --------------------------------------------------------------------------
-
-  const content =
-    `Monthly charges for ${result.month}/${result.year} have been added. ` +
-    `Please check your dashboard.`;
-
-  const existingNotification = await Notification.findOne({
-    type: "Payment",
-    content,
-    clerkUserId: null,
-    adminOnly: false,
-  }).lean();
-
-  if (!existingNotification) {
-    await Notification.create({
-      type: "Payment",
-      content,
-      clerkUserId: null,
-      adminOnly: false,
-    });
-
-    console.info(
-      `[Cron] Monthly payment notification created for ${month}/${year}`,
-    );
-  } else {
-    console.info(
-      `[Cron] Monthly payment notification already exists for ${month}/${year}`,
-    );
-  }
-
+  // The member-facing "fee added" notification is created inside
+  // createMonthlyChargesForMonth (idempotent, and before credit is applied).
   return result;
+};
+
+const computeCreditShortfall = (
+  unpaidMonthlyCharges = [],
+  creditBalance = 0,
+) => {
+  const oldest = unpaidMonthlyCharges[0];
+  return oldest && creditBalance > 0 && creditBalance < oldest.amount
+    ? oldest.amount - creditBalance
+    : 0;
+};
+
+// What the member owes RIGHT NOW. Queued reminders can wait hours for the
+// daily budget; the member may have paid in between.
+const getLiveReminderPayload = async (memberId) => {
+  const [breakdown, creditBalance] = await Promise.all([
+    getMemberDueBreakdown(memberId),
+    getMemberCreditBalance(memberId),
+  ]);
+  if (breakdown.totalDue === 0) return null;
+
+  return {
+    totalDue: breakdown.totalDue,
+    totalMonthlyDue: breakdown.totalMonthlyDue,
+    totalExtraDue: breakdown.totalExtraDue,
+    unpaidMonths: breakdown.unpaidMonthlyCharges,
+    unpaidCharges: breakdown.unpaidExtraCharges,
+    creditBalance,
+    creditShortfall: computeCreditShortfall(
+      breakdown.unpaidMonthlyCharges,
+      creditBalance,
+    ),
+  };
+};
+
+// Safety net: re-tries credit application for members who hold credit and have
+// an unpaid month (e.g. a reconciliation that failed right after an approval).
+// Idempotent: applied credit never reapplies; messages are de-duplicated.
+export const runCreditSweep = async () => {
+  const withCredit = await Payment.distinct("member", {
+    advanceAmount: { $gt: 0 },
+    status: "completed",
+  });
+  if (withCredit.length === 0) return 0;
+
+  const needing = await MonthlyCharge.distinct("member", {
+    member: { $in: withCredit },
+    status: "Unpaid",
+  });
+
+  for (const memberId of needing) {
+    try {
+      await reconcileMemberCredit(memberId);
+    } catch (error) {
+      console.error(
+        `[Cron] Credit sweep failed for member ${memberId}:`,
+        error.message,
+      );
+    }
+  }
+  return needing.length;
 };
 
 // ============================================================================
@@ -286,6 +341,8 @@ export const runMonthlyChargeJob = async (month, year) => {
  * - Paid members are skipped.
  */
 export const queueDueReminders = async () => {
+  const reminderDayStart = getStartOfDhakaDay();
+
   const members = await Member.find({
     status: "active",
   })
@@ -311,14 +368,28 @@ export const queueDueReminders = async () => {
       // ---------------------------------------------------------------
 
       try {
-        await Notification.create({
+        const reminderContent =
+          `Reminder: You have ৳${breakdown.totalDue.toLocaleString()} ` +
+          `outstanding. Please pay before month-end.`;
+
+        const existingNotification = await Notification.findOne({
           type: "Payment",
-          content:
-            `Reminder: You have ৳${breakdown.totalDue.toLocaleString()} ` +
-            `outstanding. Please pay before month-end.`,
           clerkUserId: member.clerkUserId,
           adminOnly: false,
-        });
+          content: reminderContent,
+          createdAt: {
+            $gte: reminderDayStart,
+          },
+        }).lean();
+
+        if (!existingNotification) {
+          await Notification.create({
+            type: "Payment",
+            content: reminderContent,
+            clerkUserId: member.clerkUserId,
+            adminOnly: false,
+          });
+        }
       } catch (notificationError) {
         // A notification failure should not prevent the email reminder
         // from being queued.
@@ -333,18 +404,27 @@ export const queueDueReminders = async () => {
       // ---------------------------------------------------------------
 
       if (member.email) {
-        const existingPending = await EmailQueueItem.findOne({
+        const existingReminder = await EmailQueueItem.findOne({
           to: member.email,
           type: "due_reminder",
-          status: "pending",
+          status: { $in: ["pending", "sent"] },
+          createdAt: {
+            $gte: reminderDayStart,
+          },
         }).lean();
 
-        if (existingPending) {
+        if (existingReminder) {
           console.info(
-            `[Cron] Reminder email already pending for ${member.email}`,
+            `[Cron] Reminder email already queued/sent today for ${member.email}`,
           );
           continue;
         }
+
+        const creditBalance = await getMemberCreditBalance(member._id);
+        const creditShortfall = computeCreditShortfall(
+          breakdown.unpaidMonthlyCharges,
+          creditBalance,
+        );
 
         await enqueueEmail({
           to: member.email,
@@ -359,6 +439,9 @@ export const queueDueReminders = async () => {
             totalExtraDue: breakdown.totalExtraDue,
             unpaidMonths: breakdown.unpaidMonthlyCharges,
             unpaidCharges: breakdown.unpaidExtraCharges,
+            memberId: String(member._id),
+            creditBalance,
+            creditShortfall,
           },
         });
 
@@ -484,6 +567,43 @@ export const runEmailDispatchCycle = async () => {
     }
 
     // ------------------------------------------------------------------------
+    // 1b. CREDIT-APPLIED NOTICES (own daily cap, below confirmations)
+    // ------------------------------------------------------------------------
+
+     const creditSentToday =
+      (await getSentTodayCountByType("credit_applied")) +
+      (await getSentTodayCountByType("credit_shortfall"));
+    const creditRoom = Math.min(
+      CREDIT_APPLIED_DAILY_CAP - creditSentToday,
+      totalRemaining,
+    );
+
+    if (creditRoom > 0) {
+      const pendingCreditNotices = await EmailQueueItem.find({
+        status: "pending",
+        type: { $in: ["credit_shortfall", "credit_applied"] },
+      })
+        .sort({ createdAt: 1 })
+        .limit(creditRoom)
+        .lean();
+
+
+        
+      for (const item of pendingCreditNotices) {
+        const success = await sendQueueItem(item);
+        if (success) sent++;
+        else failed++;
+        await new Promise((resolve) => setTimeout(resolve, SEND_GAP_MS));
+      }
+
+      totalRemaining = SAFE_DAILY_CAP - (await getSentTodayCount());
+
+      if (totalRemaining <= 0) {
+        return { sent, failed, note: "No room left for reminders today" };
+      }
+    }
+
+    // ------------------------------------------------------------------------
     // 2. DUE REMINDERS
     // ------------------------------------------------------------------------
 
@@ -512,9 +632,9 @@ export const runEmailDispatchCycle = async () => {
     for (const item of pendingReminders) {
       const success = await sendQueueItem(item);
 
-      if (success) {
+      if (success === true) {
         sent++;
-      } else {
+      } else if (success === false) {
         failed++;
       }
 
@@ -592,6 +712,31 @@ export const recoverStaleProcessingPayments = async () => {
   return result.modifiedCount;
 };
 
+/**
+ * Marks abandoned checkout sessions "failed" so the member's
+ * one-active-payment slot is released.
+ *
+ * Safe against a late real payment: paymentCallback still accepts a
+ * gateway-VALIDATED confirmation for a "failed" payment (it never revives
+ * "rejected", which is an admin decision).
+ */
+export const expireStalePendingPayments = async () => {
+  const cutoff = new Date(Date.now() - STALE_PENDING_MINUTES * 60 * 1000);
+
+  const result = await Payment.updateMany(
+    { status: "pending", createdAt: { $lt: cutoff } },
+    { $set: { status: "failed" } },
+  );
+
+  if (result.modifiedCount > 0) {
+    console.info(
+      `[Payments] Expired ${result.modifiedCount} abandoned pending payment session(s)`,
+    );
+  }
+
+  return result.modifiedCount;
+};
+
 // ============================================================================
 // CRON REGISTRATION
 // ============================================================================
@@ -641,6 +786,12 @@ const runDailyJobs = () => {
         await runMonthlyChargeJob(month, year);
       } catch (error) {
         console.error("[Cron] Monthly charge job failed:", error.message);
+      }
+
+      try {
+        await runCreditSweep();
+      } catch (error) {
+        console.error("[Cron] Credit sweep failed:", error.message);
       }
 
       // ----------------------------------------------------------------------
@@ -706,6 +857,12 @@ const runDailyJobs = () => {
           "[Payments] Stale-processing recovery failed:",
           error.message,
         );
+      }
+
+      try {
+        await expireStalePendingPayments();
+      } catch (error) {
+        console.error("[Payments] Pending-expiry failed:", error.message);
       }
 
       // ----------------------------------------------------------------------

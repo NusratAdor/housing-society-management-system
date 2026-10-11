@@ -2,42 +2,37 @@
 //
 // Advance payment / credit balance system.
 //
-// Design principle: the credit balance is NEVER stored as a mutable
-// number — always derived from Payment.advanceAmount and
-// PaymentAllocation records.
+// The credit balance is NEVER stored as a mutable number: it is derived from
+// Payment.advanceAmount and PaymentAllocation records.
 //
-// A monthly charge's credit application is all-or-nothing: if a
-// member's available credit fully covers a newly-created charge, it's
-// applied and the charge is marked Paid. If it doesn't fully cover the
-// charge (most commonly because the monthly fee changed after the
-// member prepaid), NOTHING is applied — the charge stays Unpaid, the
-// credit stays banked untouched, and the member is notified so the
-// office can manually reconcile the difference via a separate
-// ExtraCharge with a clear reason. This is a deliberate business rule,
-// not a limitation — the office wants to see and control any fee-
-// change adjustment rather than have the system quietly settle it.
+// A monthly charge is cleared by credit all-or-nothing, oldest first. If credit
+// does not fully cover the oldest charge, nothing is applied and the office
+// controls any fee-change difference (deliberate business rule).
 //
-// Wrapped in runInTransactionWithRetry, which delegates to Mongoose's
-// session.withTransaction() — this correctly handles both a transient
-// transaction conflict (retries the whole transaction) and an unknown
-// commit result (retries only the commit), rather than a hand-rolled
-// retry loop that can't safely distinguish the two.
+// CHANGE (this pass):
+//   - applyCreditToMonthlyCharge / reconcileMemberCredit take { notify }.
+//     notify:true (cron, default): in-app notification + queued
+//     "credit_applied" email.
+//     notify:false (admin payment approval): the single payment confirmation
+//     message/email already states what credit paid for.
+//   - Notification wording lives in paymentNotificationService (idempotent).
+//   - The result carries creditAfter so the message states credit remaining.
+//   - Public return values are unchanged (boolean / array of charge ids).
 //
-// creditVersion is a transaction-serialization point, NOT an
-// optimistic-lock version check — its only job is to give two
-// concurrent credit applications for the same member a shared
-// document to write to, so MongoDB's transaction conflict detection
-// has something real to catch; the loser is retried automatically.
+// creditVersion is a transaction-serialization point, not an optimistic lock.
 
 import mongoose from "mongoose";
 import Payment from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
 import MonthlyCharge from "../models/MonthlyCharge.js";
 import Member from "../models/Member.js";
-import Notification from "../models/Notification.js";
 import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
-
-
+import { writeAuditLog } from "./auditService.js";
+import { enqueueEmail } from "./emailQueueService.js";
+import {
+  notifyCreditApplied,
+  notifyCreditShortfall,
+} from "./paymentNotificationService.js";
 
 const MONTH_NAMES = [
   "", "January", "February", "March", "April", "May", "June",
@@ -45,11 +40,11 @@ const MONTH_NAMES = [
 ];
 
 
-
+// A month fully covered by credit is routine: in-app notification only.
+// Set to true to also email it (it counts against the daily email budget).
+const EMAIL_ON_CREDIT_APPLIED = false;
 // ─── getAvailableCreditDeposits ─────────────────────────────────────────────
-// Returns the member's completed payments that still have unapplied
-// credit, oldest first (FIFO), each annotated with how much of its
-// advanceAmount remains available to draw from.
+// Completed payments that still have unapplied credit, oldest first (FIFO).
 
 const getAvailableCreditDeposits = async (memberId, session = null) => {
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
@@ -92,25 +87,19 @@ const getAvailableCreditDeposits = async (memberId, session = null) => {
 
 // ─── getMemberCreditBalance ───────────────────────────────────────────────
 
-export const getMemberCreditBalance = async (memberId) => {
-  const deposits = await getAvailableCreditDeposits(memberId);
+export const getMemberCreditBalance = async (memberId, session = null) => {
+  const deposits = await getAvailableCreditDeposits(memberId, session);
   return deposits.reduce((sum, d) => sum + d.remaining, 0);
 };
 
 // ─── applyCreditToMonthlyCharge ───────────────────────────────────────────
-// Called right after a new MonthlyCharge is created (chargeService.js),
-// for any member who has an available credit balance. Draws from the
-// member's oldest unapplied deposits first (FIFO).
-//
-// All-or-nothing: a MonthlyCharge is only ever fully cleared here,
-// never partially. If total available credit is less than the charge
-// amount, nothing is applied; the credit stays banked, and the member
-// is notified of the shortfall so the office can create a manual
-// ExtraCharge adjustment if needed.
-//
 // Returns true if the charge was fully cleared by credit, false otherwise.
 
-export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
+export const applyCreditToMonthlyCharge = async (
+  memberId,
+  chargeId,
+  { notify = true } = {},
+) => {
   const outcome = await runInTransactionWithRetry(async (session) => {
     // Concurrency guard — see file header.
     await Member.updateOne(
@@ -129,25 +118,29 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
     const totalAvailable = deposits.reduce((sum, d) => sum + d.remaining, 0);
 
     if (totalAvailable < charge.amount) {
-      // Not enough credit to fully cover this charge — apply nothing.
       return {
         applied: false,
         shortfall: totalAvailable > 0,
         available: totalAvailable,
         chargeAmount: charge.amount,
+        month: charge.month,
+        year: charge.year,
       };
     }
 
     let remainingToCover = charge.amount;
     const allocationDocs = [];
+    const sourcePaymentIds = [];
     const now = new Date();
 
     for (const deposit of deposits) {
       if (remainingToCover <= 0) break;
-      const amountFromThisDeposit = Math.min(
-        deposit.remaining,
-        remainingToCover,
-      );
+
+      const amountFromThisDeposit = Math.min(deposit.remaining, remainingToCover);
+
+      if (amountFromThisDeposit > 0) {
+        sourcePaymentIds.push(String(deposit.paymentId));
+      }
 
       allocationDocs.push({
         payment: deposit.paymentId,
@@ -161,88 +154,140 @@ export const applyCreditToMonthlyCharge = async (memberId, chargeId) => {
       remainingToCover -= amountFromThisDeposit;
     }
 
-    await PaymentAllocation.insertMany(allocationDocs, {
-      session,
-      ordered: true,
-    });
+    await PaymentAllocation.insertMany(allocationDocs, { session, ordered: true });
 
     charge.status = "Paid";
     charge.paidAt = now;
     await charge.save({ session });
 
-    return { applied: true, month: charge.month, year: charge.year, amount: charge.amount };
+    await writeAuditLog({
+      action: "PAYMENT_CREDIT_APPLIED",
+      performedBy: "SYSTEM",
+      targetId: charge._id,
+      description:
+        `Advance credit of ৳${charge.amount.toLocaleString()} ` +
+        `applied to ${charge.month}/${charge.year} monthly charge.`,
+      after: { chargeStatus: "Paid", amount: charge.amount },
+      metadata: {
+        memberId: String(memberId),
+        month: charge.month,
+        year: charge.year,
+        amount: charge.amount,
+        sourcePaymentIds,
+      },
+      session,
+      required: true,
+    });
+
+    return {
+      applied: true,
+      month: charge.month,
+      year: charge.year,
+      amount: charge.amount,
+      creditAfter: totalAvailable - charge.amount,
+    };
   });
 
-  // ── Notification — sent AFTER successful commit only, never inside
-  // the transaction. Informs the office that a member's prepaid
-  // credit didn't fully cover a month, so they know to check whether
-  // a manual fee-adjustment ExtraCharge is needed. This is purely
-  // informational — no money moves, no charge status changes.
-  if (!outcome.applied && outcome.shortfall) {
+ // ── After commit only: notifications and email. Never inside the
+  // transaction, and never able to fail a financial operation.
+  if (notify && (outcome.applied || outcome.shortfall)) {
     try {
       const member = await Member.findById(memberId)
-        .select("clerkUserId name")
+        .select("clerkUserId name email")
         .lean();
-      if (member?.clerkUserId) {
-        await Notification.create({
-          type: "Payment",
-          content:
-            `Your prepaid credit (৳${outcome.available.toLocaleString()}) does not fully ` +
-            `cover this month's due of ৳${outcome.chargeAmount.toLocaleString()}. ` +
-            `Your credit is safe and unchanged. Add ৳${(outcome.chargeAmount - outcome.available).toLocaleString()} ` +
-            `from the Payment page and it will be applied automatically once confirmed.`,
-          clerkUserId: member.clerkUserId,
-          adminOnly: false,
-        });
+
+      if (member) {
+        if (outcome.applied) {
+          if (member.clerkUserId) {
+            await notifyCreditApplied({
+              clerkUserId: member.clerkUserId,
+              chargeId,
+              month: outcome.month,
+              year: outcome.year,
+              amount: outcome.amount,
+              creditAfter: outcome.creditAfter,
+            });
+          }
+
+          if (EMAIL_ON_CREDIT_APPLIED && member.email) {
+            try {
+              await enqueueEmail({
+                to: member.email,
+                subject: `${MONTH_NAMES[outcome.month]} ${outcome.year} fee paid from your credit`,
+                type: "credit_applied",
+                dedupeKey: `CREDIT_APPLIED:${chargeId}`,
+                payload: {
+                  name: member.name,
+                  month: outcome.month,
+                  year: outcome.year,
+                  amount: outcome.amount,
+                  creditAfter: outcome.creditAfter,
+                },
+              });
+            } catch (queueError) {
+              console.error(
+                `[CreditService] credit_applied email not queued:`,
+                queueError.message,
+              );
+            }
+          }
+        } else {
+          if (member.clerkUserId) {
+            await notifyCreditShortfall({
+              clerkUserId: member.clerkUserId,
+              chargeId,
+              month: outcome.month,
+              year: outcome.year,
+              chargeAmount: outcome.chargeAmount,
+              available: outcome.available,
+            });
+          }
+
+          // The email has its OWN key: a failed enqueue is retried by the next
+          // reconcile run (the daily sweep); a queued one is never repeated.
+          if (member.email) {
+            const remaining = outcome.chargeAmount - outcome.available;
+            try {
+              await enqueueEmail({
+                to: member.email,
+                subject: `Action required: ৳${remaining.toLocaleString()} remaining for ${MONTH_NAMES[outcome.month]} ${outcome.year}`,
+                type: "credit_shortfall",
+                dedupeKey: `CREDIT_SHORT:${chargeId}`,
+                payload: {
+                  name: member.name,
+                  month: outcome.month,
+                  year: outcome.year,
+                  feeAmount: outcome.chargeAmount,
+                  creditBalance: outcome.available,
+                  amount: remaining,
+                },
+              });
+            } catch (queueError) {
+              console.error(
+                `[CreditService] credit_shortfall email not queued:`,
+                queueError.message,
+              );
+            }
+          }
+        }
       }
-    } catch (notifErr) {
+    } catch (notifyError) {
       console.error(
-        `[CreditService] Shortfall notification failed for member ${memberId}:`,
-        notifErr.message,
+        `[CreditService] Notification step failed for member ${memberId}:`,
+        notifyError.message,
       );
     }
   }
-
-
-
-  if (outcome.applied) {
-  try {
-    const member = await Member.findById(memberId).select("clerkUserId").lean();
-    if (member?.clerkUserId) {
-      await Notification.create({
-        type:        "Payment",
-        content:
-          `৳${outcome.amount.toLocaleString()} from your advance credit was applied to ` +
-          `${MONTH_NAMES[outcome.month]} ${outcome.year}. No payment is needed for this month.`,
-        clerkUserId: member.clerkUserId,
-        adminOnly:   false,
-      });
-    }
-  } catch (notifErr) {
-    console.error(`[CreditService] Applied notification failed for member ${memberId}:`, notifErr.message);
-  }
-}
-
 
   return outcome.applied;
 };
 
 // ─── reconcileMemberCredit ───────────────────────────────────────────────
-// Re-attempts credit application for a member's outstanding monthly
-// charges, oldest first. Called both when a new MonthlyCharge is
-// created AND whenever a member's advance credit grows (a new advance
-// payment is confirmed) — so a shortfall that couldn't be covered on
-// day 1 is automatically retried and resolved the moment enough
-// credit exists, with no admin action needed.
-//
-// Oldest-first, all-or-nothing — same FIFO principle used everywhere
-// else in this system. If the oldest outstanding charge can't be
-// fully covered, reconciliation stops there; a later, smaller charge
-// is never paid ahead of an older one still waiting on its own credit.
-//
-// Returns the list of MonthlyCharge _ids that were newly cleared.
+// Re-attempts credit application for outstanding monthly charges, oldest
+// first, stopping at the first one credit cannot fully cover.
+// Returns the _ids of the charges newly cleared.
 
-export const reconcileMemberCredit = async (memberId) => {
+export const reconcileMemberCredit = async (memberId, { notify = true } = {}) => {
   const outstandingCharges = await MonthlyCharge.find({
     member: memberId,
     status: "Unpaid",
@@ -254,8 +299,8 @@ export const reconcileMemberCredit = async (memberId) => {
   const cleared = [];
 
   for (const charge of outstandingCharges) {
-    const applied = await applyCreditToMonthlyCharge(memberId, charge._id);
-    if (!applied) break; // oldest-first: stop at the first one credit can't fully cover
+    const applied = await applyCreditToMonthlyCharge(memberId, charge._id, { notify });
+    if (!applied) break;
     cleared.push(charge._id);
   }
 

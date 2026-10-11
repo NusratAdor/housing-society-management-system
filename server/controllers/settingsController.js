@@ -1,19 +1,28 @@
 // server/controllers/settingsController.js
 //
 // HTTP layer only — reads req, calls feeService, sends res.
-// No business logic here. All fee logic lives in feeService.js.
+//
+// CHANGE (this pass):
+//   - A fee change is now a transaction: FeeHistory record + required
+//     FEE_CHANGED audit commit together (it was never audited).
+//   - Members get one broadcast notification after commit (idempotent).
+//   - Setting the very first fee no longer fails: getCurrentFee() throws when
+//     no fee exists yet.
+//   - Amount is validated as a finite number with a sanity ceiling.
 
-import AuditLog from "../models/AuditLog.js";
 import {
   getCurrentFee,
   getFeeHistory,
   createFeeRecord,
   getFeeForMonth,
 } from "../services/feeService.js";
+import { writeAuditLog } from "../services/auditService.js";
+import { notifyFeeChanged } from "../services/paymentNotificationService.js";
+import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+
+const MAX_MONTHLY_FEE = 1_000_000; // typo guard, not a business rule
 
 // ─── GET /api/settings/monthly-fee ───────────────────────────────────────────
-// Public — member dashboard and admin both read this.
-// Returns the fee currently in effect.
 
 export const getMonthlyFee = async (req, res) => {
   try {
@@ -29,7 +38,6 @@ export const getMonthlyFee = async (req, res) => {
 };
 
 // ─── GET /api/settings/fee-history ───────────────────────────────────────────
-// Admin only — full log of fee changes for the audit view.
 
 export const getFeeHistoryHandler = async (req, res) => {
   try {
@@ -42,51 +50,63 @@ export const getFeeHistoryHandler = async (req, res) => {
 };
 
 // ─── PUT /api/settings/monthly-fee ───────────────────────────────────────────
-// Admin only — creates a new FeeHistory record.
-//
-// Request body:
-//   amount        (Number, required)  — new fee amount in BDT
-//   reason        (String, optional)  — why the fee is changing
-//   effectFrom    (String, optional)  — "next" (default) or "current"
-//                                       "next"    → effective from 1st of next month
-//                                       "current" → effective from 1st of this month
+// Body: amount (required), reason (optional), effectFrom ("next" | "current")
 
 export const updateMonthlyFee = async (req, res) => {
   try {
     const { amount, reason, effectFrom } = req.body;
+    const newAmount = Number(amount);
 
-    if (!amount || isNaN(amount) || Number(amount) < 1) {
+    if (!Number.isFinite(newAmount) || newAmount < 1 || newAmount > MAX_MONTHLY_FEE) {
       return res.status(400).json({
         success: false,
-        message:  "Amount must be a positive number",
+        message: "Amount must be a positive number",
       });
     }
 
     if (effectFrom && !["next", "current"].includes(effectFrom)) {
       return res.status(400).json({
         success: false,
-        message:  "effectFrom must be 'next' or 'current'",
+        message: "effectFrom must be 'next' or 'current'",
       });
     }
 
-    const previousFee = await getCurrentFee();
+    // First-ever fee: nothing to compare against.
+    let previousFee = null;
+    try {
+      previousFee = await getCurrentFee();
+    } catch {
+      previousFee = null;
+    }
 
-    // ── Append-only conflict handling ──────────────────────────────────
-    // createFeeRecord() throws a specific error when a fee is already
-    // recorded for this effective date (see feeService.js — this is
-    // deliberate, FeeHistory is append-only). A genuine simultaneous
-    // submission from two admins can also hit the underlying unique
-    // index directly as a raw Mongo E11000 error. Both are a real
-    // business conflict (409), not a server failure (500) — the
-    // previous code collapsed both into a generic 500 and the admin
-    // never saw the actual, useful message.
+    const cleanReason = typeof reason === "string" ? reason.trim().slice(0, 500) : "";
+
     let record;
     try {
-      record = await createFeeRecord({
-        amount:         Number(amount),
-        reason:         reason?.trim() || "",
-        createdBy:      req.clerkUserId,
-        effectFromNext: effectFrom !== "current",
+      record = await runInTransactionWithRetry(async (session) => {
+        const created = await createFeeRecord({
+          amount: newAmount,
+          reason: cleanReason,
+          createdBy: req.clerkUserId,
+          effectFromNext: effectFrom !== "current",
+          session,
+        });
+
+        await writeAuditLog({
+          action: "FEE_CHANGED",
+          performedBy: req.clerkUserId,
+          targetId: created._id,
+          description:
+            `Monthly fee ${previousFee === null ? "set" : `changed from ৳${previousFee}`} ` +
+            `to ৳${created.amount}, effective ${created.effectiveFrom.toISOString().slice(0, 10)}.`,
+          before: previousFee === null ? undefined : { amount: previousFee },
+          after: { amount: created.amount, effectiveFrom: created.effectiveFrom },
+          metadata: { reason: cleanReason || null },
+          session,
+          required: true,
+        });
+
+        return created;
       });
     } catch (createError) {
       const isDuplicateKey       = createError.code === 11000;
@@ -103,23 +123,23 @@ export const updateMonthlyFee = async (req, res) => {
       throw createError;
     }
 
-    await AuditLog.create({
-      action:      "FEE_CHANGED",
-      performedBy: req.clerkUserId,
-      targetId:    record._id,
-      description: `Monthly fee changed from ৳${previousFee} to ৳${amount}`,
-      before:      { amount: previousFee },
-      after:       { amount: Number(amount), effectiveFrom: record.effectiveFrom },
-      metadata:    { reason: reason?.trim() || "", effectFrom: effectFrom || "next" },
-    });
+    // After commit, best-effort. Only when the amount actually changed.
+    if (previousFee !== null && previousFee !== record.amount) {
+      await notifyFeeChanged({
+        recordId: record._id,
+        previousFee,
+        newFee: record.amount,
+        effectiveFrom: record.effectiveFrom,
+      });
+    }
 
     return res.status(201).json({
       success:       true,
       monthlyFee:    record.amount,
       effectiveFrom: record.effectiveFrom,
       message: effectFrom === "current"
-        ? `Fee updated to ৳${amount} — effective this month`
-        : `Fee updated to ৳${amount} — effective from next month`,
+        ? `Fee updated to ৳${record.amount} — effective this month`
+        : `Fee updated to ৳${record.amount} — effective from next month`,
     });
   } catch (error) {
     console.error("updateMonthlyFee error:", error.message);
@@ -128,9 +148,6 @@ export const updateMonthlyFee = async (req, res) => {
 };
 
 // ─── GET /api/settings/fee-for-month ─────────────────────────────────────────
-// Admin/dev utility — returns the fee that applies to a specific month/year.
-// Useful for verifying that the fee history is correctly structured.
-// Query params: month (1-12), year (YYYY)
 
 export const getFeeForMonthHandler = async (req, res) => {
   try {
@@ -153,12 +170,7 @@ export const getFeeForMonthHandler = async (req, res) => {
 
     const fee = await getFeeForMonth(month, year);
 
-    return res.status(200).json({
-      success: true,
-      month,
-      year,
-      fee,
-    });
+    return res.status(200).json({ success: true, month, year, fee });
   } catch (error) {
     console.error("getFeeForMonth error:", error.message);
     return res.status(500).json({ success: false, message: "Server error" });

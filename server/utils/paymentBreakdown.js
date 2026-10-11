@@ -4,6 +4,8 @@
 
 const ADVANCE_LABEL = "Advance payment (added to credit)";
 
+
+
 export const getDirectAllocations = (payment, allocations) => {
   if (!(payment.advanceAmount > 0)) return allocations; // nothing was banked
   const direct = new Set(

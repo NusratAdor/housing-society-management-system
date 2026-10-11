@@ -1,153 +1,89 @@
 // server/services/csvService.js
 //
-// Generates CSV strings from report data.
-// Uses the json2csv library for correct quoting and escaping.
-// Returns a string (not a file) — the controller sets headers and sends it.
+// CSV exports for accounting use.
+//
+// CHANGE (this pass):
+//   - ONE ROW = ONE PAYMENT. SUM("Payment Received") is always the true
+//     cash collected. The old per-charge rows repeated the payment total.
+//   - No fake summary row inside the data.
+//   - Dates are ISO (YYYY-MM-DD, Dhaka time): unambiguous in Excel.
+//   - Text cells are protected against spreadsheet formula injection
+//     (names and charge labels are user/admin-entered).
+//   - An empty result is a valid header-only CSV.
 
 import { Parser as Json2csvParser } from "json2csv";
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString("en-GB") : "");
+const fmtDate = (d) =>
+  d ? new Date(d).toLocaleDateString("en-CA", { timeZone: "Asia/Dhaka" }) : "";
 
-const MONTH_NAMES = [
-  "",
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+// A cell starting with = + - @ is executed as a formula by Excel/Sheets.
+const safeText = (value) => {
+  const s = String(value ?? "");
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+};
+
+const toCsv = (fields, rows) => {
+  if (rows.length === 0) return fields.join(",");
+  return new Json2csvParser({ fields }).parse(rows);
+};
 
 // ─── generateMemberCsv ────────────────────────────────────────────────────────
-// One row per payment allocation (not per payment).
-// This gives the most granular view — each charge on its own row.
-// Member info is repeated on each row for easy filtering in Excel.
 
-export const generateMemberCsv = ({ member, payments, summary }) => {
-  const rows = [];
+export const generateMemberCsv = ({ payments = [] }) => {
+  const fields = [
+    "Payment Date",
+    "Receipt No",
+    "Transaction ID",
+    "Payment Received (BDT)",
+    "Applied to Monthly Dues (BDT)",
+    "Applied to Extra Charges (BDT)",
+    "Added to Advance Credit (BDT)",
+    "Covers",
+  ];
 
-  for (const payment of payments) {
-    if (payment.breakdown.length === 0) {
-      // No allocation data available — output one summary row
-      rows.push({
-        "Member Name": member.name,
-        "Membership No": member.membershipNo,
-        "Plot No": member.plotNo,
-        Email: member.email,
-        "Receipt Number": payment.receiptNumber || "",
-        "Transaction ID": payment.transactionId,
-        "Payment Date": fmtDate(payment.paidAt),
-        "Charge Type": "",
-        Description: "Payment",
-        "Amount (BDT)": payment.amount,
-        "Payment Total (BDT)": payment.amount,
-        Status: payment.status,
-      });
-    } else {
-      for (const item of payment.breakdown) {
-        rows.push({
-          "Member Name": member.name,
-          "Membership No": member.membershipNo,
-          "Plot No": member.plotNo,
-          Email: member.email,
-          "Receipt Number": payment.receiptNumber || "",
-          "Transaction ID": payment.transactionId,
-          "Payment Date": fmtDate(payment.paidAt),
-          "Charge Type":
-            item.type === "monthly"
-              ? "Monthly Dues"
-              : item.type === "advance"
-                ? "Advance Credit"
-                : "Extra Charge",
-          Description: item.description,
-          "Amount (BDT)": item.amount,
-          "Payment Total (BDT)": payment.amount,
-          Status: payment.status,
-        });
-      }
-    }
-  }
+  const rows = payments.map((p) => ({
+    "Payment Date": fmtDate(p.paidAt),
+    "Receipt No": p.receiptNumber || "",
+    "Transaction ID": safeText(p.transactionId),
+    "Payment Received (BDT)": p.amount,
+    "Applied to Monthly Dues (BDT)": p.monthlyApplied || 0,
+    "Applied to Extra Charges (BDT)": p.extraApplied || 0,
+    "Added to Advance Credit (BDT)": p.advanceAmount || 0,
+    Covers: safeText(p.covers),
+  }));
 
-  // Append summary row at the bottom
-  rows.push({});
-  rows.push({
-    "Member Name": "PERIOD SUMMARY",
-    "Membership No": "",
-    "Plot No": "",
-    Email: "",
-    "Receipt Number": "",
-    "Transaction ID": "",
-    "Payment Date": `${fmtDate(summary.periodStart)} to ${fmtDate(summary.periodEnd)}`,
-    "Charge Type": "",
-    Description: "Total Paid",
-    "Amount (BDT)": summary.totalPaid,
-    "Payment Total (BDT)": summary.totalPaid,
-    Status: "",
-  });
-
-  if (rows.length === 0) {
-    return "No completed payments in this period.";
-  }
-
-  const parser = new Json2csvParser({ fields: Object.keys(rows[0] || {}) });
-  return parser.parse(rows);
+  return toCsv(fields, rows);
 };
 
 // ─── generateAdminCsv ─────────────────────────────────────────────────────────
-// One row per payment across all members.
-// Suitable for importing into accounting software.
 
-export const generateAdminCsv = ({ payments, summary }) => {
-  const rows = payments.map((payment) => ({
-    Date: fmtDate(payment.paidAt),
-    "Receipt No": payment.receiptNumber || "",
-    "Transaction ID": payment.transactionId,
-    "Member Name": payment.member?.name || "—",
-    "Membership No": payment.member?.membershipNo || "—",
-    "Plot No": payment.member?.plotNo || "—",
-    Email: payment.member?.email || "—",
-    "Amount (BDT)": payment.amount,
-    Gateway: payment.gateway || "sslcommerz",
-    Status: payment.status,
-  }));
-
-  // Summary rows
-  rows.push({});
-  rows.push({
-    Date: "PERIOD TOTAL",
-    "Receipt No": "",
-    "Transaction ID": "",
-    "Member Name": `${summary.membersWhoPayd} members`,
-    "Membership No": "",
-    "Plot No": "",
-    Email: `${fmtDate(summary.periodStart)} — ${fmtDate(summary.periodEnd)}`,
-    "Amount (BDT)": summary.totalCollection,
-    Gateway: "",
-    Status: `${summary.totalPayments} payments`,
-  });
-
-  if (payments.length === 0) {
-    return "No completed payments in this period.";
-  }
-
+export const generateAdminCsv = ({ payments = [] }) => {
   const fields = [
-    "Date",
+    "Payment Date",
     "Receipt No",
     "Transaction ID",
-    "Member Name",
     "Membership No",
-    "Plot No",
-    "Email",
-    "Amount (BDT)",
-    "Gateway",
-    "Status",
+    "Member Name",
+    "Payment Received (BDT)",
+    "Applied to Dues (BDT)",
+    "Added to Advance Credit (BDT)",
+    "Method",
   ];
-  const parser = new Json2csvParser({ fields });
-  return parser.parse(rows);
+
+  const rows = payments.map((p) => {
+    const advance = p.advanceAmount || 0;
+    return {
+      "Payment Date": fmtDate(p.paidAt),
+      "Receipt No": p.receiptNumber || "",
+      "Transaction ID": safeText(p.transactionId),
+      "Membership No": safeText(p.member?.membershipNo),
+      "Member Name": safeText(p.member?.name),
+      "Payment Received (BDT)": p.amount,
+      "Applied to Dues (BDT)": p.amount - advance,
+      "Added to Advance Credit (BDT)": advance,
+      Method: p.gateway || "sslcommerz",
+    };
+  });
+
+  return toCsv(fields, rows);
 };

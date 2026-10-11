@@ -124,6 +124,30 @@ const getStatusClasses = (status) => {
   return "bg-slate-100 text-slate-600 border-slate-200";
 };
 
+
+const compareMembershipNumbers = (a, b) => {
+    const numberA = Number(a?.membershipNo);
+    const numberB = Number(b?.membershipNo);
+
+    if (
+      Number.isFinite(numberA) &&
+      Number.isFinite(numberB) &&
+      numberA !== numberB
+    ) {
+      return numberA - numberB;
+    }
+
+    return String(a?.membershipNo || "").localeCompare(
+      String(b?.membershipNo || ""),
+      undefined,
+      {
+        numeric: true,
+        sensitivity: "base",
+      },
+    );
+  };
+  
+
 const ManageMembers = () => {
   const { axios, getToken } = useAppContext();
 
@@ -300,27 +324,7 @@ const dueBtnRefs = useRef({});
    * ------------------------------------------------------------
    */
 
-  const compareMembershipNumbers = (a, b) => {
-    const numberA = Number(a?.membershipNo);
-    const numberB = Number(b?.membershipNo);
-
-    if (
-      Number.isFinite(numberA) &&
-      Number.isFinite(numberB) &&
-      numberA !== numberB
-    ) {
-      return numberA - numberB;
-    }
-
-    return String(a?.membershipNo || "").localeCompare(
-      String(b?.membershipNo || ""),
-      undefined,
-      {
-        numeric: true,
-        sensitivity: "base",
-      },
-    );
-  };
+  
 
   const sortedMembers = useMemo(() => {
     return [...filteredMembers].sort((a, b) => {
@@ -389,6 +393,18 @@ const dueBtnRefs = useRef({});
   useEffect(() => {
   setOpenDuePopover(null);
 }, [currentPage, searchTerm, plotSizeFilter]);
+
+
+  useEffect(() => {
+    if (!openDuePopover) return;
+    const close = () => setOpenDuePopover(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [openDuePopover]);
 
 
 useLayoutEffect(() => {
@@ -817,10 +833,9 @@ useLayoutEffect(() => {
    * ------------------------------------------------------------
    */
 
-  const handleRejectAdmin = async (member) => {
-    if (rejectingMemberId) return;
+    const handleRejectAdmin = async (member) => {
+    if (rejecting) return;
 
-    setRejectingMemberId(member._id);
     setRejecting(true);
 
     try {

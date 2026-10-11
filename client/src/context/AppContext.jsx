@@ -30,6 +30,7 @@ export const AppProvider = ({ children }) => {
   const navigate = useNavigate();
   const { user }  = useUser();
   const { getToken, isLoaded } = useAuth();
+  const userId = user?.id; 
 
   const [memberProfile,  setMemberProfile]  = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -51,6 +52,11 @@ export const AppProvider = ({ children }) => {
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
 
+
+
+
+
+
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
@@ -70,7 +76,7 @@ export const AppProvider = ({ children }) => {
       return;
     }
 
-    if (!user) {
+    if (!userId) {
       clearRetryTimer();
       retryCountRef.current = 0;
       setMemberProfile(null);
@@ -156,14 +162,14 @@ export const AppProvider = ({ children }) => {
         toast.error("Could not connect to server. Please refresh the page.");
       }
     }
-  }, [isLoaded, user, clearRetryTimer]);
+  }, [isLoaded, userId, clearRetryTimer]);
 
   const fetchStaffProfile = useCallback(async () => {
     if (!isLoaded) {
       return;
     }
 
-    if (!user) {
+    if (!userId) {
       clearStaffRetryTimer();
       staffRetryCountRef.current = 0;
       setStaffProfile(null);
@@ -231,7 +237,7 @@ export const AppProvider = ({ children }) => {
       setIsContentManager(false);
       setLoadingStaffProfile(false);
     }
-  }, [isLoaded, user, clearStaffRetryTimer]);
+  }, [isLoaded, userId, clearStaffRetryTimer]);
 
   useEffect(() => {
     clearRetryTimer();
@@ -290,6 +296,7 @@ export const AppProvider = ({ children }) => {
     availableWorkspaces,
     // NEW
     isRemovedMember,
+  
   }), [
     navigate, user, getToken,
     memberProfile, fetchMemberProfile, loadingProfile, isAdmin,

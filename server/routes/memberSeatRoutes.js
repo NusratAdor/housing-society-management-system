@@ -10,6 +10,8 @@ import {
   importSeatsFromCSV,
 } from "../controllers/memberSeatController.js";
 
+import { validateObjectId } from "../middleware/validateObjectId.js";
+
 const router = express.Router();
 
 // CSV-only upload middleware — separate from the image/PDF upload middleware
@@ -37,7 +39,7 @@ const csvUpload = multer({
 router.get(    "/",           getAllSeats);
 router.post(   "/",           createSeat);
 router.post(   "/import",     csvUpload.single("csvFile"), importSeatsFromCSV);
-router.put(    "/:id",        updateSeat);
-router.delete( "/:id",        deleteSeat);
+router.put("/:id", validateObjectId(), updateSeat);
+router.delete("/:id", validateObjectId(), deleteSeat);
 
 export default router;

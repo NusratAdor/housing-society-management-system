@@ -19,22 +19,43 @@
 //      silently coerces invalid input to 0.
 //   3. Added explicit duplicate-ID rejection for both selection arrays.
 
-import mongoose      from "mongoose";
+import mongoose from "mongoose";
 import MonthlyCharge from "../models/MonthlyCharge.js";
-import ExtraCharge   from "../models/ExtraCharge.js";
+import ExtraCharge from "../models/ExtraCharge.js";
 import { getCurrentFee } from "./feeService.js";
-import { getMemberCreditBalance } from "./creditService.js";
+
 import { MAX_PREPAY_MONTHS } from "../configs/paymentConfig.js";
+import { getPrepayPlan } from "./feeService.js";
+import { getMemberCreditBalance, reconcileMemberCredit } from "./creditService.js";
+
+const MONTH_NAMES = [
+  "",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
 
 export const validatePaymentSelection = async ({
   memberId,
   selectedMonthlyIds = [],
-  selectedExtraIds   = [],
-  partialAmounts     = {},
-  advanceAmount      = 0,
+  selectedExtraIds = [],
+  advanceAmount = 0,
 }) => {
   // ── Advance amount: strict numeric validation ──────────────────────────
-  if (advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== 0) {
+  if (
+    advanceAmount !== undefined &&
+    advanceAmount !== null &&
+    advanceAmount !== 0
+  ) {
     if (!Number.isFinite(Number(advanceAmount))) {
       throw new Error("Advance amount must be a valid number");
     }
@@ -45,36 +66,60 @@ export const validatePaymentSelection = async ({
     throw new Error("Advance amount cannot be negative");
   }
 
-  if (advanceAmt > 0) {
-  const [fee, existingCredit] = await Promise.all([
-    getCurrentFee(),
-    getMemberCreditBalance(memberId),
-  ]);
-  if (existingCredit + advanceAmt > fee * MAX_PREPAY_MONTHS) {
-    throw new Error(
-      `Prepaid credit cannot exceed ${MAX_PREPAY_MONTHS} months of fees`,
-    );
+    // The gateway is charged .toFixed(2); more decimals here would make the
+  // recorded amount and the charged amount disagree.
+  if (Math.abs(advanceAmt * 100 - Math.round(advanceAmt * 100)) > 1e-6) {
+    throw new Error("Advance amount can have at most 2 decimal places");
   }
-}
+
+  let existingCredit = 0;
+  if (advanceAmt > 0) {
+    let newestCharge;
+    [newestCharge, existingCredit] = await Promise.all([
+      MonthlyCharge.findOne({ member: memberId })
+        .sort({ year: -1, month: -1 })
+        .select("month year")
+        .lean(),
+      getMemberCreditBalance(memberId),
+    ]);
+
+    const { capacity } = await getPrepayPlan({
+      newestCharge,
+      creditBalance: existingCredit,
+    });
+
+    if (existingCredit + advanceAmt > capacity) {
+      throw new Error(
+        `Prepaid credit cannot exceed ${MAX_PREPAY_MONTHS} months of fees`,
+      );
+    }
+  }
 
   // ── Reject duplicate IDs outright — financial input, no ambiguity allowed
-  if (new Set(selectedMonthlyIds.map(String)).size !== selectedMonthlyIds.length) {
+  if (
+    new Set(selectedMonthlyIds.map(String)).size !== selectedMonthlyIds.length
+  ) {
     throw new Error("Duplicate monthly charge selected");
   }
   if (new Set(selectedExtraIds.map(String)).size !== selectedExtraIds.length) {
     throw new Error("Duplicate extra charge selected");
   }
 
-  const hasChargeSelection = selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
+  const hasChargeSelection =
+    selectedMonthlyIds.length > 0 || selectedExtraIds.length > 0;
 
   if (!hasChargeSelection && advanceAmt <= 0) {
-    throw new Error("Select at least one charge to pay, or enter an amount to pay in advance");
+    throw new Error(
+      "Select at least one charge to pay, or enter an amount to pay in advance",
+    );
   }
 
   const memberObjectId = new mongoose.Types.ObjectId(memberId);
 
-  const allUnpaidMonthly = await MonthlyCharge
-    .find({ member: memberObjectId, status: "Unpaid" })
+  const allUnpaidMonthly = await MonthlyCharge.find({
+    member: memberObjectId,
+    status: "Unpaid",
+  })
     .sort({ year: 1, month: 1 })
     .lean();
 
@@ -84,7 +129,7 @@ export const validatePaymentSelection = async ({
   if (selectedMonthlyIds.length > 0) {
     if (selectedMonthlyIds.length > allUnpaidMonthly.length) {
       throw new Error(
-        `You selected ${selectedMonthlyIds.length} months but only ${allUnpaidMonthly.length} are unpaid`
+        `You selected ${selectedMonthlyIds.length} months but only ${allUnpaidMonthly.length} are unpaid`,
       );
     }
 
@@ -99,28 +144,85 @@ export const validatePaymentSelection = async ({
 
       if (!selectedSet.has(String(expectedCharge._id))) {
         const MONTH_NAMES = [
-          "", "January", "February", "March", "April", "May", "June",
-          "July", "August", "September", "October", "November", "December",
+          "",
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
         ];
         throw new Error(
           `Payment must follow oldest-first order. ` +
-          `${MONTH_NAMES[expectedCharge.month]} ${expectedCharge.year} must be paid before later months.`
+            `${MONTH_NAMES[expectedCharge.month]} ${expectedCharge.year} must be paid before later months.`,
         );
       }
     }
 
     const validIds = new Set(
-      allUnpaidMonthly.slice(0, selectedMonthlyIds.length).map(c => String(c._id))
+      allUnpaidMonthly
+        .slice(0, selectedMonthlyIds.length)
+        .map((c) => String(c._id)),
     );
     for (const id of selectedMonthlyIds) {
       if (!validIds.has(String(id))) {
         throw new Error(
-          "Invalid monthly charge selection: charges must be paid in chronological order"
+          "Invalid monthly charge selection: charges must be paid in chronological order",
         );
       }
     }
 
     selectedMonthly = allUnpaidMonthly.slice(0, selectedMonthlyIds.length);
+  }
+
+
+    // ── Credit shortfall rule ────────────────────────────────────────────────
+  // If credit does not fully cover the oldest month that will STILL be unpaid
+  // after this payment (typically the fee rose after the member prepaid), the
+  // only advance allowed is the exact difference. Further prepaying unlocks
+  // once that month is covered.
+
+
+  
+   // ── Advance lock ─────────────────────────────────────────────────────────
+  // While a month stays unpaid after this payment, the ONLY advance allowed is
+  // the exact amount that completes the oldest such month (fee − credit held).
+  // Selection is by charge id, so it does not depend on selection order.
+  const selectedMonthlySet = new Set(selectedMonthly.map((c) => String(c._id)));
+  const stillUnpaid = allUnpaidMonthly.filter(
+    (charge) => !selectedMonthlySet.has(String(charge._id)),
+  );
+
+  if (advanceAmt > 0 && stillUnpaid.length > 0) {
+    const oldest = stillUnpaid[0];
+    const need = Math.max(0, oldest.amount - existingCredit);
+
+        if (need === 0) {
+      // Credit already covers this month: apply it NOW rather than making the
+      // member wait for the daily sweep. Idempotent and safe to repeat.
+      try {
+        await reconcileMemberCredit(memberId);
+      } catch (error) {
+        console.error("[Validation] Immediate credit reconcile failed:", error.message);
+      }
+      throw new Error(
+        "Your credit covers your oldest unpaid month and is being applied. " +
+          "Please refresh the page and try again.",
+      );
+    }
+
+    if (Math.abs(advanceAmt - need) > 0.01) {
+      throw new Error(
+        `Complete ${MONTH_NAMES[oldest.month]} ${oldest.year} first by paying exactly ` +
+          `৳${need.toLocaleString()}. Further advance payments unlock once it is settled.`,
+      );
+    }
   }
 
   // NOTE: the old "advanceAmt > 0 requires all unpaid months cleared"
@@ -132,40 +234,32 @@ export const validatePaymentSelection = async ({
   let selectedExtra = [];
 
   if (selectedExtraIds.length > 0) {
-    selectedExtra = await ExtraCharge
-      .find({
-        _id:    { $in: selectedExtraIds.map(id => new mongoose.Types.ObjectId(id)) },
-        member: memberObjectId,
-        status: "Unpaid",
-      })
-      .lean();
+    selectedExtra = await ExtraCharge.find({
+      _id: {
+        $in: selectedExtraIds.map((id) => new mongoose.Types.ObjectId(id)),
+      },
+      member: memberObjectId,
+      status: "Unpaid",
+    }).lean();
 
     if (selectedExtra.length !== selectedExtraIds.length) {
-      const foundIds   = new Set(selectedExtra.map(c => String(c._id)));
-      const missingIds = selectedExtraIds.filter(id => !foundIds.has(String(id)));
+      const foundIds = new Set(selectedExtra.map((c) => String(c._id)));
+      const missingIds = selectedExtraIds.filter(
+        (id) => !foundIds.has(String(id)),
+      );
 
       throw new Error(
         `Some extra charges are invalid, already paid, or do not belong to you. ` +
-        `Invalid IDs: ${missingIds.join(", ")}`
+          `Invalid IDs: ${missingIds.join(", ")}`,
       );
     }
   }
 
   // ── Extra charges: full amount only ─────────────────────────────────────
-  const partialKeys = Object.keys(partialAmounts);
-  for (const key of partialKeys) {
-    if (!selectedExtraIds.map(String).includes(String(key))) {
-      throw new Error("Partial amount provided for a charge that was not selected");
-    }
-  }
-
   const extraChargeAmounts = {};
+
   for (const charge of selectedExtra) {
-    const cid = String(charge._id);
-    if (Object.prototype.hasOwnProperty.call(partialAmounts, cid)) {
-      throw new Error(`"${charge.label}" does not support partial payment`);
-    }
-    extraChargeAmounts[cid] = charge.amount;
+    extraChargeAmounts[String(charge._id)] = charge.amount;
   }
 
   // ── Compute verified total from database records ────────────────────────
@@ -174,10 +268,9 @@ export const validatePaymentSelection = async ({
     Object.values(extraChargeAmounts).reduce((sum, amt) => sum + amt, 0) +
     advanceAmt;
 
-   if (totalAmount < 1) {
+  if (totalAmount < 1) {
     throw new Error("Computed payment amount must be at least 1 BDT");
   }
-
 
   return {
     totalAmount,

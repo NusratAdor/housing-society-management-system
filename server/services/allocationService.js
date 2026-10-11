@@ -27,6 +27,13 @@ import Payment from "../models/Payment.js";
 import PaymentAllocation from "../models/PaymentAllocation.js";
 import Counter from "../models/Counter.js";
 import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
+import { writeAuditLog } from "./auditService.js";
+
+import { getDhakaDateParts } from "../utils/dateTime.js";
+import { getMemberCreditBalance } from "./creditService.js";
+
+
+
 
 // ─── generateReceiptNumber ────────────────────────────────────────────────
 // The sequential number comes from a dedicated Counter document.
@@ -35,15 +42,20 @@ import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
 // never depends on counting existing payments.
 
 export const generateReceiptNumber = async (session) => {
-  const year = new Date().getFullYear();
+  const { year } = getDhakaDateParts();
 
   const counter = await Counter.findOneAndUpdate(
     { _id: "receipt-sequence" },
     { $inc: { seq: 1 } },
-    { new: true, upsert: true, session },
+    {
+      new: true,
+      upsert: true,
+      session,
+    },
   );
 
   const seq = String(counter.seq).padStart(6, "0");
+
   return `RCP-${year}-${seq}`;
 };
 
@@ -66,9 +78,13 @@ export const allocatePayment = async ({
       throw new Error(`Payment ${paymentId} not found`);
     }
 
-    if (payment.status === "completed") {
+       if (payment.status === "completed") {
       // Idempotent: already processed (e.g. a duplicate confirm click).
-      return { receiptNumber: payment.receiptNumber, allocations: [] };
+      return {
+        receiptNumber: payment.receiptNumber,
+        allocations: [],
+        paidAt: payment.paidAt,
+      };
     }
 
     if (payment.status !== "processing") {
@@ -76,6 +92,14 @@ export const allocatePayment = async ({
         `Payment ${paymentId} has status "${payment.status}" — only a payment claimed for processing can be allocated`,
       );
     }
+
+        // Credit held BEFORE this payment becomes credit, read inside this
+    // transaction so the statement is consistent with the money movements.
+    // (A "processing" payment is not counted as credit yet.)
+    const creditBefore =
+      (payment.advanceAmount || 0) > 0
+        ? await getMemberCreditBalance(payment.member, session)
+        : 0;
 
     // ── Step 2: Allocate monthly charges — full amount only ──────────────
     const allocationDocs = [];
@@ -187,6 +211,41 @@ export const allocatePayment = async ({
     payment.confirmedAt = now;
     await payment.save({ session });
 
-    return { receiptNumber, allocations };
+    await writeAuditLog({
+      action: "PAYMENT_APPROVED",
+      performedBy: confirmedBy,
+      targetId: payment._id,
+      description:
+        `Admin confirmed payment of ৳${payment.amount}` +
+        (payment.advanceAmount > 0
+          ? ` (incl. ৳${payment.advanceAmount} advance)`
+          : "") +
+        ` (${payment.transactionId}). Receipt: ${receiptNumber}`,
+
+      before: {
+        status: "processing",
+      },
+
+      after: {
+        status: "completed",
+        receiptNumber,
+      },
+
+      metadata: {
+        transactionId: payment.transactionId,
+        amount: payment.amount,
+        memberId: String(payment.member),
+        advanceAmount: payment.advanceAmount,
+        chargesPortion: payment.amount - payment.advanceAmount,
+        directAllocationCount: allocationDocs.length,
+      },
+
+      session,
+      required: true,
+    });
+
+
+
+           return { receiptNumber, allocations, paidAt: now, creditBefore };
   });
 };

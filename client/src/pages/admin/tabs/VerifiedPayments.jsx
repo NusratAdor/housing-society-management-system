@@ -29,6 +29,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAppContext } from "../../../context/AppContext";
 
+import { formatDate, DATE_TIME } from "../../../utils/formatDate";
+import { describePaymentContents } from "../../../utils/paymentSummary";
+
 export default function VerifiedPayments({ onCountChange }) {
   const { axios, getToken } = useAppContext();
 
@@ -65,7 +68,9 @@ export default function VerifiedPayments({ onCountChange }) {
 
   useEffect(() => {
     fetchVerified(false);
-    const interval = setInterval(() => fetchVerified(true), 30_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") fetchVerified(true); // fetchVerified in Verified
+    }, 30_000);
     return () => clearInterval(interval);
   }, [fetchVerified]);
 
@@ -187,8 +192,9 @@ export default function VerifiedPayments({ onCountChange }) {
         <ShieldCheck className="h-4 w-4 flex-shrink-0 mt-0.5 text-emerald-600" />
         <p>
           The payment gateway has confirmed these transactions. Confirming here
-          marks the member's dues as paid, issues a receipt, and notifies them.
-          Nothing is applied to a member's account until you confirm.
+          marks the selected dues as paid and/or adds money to the member's
+          credit balance, issues a receipt, and notifies them. Nothing is
+          applied to a member's account until you confirm.
         </p>
       </div>
 
@@ -224,7 +230,10 @@ export default function VerifiedPayments({ onCountChange }) {
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">
                     ৳{payment.amount.toLocaleString()} · verified{" "}
-                    {new Date(payment.verifiedAt).toLocaleString("en-GB")}
+                    {formatDate(payment.verifiedAt, DATE_TIME)}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    {describePaymentContents(payment)}
                   </p>
                   <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate">
                     {payment.transactionId}
@@ -273,8 +282,11 @@ export default function VerifiedPayments({ onCountChange }) {
             <AlertDialogTitle>Reject Payment</AlertDialogTitle>
             <AlertDialogDescription>
               Reject ৳{rejectDialog?.amount?.toLocaleString()} payment from{" "}
-              <strong>{rejectDialog?.memberName}</strong>? A rejection reason is
-              required and will be shown to the member.
+              <strong>{rejectDialog?.memberName}</strong>? The gateway has
+              already collected this money and rejecting does{" "}
+              <strong>not</strong> refund it — arrange the refund in the
+              SSLCommerz panel. A reason is required and will be shown to the
+              member.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="px-6 pb-2">
@@ -290,7 +302,10 @@ export default function VerifiedPayments({ onCountChange }) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={rejecting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleReject}
+              onClick={(e) => {
+                e.preventDefault();
+                handleReject();
+              }}
               disabled={rejecting || !rejectReason.trim()}
               className="bg-red-600 hover:bg-red-700 gap-1.5"
             >

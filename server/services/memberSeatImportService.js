@@ -143,6 +143,7 @@ const validateRow = (row, line) => {
 export const importMemberSeats = async ({
   rows,
   performedBy = "SYSTEM",
+  session = null,
 }) => {
   if (!Array.isArray(rows) || rows.length === 0) {
     return {
@@ -249,9 +250,11 @@ export const importMemberSeats = async ({
     (row) => row.membershipNo,
   );
 
-  const existingSeats = await MemberSeat.find({
+   const existingSeats = await MemberSeat.find({
     membershipNo: { $in: membershipNumbers },
-  }).lean();
+  })
+    .session(session)
+    .lean();
 
   const existingMap = new Map(
     existingSeats.map((seat) => [
@@ -349,12 +352,11 @@ export const importMemberSeats = async ({
   }
 
   // ── Step 5: One bulk database write ─────────────────────────────────────
-
   if (operations.length > 0) {
-    await MemberSeat.bulkWrite(
-      operations,
-      { ordered: false },
-    );
+    await MemberSeat.bulkWrite(operations, {
+      ordered: false,
+      ...(session ? { session } : {}),
+    });
   }
 
   return {
