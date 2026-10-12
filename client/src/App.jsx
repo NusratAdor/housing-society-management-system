@@ -50,8 +50,10 @@ import CommitteeSection from "./pages/CommitteeSection";
 import CommitteeMemberDetail from "./pages/CommitteeMemberDetail";
 
 import Services from "./pages/Services";
-import SwimmingPool from "./pages/SwimmingPool";
-import MemberSupport from "./pages/MemberSupport";
+import GuestHouse from "./pages/services/GuestHouse";
+import UtilityServices from "./pages/services/UtilityServices";
+import UtilityRequest from "./pages/services/UtilityRequest";
+
 
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
@@ -73,6 +75,7 @@ import ManageMemberSeats from "./pages/admin/ManageMemberSeats";
 import ManagePayments from "./pages/admin/ManagePayments";
 import ManageCommittee from "./pages/admin/ManageCommittee";
 import ManageAnnouncement from "./pages/admin/ManageAnnouncement";
+import ManageServiceRequests from "./pages/admin/ManageServiceRequests";
 import DashboardLayout from "./layouts/DashboardLayout";
 
 // NEW — Super Admin
@@ -81,6 +84,8 @@ import ManageStaff from "./pages/superadmin/ManageStaff";
 
 import LoadingScreen from "./components/LoadingScreen";
 import { ScrollRestorer, ScrollToTopButton } from "./components/ScrollToTop";
+import Reports from "./pages/admin/Reports";
+import ReportPage from "./pages/admin/ReportPage";
 
 // near the other small components / just above ProtectedRoute
 const MembershipRemovedScreen = () => (
@@ -273,6 +278,25 @@ const App = () => {
                 </ProtectedRoute>
               }
             />
+
+            <Route
+              path="reports"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <Reports />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="reports/:reportKey"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ReportPage />
+                </ProtectedRoute>
+              }
+            />
+
             <Route
               path="manage-events"
               element={
@@ -305,7 +329,21 @@ const App = () => {
                 </ProtectedRoute>
               }
             />
+
+            <Route
+              path="service-requests"
+              element={
+                <ProtectedRoute allowedRoles={["admin"]}>
+                  <ManageServiceRequests  />
+                </ProtectedRoute>
+              }
+            />
+
+
+
           </Route>
+
+          
 
           {/* Super Admin — single-purpose: manage staff accounts only. */}
           <Route
@@ -388,12 +426,16 @@ const App = () => {
 
                 <Route path="/our-services" element={<Services />} />
                 <Route
-                  path="/our-services/swimming-pool"
-                  element={<SwimmingPool />}
+                  path="/our-services/guest-house"
+                  element={<GuestHouse />}
                 />
                 <Route
-                  path="/our-services/member-support"
-                  element={<MemberSupport />}
+                  path="/our-services/utility-services"
+                  element={<UtilityServices />}
+                />
+                <Route
+                  path="/our-services/utility-services/:type"
+                  element={<UtilityRequest />}
                 />
 
                 <Route path="/privacy-policy" element={<PrivacyPolicy />} />

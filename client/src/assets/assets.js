@@ -31,6 +31,7 @@ import totalRevenueIcon from "./totalRevenueIcon.svg";
 
 
 
+
 export const assets = {
   logo,
   logoScrolled,
@@ -64,6 +65,7 @@ export const assets = {
   uploadArea,
   totalBookingIcon,
   totalRevenueIcon,
+
 };
 
 

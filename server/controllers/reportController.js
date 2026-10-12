@@ -16,17 +16,28 @@ import {
   getMemberReportData,
   getAdminReportData,
   getSingleReceiptData,
+  getMemberDirectoryData,
+  getOutstandingDuesData,
+  getMemberStatementData,
 } from "../services/reportService.js";
 import {
   drawReceipt,
   drawMemberReport,
   drawAdminReport,
+   drawMemberDirectory,
+  drawOutstandingReport,
+  drawStatement,
 } from "../services/pdfService.js";
 import {
   generateMemberCsv,
   generateAdminCsv,
+  generateDirectoryCsv,
+  generateOutstandingCsv,
+  generateStatementCsv,
 } from "../services/csvService.js";
-import { parseDateString, getDhakaDayBounds } from "../utils/dateTime.js";
+import { parseDateString, getDhakaDayBounds, getDhakaDateParts } from "../utils/dateTime.js";
+
+
 
 // Messages that are safe to show to the client.
 const isClientError = (message) =>
@@ -34,6 +45,9 @@ const isClientError = (message) =>
 
 const sendReportError = (res, label, error) => {
   console.error(`${label} error:`, error.message);
+  if (error.message.includes("not found")) {
+    return res.status(404).json({ success: false, message: error.message });
+  }
   if (isClientError(error.message)) {
     return res.status(400).json({ success: false, message: error.message });
   }
@@ -209,5 +223,109 @@ export const downloadAdminCsv = async (req, res) => {
     });
   } catch (error) {
     return sendReportError(res, "downloadAdminCsv", error);
+  }
+};
+
+
+
+// ─── Admin reports: one handler for all four ──────────────────────────────────
+// GET /api/reports/admin/<report>?format=json|pdf|csv  (+ startDate/endDate/status)
+
+const JSON_ROW_LIMIT = 1000; // preview only; PDF and CSV are always complete
+
+const todayLabel = () => {
+  const { year, month, day } = getDhakaDateParts();
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
+const REPORTS = {
+  directory: {
+    load: (req) =>
+      getMemberDirectoryData({
+        status: ["active", "removed", "all"].includes(req.query.status) ? req.query.status : "active",
+      }),
+    pdf: drawMemberDirectory,
+    csv: generateDirectoryCsv,
+    filename: () => `member-directory-${todayLabel()}`,
+    json: (d) => d,
+  },
+  collection: {
+    range: true,
+    load: (req, range) => getAdminReportData(range),
+    pdf: drawAdminReport,
+    csv: generateAdminCsv,
+    filename: (d, range) => `collection-report-${range.rangeLabel}`,
+    json: (d) => ({
+      summary: d.summary,
+      truncated: d.payments.length > JSON_ROW_LIMIT,
+      payments: d.payments.slice(0, JSON_ROW_LIMIT).map((p) => ({
+        _id: p._id,
+        paidAt: p.paidAt,
+        receiptNumber: p.receiptNumber,
+        amount: p.amount,
+        advanceAmount: p.advanceAmount,
+        monthlyApplied: p.monthlyApplied,
+        extraApplied: p.extraApplied,
+        member: { name: p.member?.name, membershipNo: p.member?.membershipNo },
+      })),
+    }),
+  },
+  outstanding: {
+    load: () => getOutstandingDuesData(),
+    pdf: drawOutstandingReport,
+    csv: generateOutstandingCsv,
+    filename: () => `outstanding-dues-${todayLabel()}`,
+    json: (d) => d,
+  },
+  statement: {
+    range: true,
+    load: (req, range) =>
+      getMemberStatementData({
+        memberId: req.params.memberId,
+        startDate: range.startDate,
+        endDate: range.endDate,
+      }),
+    pdf: drawStatement,
+    csv: generateStatementCsv,
+    filename: (d, range) => `statement-${d.member.membershipNo}-${range.rangeLabel}`,
+    json: (d) => d,
+  },
+};
+
+export const serveAdminReport = (key) => async (req, res) => {
+  try {
+    const report = REPORTS[key];
+    const format = typeof req.query.format === "string" ? req.query.format : "json";
+
+    if (!["json", "pdf", "csv"].includes(format)) {
+      return res.status(400).json({ success: false, message: "Invalid format" });
+    }
+
+    const range = report.range
+      ? parseDateRange(req.query.startDate, req.query.endDate)
+      : null;
+
+    const data = await report.load(req, range);
+    const base = report.filename(data, range);
+
+    if (format === "pdf") {
+      return sendFile(res, {
+        contentType: "application/pdf",
+        filename: `${base}.pdf`,
+        body: await report.pdf(data),
+      });
+    }
+    if (format === "csv") {
+      return sendFile(res, {
+        contentType: "text/csv; charset=utf-8",
+        filename: `${base}.csv`,
+        body: "\uFEFF" + report.csv(data),
+      });
+    }
+
+    res.set("Cache-Control", "no-store");
+    return res.status(200).json({ success: true, ...report.json(data) });
+  } catch (error) {
+    return sendReportError(res, `adminReport:${key}`, error);
   }
 };

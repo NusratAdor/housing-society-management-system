@@ -43,6 +43,15 @@ const MONTH_NAMES = [
 // A month fully covered by credit is routine: in-app notification only.
 // Set to true to also email it (it counts against the daily email budget).
 const EMAIL_ON_CREDIT_APPLIED = false;
+
+// Credit left on one deposit. Shared by the per-member and the bulk reader.
+const remainingCredit = (deposit, totalAllocated) => {
+  const chargesPortion = deposit.amount - deposit.advanceAmount;
+  const appliedFromCredit = Math.max(0, totalAllocated - chargesPortion);
+  return deposit.advanceAmount - appliedFromCredit;
+};
+
+
 // ─── getAvailableCreditDeposits ─────────────────────────────────────────────
 // Completed payments that still have unapplied credit, oldest first (FIFO).
 
@@ -75,13 +84,10 @@ const getAvailableCreditDeposits = async (memberId, session = null) => {
   );
 
   return deposits
-    .map((deposit) => {
-      const chargesPortion = deposit.amount - deposit.advanceAmount;
-      const totalAllocated = allocatedByPayment[String(deposit._id)] || 0;
-      const appliedFromCredit = Math.max(0, totalAllocated - chargesPortion);
-      const remaining = deposit.advanceAmount - appliedFromCredit;
-      return { paymentId: deposit._id, remaining };
-    })
+        .map((deposit) => ({
+      paymentId: deposit._id,
+      remaining: remainingCredit(deposit, allocatedByPayment[String(deposit._id)] || 0),
+    }))
     .filter((d) => d.remaining > 0);
 };
 
@@ -305,4 +311,28 @@ export const reconcileMemberCredit = async (memberId, { notify = true } = {}) =>
   }
 
   return cleared;
+};
+
+// Credit balance of EVERY member in two queries (reports). Same formula as above.
+export const getCreditBalanceMap = async () => {
+  const deposits = await Payment.find({ advanceAmount: { $gt: 0 }, status: "completed" })
+    .select("member amount advanceAmount")
+    .lean();
+  if (deposits.length === 0) return new Map();
+
+  const totals = await PaymentAllocation.aggregate([
+    { $match: { payment: { $in: deposits.map((d) => d._id) } } },
+    { $group: { _id: "$payment", total: { $sum: "$amount" } } },
+  ]);
+  const allocated = new Map(totals.map((t) => [String(t._id), t.total]));
+
+  const balances = new Map();
+  for (const deposit of deposits) {
+    const remaining = remainingCredit(deposit, allocated.get(String(deposit._id)) || 0);
+    if (remaining > 0) {
+      const key = String(deposit.member);
+      balances.set(key, (balances.get(key) || 0) + remaining);
+    }
+  }
+  return balances;
 };

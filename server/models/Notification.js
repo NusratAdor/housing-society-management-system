@@ -22,6 +22,7 @@ const notificationSchema = new mongoose.Schema(
         "Payment",
         "AdminApproved",
         "AdminRejected",
+        "ServiceRequest",
       ],
     },
     content: { type: String, required: true },

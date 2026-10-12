@@ -29,6 +29,7 @@ import { useAppContext } from "../../context/AppContext";
 
 import usePageTitle from "../../hooks/usePageTitle";
 import { formatDate, getDhakaYearMonth } from "../../utils/formatDate";
+import { ClipboardList } from "lucide-react";
 
 const MONTH_NAMES = [
   "",
@@ -89,6 +90,12 @@ const ACTIVITY_META = {
     color: "text-blue-400",
     bg: "bg-blue-50",
     label: "Notice published",
+  },
+  ServiceRequest: {
+    icon: ClipboardList,
+    color: "text-teal-500",
+    bg: "bg-teal-50",
+    label: "Service request",
   },
   // FAQ intentionally omitted — admin-self-generated, no signal value
 };

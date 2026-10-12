@@ -28,8 +28,10 @@ import settingsRoutes from "./routes/settingsRoutes.js";
 
 import reportRoutes from "./routes/reportRoutes.js";
 
-import staffRouter from "./routes/staffRoutes.js";
-import superAdminRouter from "./routes/superAdminRoutes.js";
+import staffRoutes from "./routes/staffRoutes.js";
+import superAdminRoutes from "./routes/superAdminRoutes.js";
+
+import serviceRequestRoutes from "./routes/serviceRequestRoutes.js";
 
 import testRoutes from "./routes/testRoutes.js";
 
@@ -92,8 +94,8 @@ const memberLimiter = rateLimit({
   message: { success: false, message: "Too many actions in a short time. Please wait a moment." },
 });
 
-app.use("/api/staff", staffRouter);
-app.use("/api/super-admin", superAdminRouter);
+app.use("/api/staff", staffRoutes);
+app.use("/api/super-admin", superAdminRoutes);
 
 app.use("/api/members", memberLimiter, memberRouter);
 app.use("/api/admin", adminRouter);
@@ -109,6 +111,8 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/charges", chargeRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/reports", reportRoutes);
+
+app.use("/api/service-requests", serviceRequestRoutes);
 
 app.use("/payment", paymentRedirects);
 app.use("/test", testRoutes);

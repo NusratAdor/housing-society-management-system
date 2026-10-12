@@ -10,6 +10,8 @@ import {
   UserCog,
   Megaphone,
   CalendarClock,
+  BarChart3, 
+  ClipboardList
 } from "lucide-react";
 
 const sidebarLinks = [
@@ -23,6 +25,8 @@ const sidebarLinks = [
   { name: "Manage Committee", path: "/admin/manage-committee", icon: <UserCog className="h-5 w-5 shrink-0" strokeWidth={2.25} /> },
   { name: "Manage Announcements", path: "/admin/manage-announcements", icon: <Megaphone className="h-5 w-5 shrink-0" strokeWidth={2.25} /> },
   { name: "Manage Payments", path: "/admin/payments", icon: <DollarSign className="h-5 w-5 shrink-0" strokeWidth={2.25} /> },
+    { name: "Service Requests", path: "/admin/service-requests", icon: <ClipboardList className="h-5 w-5 shrink-0" strokeWidth={2.25} /> },
+    { name: "Reports", path: "/admin/reports", icon: <BarChart3 className="h-5 w-5 shrink-0" strokeWidth={2.25} /> },
 ];
 
 const Sidebar = () => {

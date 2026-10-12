@@ -33,6 +33,9 @@ import memberSeatRoutes from "./memberSeatRoutes.js";
 
 import { validateObjectId } from "../middleware/validateObjectId.js";
 
+import { getServiceRequests, markRequestDone } from "../controllers/serviceRequestController.js";
+
+
 const router = express.Router();
 
 router.use(protect, isAdmin);
@@ -58,6 +61,10 @@ router.get("/dashboard/outstanding", getOutstandingMembers);
 router.get("/dashboard/charge-analytics", getChargeAnalytics);
 router.get("/dashboard/recent-payments", getRecentPaymentsHandler);
 router.get("/dashboard/member-due-status", getMemberDueStatus);
+
+
+router.get("/service-requests", getServiceRequests);
+router.patch("/service-requests/:id/done", validateObjectId(), markRequestDone);
 
 router.get("/audit-log", getAuditLogHandler);
 

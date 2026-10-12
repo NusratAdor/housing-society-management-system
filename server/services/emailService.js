@@ -671,7 +671,7 @@ export const sendDueReminderEmail = async ({
                 font-weight:700;text-decoration:none;">
         Pay Now
       </a>
-            <p style="margin:14px 0 0;font-size:12px;color:#9ca3af;">
+                  <p style="margin:14px 0 0;font-size:12px;color:#9ca3af;">
         You will receive this reminder once a month while dues remain outstanding.
       </p>
     </div>

@@ -34,8 +34,8 @@ import {
   History,
   Archive,
   Users,
-  Waves,
-  LifeBuoy,
+  BedDouble,
+  Wrench,
 } from "lucide-react";
 import LanguageToggle from "./LanguageToggle";
 import NotificationBell from "./member/NotificationBell";
@@ -126,14 +126,14 @@ const Navbar = () => {
       path: "/our-services",
       submenu: [
         {
-          name: "Swimming Pool",
-          path: "/our-services/swimming-pool",
-          icon: Waves,
+          name: "Guest House",
+          path: "/our-services/guest-house",
+          icon: BedDouble,
         },
         {
-          name: "Member Support",
-          path: "/our-services/member-support",
-          icon: LifeBuoy,
+          name: "Utility Services",
+          path: "/our-services/utility-services",
+          icon: Wrench,
         },
       ],
     },

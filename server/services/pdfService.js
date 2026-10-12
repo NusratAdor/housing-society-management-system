@@ -26,21 +26,57 @@ const GRAY_LINE = "#BBBBBB";
 const GRAY_BG = "#F2F2F2";
 
 const MONTH_NAMES = [
-  "", "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 const fmt = (n) => `BDT ${Number(n || 0).toLocaleString("en-US")}`;
+const num = (n) => Number(n || 0).toLocaleString("en-US");
+const dash = (n) => (Number(n || 0) === 0 ? "-" : num(n));
 
-const fmtDate = (d) =>
-  new Date(d).toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Dhaka",
-  });
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+// Fixed 3-letter months: newer ICU prints "Sept", which wraps in narrow columns.
+const fmtDate = (d) => {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "numeric",
+      year: "numeric",
+      timeZone: "Asia/Dhaka",
+    })
+      .formatToParts(new Date(d))
+      .filter((x) => x.type !== "literal")
+      .map((x) => [x.type, x.value]),
+  );
+  return `${p.day} ${SHORT_MONTHS[Number(p.month) - 1]} ${p.year}`;
+};
 
 const fmtDateLong = (d) =>
   new Date(d).toLocaleDateString("en-GB", {
@@ -371,8 +407,14 @@ export const drawReceipt = async ({ payment, member, lineItems }) => {
   const sigY = doc.y + 56;
 
   doc.lineWidth(0.5).strokeColor(BLACK);
-  doc.moveTo(MARGIN, sigY).lineTo(MARGIN + 150, sigY).stroke();
-  doc.moveTo(A4[0] - MARGIN - 150, sigY).lineTo(A4[0] - MARGIN, sigY).stroke();
+  doc
+    .moveTo(MARGIN, sigY)
+    .lineTo(MARGIN + 150, sigY)
+    .stroke();
+  doc
+    .moveTo(A4[0] - MARGIN - 150, sigY)
+    .lineTo(A4[0] - MARGIN, sigY)
+    .stroke();
 
   doc
     .font("Helvetica")
@@ -529,69 +571,397 @@ export const drawMemberReport = async ({
 
 // ─── drawAdminReport ──────────────────────────────────────────────────────────
 
-export const drawAdminReport = async ({ memberRows, summary }) => {
+// ─── Collection & Payments ────────────────────────────────────────────────────
+
+export const drawAdminReport = async ({ payments, summary }) => {
   const doc = createDoc();
   const bufferPromise = pdfToBuffer(doc);
 
   drawHeader(
     doc,
-    "Collection Report",
+    "Collection & Payments",
     `${fmtDateLong(summary.periodStart)} to ${fmtDateLong(summary.periodEnd)}`,
   );
 
   drawSection(doc, "Summary for the period");
   drawAmountList(doc, [
-    { label: "Total collected (cash received)", value: fmt(summary.totalCollection), bold: true },
-    { label: "   Applied to dues", value: fmt(summary.totalDuesApplied) },
+    {
+      label: "Total collected (cash received)",
+      value: fmt(summary.totalCollection),
+      bold: true,
+    },
+    { label: "   Monthly dues", value: fmt(summary.totalMonthly) },
+    { label: "   Extra charges", value: fmt(summary.totalExtra) },
     { label: "   Added to advance credit", value: fmt(summary.totalAdvance) },
     { label: "Number of payments", value: String(summary.totalPayments) },
-    { label: "Members who paid", value: String(summary.membersWhoPayd) },
+    { label: "Members who paid", value: String(summary.membersWhoPaid) },
   ]);
 
-  drawSection(doc, "Collection by member");
+  drawSection(doc, "Payments");
 
-  const columns = [
-    { label: "#", width: 26, align: "center" },
-    { label: "MEMBER", width: 150 },
-    { label: "MEM NO", width: 75 },
-    { label: "PAYMENTS", width: 54, align: "center" },
-    { label: "RECEIVED", width: 70, align: "right" },
-    { label: "DUES", width: 60, align: "right" },
-    { label: "CREDIT", width: 60, align: "right" },
-  ];
+  if (payments.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(GRAY_TEXT)
+      .text("No completed payments in this period.", MARGIN, doc.y + 4, {
+        width: COL_WIDTH,
+      });
+    doc.y += 24;
+  } else {
+    const rows = payments.map((p) => ({
+      cells: [
+        fmtDate(p.paidAt),
+        p.receiptNumber || "-",
+        `${p.member?.name || "-"} (${p.member?.membershipNo || "-"})`,
+        num(p.amount),
+        dash(p.monthlyApplied),
+        dash(p.extraApplied),
+        dash(p.advanceAmount),
+      ],
+    }));
+    rows.push({
+      cells: [
+        "",
+        "",
+        `Total (${payments.length} payments)`,
+        num(summary.totalCollection),
+        dash(summary.totalMonthly),
+        dash(summary.totalExtra),
+        dash(summary.totalAdvance),
+      ],
+      bold: true,
+      shade: true,
+    });
 
-  const rows = memberRows.map((row, idx) => ({
-    cells: [
-      String(idx + 1),
-      row.member?.name || "-",
-      row.member?.membershipNo || "-",
-      String(row.paymentCount),
-      fmt(row.totalPaid),
-      fmt(row.duesApplied),
-      fmt(row.advanceTotal),
-    ],
-  }));
-
-  rows.push({
-    cells: [
-      "",
-      `Total (${memberRows.length} members)`,
-      "",
-      String(summary.totalPayments),
-      fmt(summary.totalCollection),
-      fmt(summary.totalDuesApplied),
-      fmt(summary.totalAdvance),
-    ],
-    bold: true,
-    shade: true,
-  });
-
-  drawTable(doc, columns, rows);
+    drawTable(
+      doc,
+      [
+        { label: "DATE", width: 62 },
+        { label: "RECEIPT NO", width: 90 },
+        { label: "MEMBER", width: 131 },
+        { label: "RECEIVED", width: 56, align: "right" },
+        { label: "MONTHLY", width: 56, align: "right" },
+        { label: "EXTRA", width: 50, align: "right" },
+        { label: "CREDIT", width: 50, align: "right" },
+      ],
+      rows,
+    );
+  }
 
   drawNote(
     doc,
-    "Collection counts cash received on the payment date. Advance credit that is " +
-      "later applied to a monthly charge is not collected again.",
+    "Amounts in BDT. RECEIVED is cash received on the payment date, split into monthly dues, extra charges " +
+      "and CREDIT (advance added to the member's credit balance). Credit applied later to a monthly charge " +
+      "is not collected again. Transaction IDs are in the CSV export.",
+  );
+
+  drawFooter(doc);
+  doc.end();
+  return bufferPromise;
+};
+
+// ─── Member Directory ─────────────────────────────────────────────────────────
+
+const STATUS_LABEL = {
+  active: "Active members",
+  removed: "Removed members",
+  all: "All members",
+};
+
+const plotLinesText = (plots = []) =>
+  Array.isArray(plots) && plots.length > 0
+    ? plots.map((p) => `${p.plotNo} - ${p.plotSize} `).join("\n")
+    : "-";
+
+export const drawMemberDirectory = async ({ rows, summary }) => {
+  const doc = createDoc();
+  const bufferPromise = pdfToBuffer(doc);
+
+  drawHeader(
+    doc,
+    "Member Directory",
+    `As of ${fmtDateLong(new Date())}  |  ${STATUS_LABEL[summary.status] || STATUS_LABEL.active}`,
+  );
+
+  drawSection(doc, "Summary");
+  drawAmountList(doc, [
+    { label: "Members", value: String(summary.totalMembers), bold: true },
+    { label: "Plots", value: String(summary.totalPlots) },
+    { label: "Total plot area", value: `${summary.totalArea} ` },
+  ]);
+
+  drawSection(doc, "Members");
+
+  if (rows.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(GRAY_TEXT)
+      .text("No members found.", MARGIN, doc.y + 4, { width: COL_WIDTH });
+    doc.y += 24;
+  } else {
+    const tableRows = rows.map((r) => ({
+      cells: [
+        r.membershipNo,
+        r.status === "removed" ? `${r.name} (removed)` : r.name,
+        r.phone || "-",
+        r.designation || "-",
+        plotLinesText(r.plots),
+        String(r.totalArea),
+      ],
+    }));
+    tableRows.push({
+      cells: [
+        "",
+        `Total (${rows.length} members)`,
+        "",
+        "",
+        `${summary.totalPlots} plots`,
+        String(summary.totalArea),
+      ],
+      bold: true,
+      shade: true,
+    });
+
+    drawTable(
+      doc,
+      [
+        { label: "MEM. NO", width: 44 },
+        { label: "NAME", width: 100 },
+        { label: "PHONE", width: 88 },
+        { label: "DESIGNATION", width: 66 },
+        { label: "PLOT(S)", width: 137 },
+        { label: "AREA", width: 60, align: "right" },
+      ],
+      tableRows,
+    );
+  }
+
+  
+  drawFooter(doc);
+  doc.end();
+  return bufferPromise;
+};
+// ─── Outstanding Dues ─────────────────────────────────────────────────────────
+
+const monthShort = (m) =>
+  [
+    "",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ][m];
+
+export const drawOutstandingReport = async ({ rows, summary }) => {
+  const doc = createDoc();
+  const bufferPromise = pdfToBuffer(doc);
+
+  drawHeader(
+    doc,
+    "Outstanding Dues",
+    `As of ${fmtDateLong(new Date())}  |  Active members`,
+  );
+
+  drawSection(doc, "Summary");
+  drawAmountList(doc, [
+    {
+      label: "Members with outstanding dues",
+      value: String(summary.membersWithDues),
+      bold: true,
+    },
+    { label: "   Monthly dues", value: fmt(summary.totalMonthly) },
+    { label: "   Extra charges", value: fmt(summary.totalExtra) },
+    {
+      label: "Total outstanding",
+      value: fmt(summary.totalOutstanding),
+      bold: true,
+    },
+  ]);
+
+  drawSection(doc, "Members");
+
+  if (rows.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(GRAY_TEXT)
+      .text("No member has outstanding dues.", MARGIN, doc.y + 4, {
+        width: COL_WIDTH,
+      });
+    doc.y += 24;
+  } else {
+    const tableRows = rows.map((r, i) => ({
+      cells: [
+        String(i + 1),
+        r.membershipNo,
+        r.name,
+        num(r.monthlyDue),
+        dash(r.extraDue),
+        num(r.totalDue),
+        r.oldestUnpaid
+          ? `${monthShort(r.oldestUnpaid.month)} ${r.oldestUnpaid.year}`
+          : "-",
+        dash(r.creditBalance),
+      ],
+    }));
+    tableRows.push({
+      cells: [
+        "",
+        "",
+        `Total (${rows.length} members)`,
+        num(summary.totalMonthly),
+        num(summary.totalExtra),
+        num(summary.totalOutstanding),
+        "",
+        "",
+      ],
+      bold: true,
+      shade: true,
+    });
+
+    drawTable(
+      doc,
+      [
+        { label: "#", width: 24, align: "center" },
+        { label: "MEM. NO", width: 54 },
+        { label: "MEMBER", width: 118 },
+        { label: "MONTHLY", width: 60, align: "right" },
+        { label: "EXTRA", width: 56, align: "right" },
+        { label: "TOTAL", width: 62, align: "right" },
+        { label: "OLDEST DUE", width: 71, align: "right" },
+        { label: "CREDIT", width: 50, align: "right" },
+      ],
+      tableRows,
+    );
+  }
+
+  drawNote(
+    doc,
+    "Amounts in BDT. CREDIT is the member's available advance credit. It is shown separately and is " +
+      "not subtracted from the dues.",
+  );
+
+  drawFooter(doc);
+  doc.end();
+  return bufferPromise;
+};
+
+// ─── Member Account Statement ─────────────────────────────────────────────────
+
+export const drawStatement = async ({ member, rows, summary }) => {
+  const doc = createDoc();
+  const bufferPromise = pdfToBuffer(doc);
+
+  drawHeader(
+    doc,
+    "Member Account Statement",
+    `${fmtDateLong(summary.periodStart)} to ${fmtDateLong(summary.periodEnd)}`,
+  );
+
+  drawSection(doc, "Member");
+  drawKeyValues(doc, [
+    ["Name", member.name],
+    ["Membership No", member.membershipNo],
+    ["Phone", member.phone || "-"],
+    ["Plot(s)", member.plotsLabel || "-"],
+  ]);
+
+  drawSection(doc, "Account summary");
+  drawAmountList(doc, [
+    { label: "Opening due", value: fmt(summary.openingDue) },
+    { label: "   + Charges", value: fmt(summary.charges) },
+    { label: "   - Paid from cash", value: fmt(summary.cashApplied) },
+    { label: "   - Paid from credit", value: fmt(summary.creditUsed) },
+    { label: "Closing due", value: fmt(summary.closingDue), bold: true },
+    { label: "Cash received in the period", value: fmt(summary.cash) },
+    { label: "   of which added to credit", value: fmt(summary.cashToCredit) },
+    {
+      label: "Credit balance at period end",
+      value: fmt(summary.closingCredit),
+      bold: true,
+    },
+  ]);
+
+  drawSection(doc, "Statement");
+
+  const tableRows = [
+    {
+      cells: [
+        fmtDate(summary.periodStart),
+        "Opening balance",
+        "",
+        "",
+        "",
+        num(summary.openingDue),
+        num(summary.openingCredit),
+      ],
+      bold: true,
+    },
+    ...rows.map((r) => ({
+      cells: [
+        fmtDate(r.date),
+        r.description,
+        dash(r.charge),
+        dash(r.cash),
+        dash(r.creditUsed),
+        num(r.due),
+        num(r.creditBalance),
+      ],
+      note: r.note,
+    })),
+    {
+      cells: [
+        "",
+        "Period totals / closing balance",
+        num(summary.charges),
+        num(summary.cash),
+        num(summary.creditUsed),
+        num(summary.closingDue),
+        num(summary.closingCredit),
+      ],
+      bold: true,
+      shade: true,
+    },
+  ];
+
+  drawTable(
+    doc,
+    [
+      { label: "DATE", width: 66 },
+      { label: "DESCRIPTION", width: 169 },
+      { label: "CHARGE", width: 52, align: "right" },
+      { label: "CASH", width: 52, align: "right" },
+      { label: "CR. USED", width: 52, align: "right" },
+      { label: "DUE", width: 52, align: "right" },
+      { label: "CR. BAL", width: 52, align: "right" },
+    ],
+    tableRows,
+  );
+
+  const rec = summary.reconciliation;
+  const reconNote = !rec?.checked
+    ? ""
+    : rec.ok
+      ? " Closing balances agree with the live account at the time of generation."
+      : ` WARNING: closing balances differ from the live account (due ${rec.dueDifference}, credit ${rec.creditDifference}). Do not issue this statement; contact the system administrator.`;
+
+  drawNote(
+    doc,
+    "Amounts in BDT. CASH is money received. CR. USED is a month paid from the member's credit balance " +
+      "(not new money). DUE and CR. BAL are the amount owed and the credit balance after each line. " +
+      "Cancelled charges are not shown." +
+      reconNote +
+      (rows.length === 0 ? " No activity in this period." : ""),
   );
 
   drawFooter(doc);
