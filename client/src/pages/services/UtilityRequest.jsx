@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { toast } from "react-hot-toast";
 import usePageTitle from "../../hooks/usePageTitle";
 import { useAppContext } from "../../context/AppContext";
 import { UTILITY_SERVICES } from "../../utils/serviceInfo";
 import { ServiceHero, MemberGate, Field, inputClass, SubmitButton, RequestSent } from "../../components/services/ServiceParts";
+import NotFound from "../NotFound";
 
 const RequestForm = ({ type, service }) => {
   const { axios, getToken, memberProfile } = useAppContext();
@@ -95,7 +96,9 @@ const UtilityRequest = () => {
   const service = UTILITY_SERVICES[type];
   usePageTitle(service ? `${service.title} Service` : "Utility Services");
 
-  if (!service) return <Navigate to="/our-services/utility-services" replace />;
+ if (!service) {
+  return <NotFound />;
+}
 
   return (
     <div className="w-full bg-white min-h-screen">

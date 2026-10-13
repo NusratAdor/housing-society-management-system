@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useLayoutEffect,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
@@ -19,10 +26,8 @@ import {
   User,
   UserRound,
   Info,
-
   X,
 } from "lucide-react";
-
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,8 +36,6 @@ import { Badge } from "@/components/ui/badge";
 import { useAppContext } from "../../context/AppContext";
 import { normalizePhone, isValidPhone } from "../../utils/phoneUtils";
 import usePageTitle from "../../hooks/usePageTitle";
-
-
 
 const PLOT_SIZES = [6.5, 7, 9, 10, 13];
 
@@ -81,15 +84,6 @@ const getMemberPlotSizes = (member) => {
     .filter((size) => PLOT_SIZES.includes(size));
 };
 
-const getTotalPlotSize = (member) => {
-  if (!Array.isArray(member?.plots)) return 0;
-
-  return member.plots.reduce(
-    (total, plot) => total + Number(plot?.plotSize || 0),
-    0,
-  );
-};
-
 const getSmallestPlotSize = (member) => {
   const sizes = getMemberPlotSizes(member);
 
@@ -124,29 +118,27 @@ const getStatusClasses = (status) => {
   return "bg-slate-100 text-slate-600 border-slate-200";
 };
 
-
 const compareMembershipNumbers = (a, b) => {
-    const numberA = Number(a?.membershipNo);
-    const numberB = Number(b?.membershipNo);
+  const numberA = Number(a?.membershipNo);
+  const numberB = Number(b?.membershipNo);
 
-    if (
-      Number.isFinite(numberA) &&
-      Number.isFinite(numberB) &&
-      numberA !== numberB
-    ) {
-      return numberA - numberB;
-    }
+  if (
+    Number.isFinite(numberA) &&
+    Number.isFinite(numberB) &&
+    numberA !== numberB
+  ) {
+    return numberA - numberB;
+  }
 
-    return String(a?.membershipNo || "").localeCompare(
-      String(b?.membershipNo || ""),
-      undefined,
-      {
-        numeric: true,
-        sensitivity: "base",
-      },
-    );
-  };
-  
+  return String(a?.membershipNo || "").localeCompare(
+    String(b?.membershipNo || ""),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
+};
 
 const ManageMembers = () => {
   const { axios, getToken } = useAppContext();
@@ -171,8 +163,7 @@ const ManageMembers = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [plotSizeFilter, setPlotSizeFilter] = useState("all");
 
-  const [sortField, setSortField] = useState("membershipNo");
-  const [sortDirection, setSortDirection] = useState("asc");
+  const [sortBy, setSortBy] = useState("membership");
   const [currentPage, setCurrentPage] = useState(1);
 
   const [editingMember, setEditingMember] = useState(null);
@@ -192,8 +183,8 @@ const ManageMembers = () => {
   const [demoting, setDemoting] = useState(false);
 
   const [openDuePopover, setOpenDuePopover] = useState(null);
-const [duePopoverPos, setDuePopoverPos] = useState(null);
-const dueBtnRefs = useRef({});
+  const [duePopoverPos, setDuePopoverPos] = useState(null);
+  const dueBtnRefs = useRef({});
 
   /*
    * ------------------------------------------------------------
@@ -304,9 +295,9 @@ const dueBtnRefs = useRef({});
        * Example:
        * Member owns [13, 7].
        *
-       * Selecting "7 Katha"   -> member appears
-       * Selecting "13 Katha"  -> member appears
-       * Selecting "10 Katha"  -> member does not appear
+       * Selecting "7 "   -> member appears
+       * Selecting "13 "  -> member appears
+       * Selecting "10 "  -> member does not appear
        *
        * This is different from sorting.
        */
@@ -324,47 +315,25 @@ const dueBtnRefs = useRef({});
    * ------------------------------------------------------------
    */
 
-  
-
   const sortedMembers = useMemo(() => {
     return [...filteredMembers].sort((a, b) => {
-      let comparison = 0;
+      if (sortBy === "membership") return compareMembershipNumbers(a, b);
 
-      if (sortField === "membershipNo") {
-        comparison = compareMembershipNumbers(a, b);
-      }
+      // Plot sorts use each member's smallest plot. Members without a valid
+      // plot size stay at the bottom in both directions.
+      const smallestA = getSmallestPlotSize(a);
+      const smallestB = getSmallestPlotSize(b);
 
-      if (sortField === "smallestPlotSize") {
-        const smallestA = getSmallestPlotSize(a);
-        const smallestB = getSmallestPlotSize(b);
+      if (smallestA === null && smallestB === null)
+        return compareMembershipNumbers(a, b);
+      if (smallestA === null) return 1;
+      if (smallestB === null) return -1;
 
-        /*
-         * Members without a valid plot size should stay at the bottom
-         * regardless of ascending/descending direction.
-         */
-        if (smallestA === null && smallestB !== null) {
-          return 1;
-        }
-
-        if (smallestA !== null && smallestB === null) {
-          return -1;
-        }
-
-        if (smallestA !== null && smallestB !== null) {
-          comparison = smallestA - smallestB;
-        }
-
-        /*
-         * Stable secondary ordering.
-         */
-        if (comparison === 0) {
-          comparison = compareMembershipNumbers(a, b);
-        }
-      }
-
-      return sortDirection === "desc" ? comparison * -1 : comparison;
+      const difference =
+        sortBy === "plotDesc" ? smallestB - smallestA : smallestA - smallestB;
+      return difference || compareMembershipNumbers(a, b);
     });
-  }, [filteredMembers, sortField, sortDirection]);
+  }, [filteredMembers, sortBy]);
 
   /*
    * ------------------------------------------------------------
@@ -386,14 +355,11 @@ const dueBtnRefs = useRef({});
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, plotSizeFilter, sortField, sortDirection]);
-
-
+  }, [searchTerm, plotSizeFilter, sortBy]);
 
   useEffect(() => {
-  setOpenDuePopover(null);
-}, [currentPage, searchTerm, plotSizeFilter]);
-
+    setOpenDuePopover(null);
+  }, [currentPage, searchTerm, plotSizeFilter]);
 
   useEffect(() => {
     if (!openDuePopover) return;
@@ -406,37 +372,32 @@ const dueBtnRefs = useRef({});
     };
   }, [openDuePopover]);
 
+  useLayoutEffect(() => {
+    if (!openDuePopover) {
+      setDuePopoverPos(null);
+      return;
+    }
 
-useLayoutEffect(() => {
-  if (!openDuePopover) {
-    setDuePopoverPos(null);
-    return;
-  }
+    const button = dueBtnRefs.current[openDuePopover];
 
-  const button = dueBtnRefs.current[openDuePopover];
+    if (!button) return;
 
-  if (!button) return;
+    const rect = button.getBoundingClientRect();
 
-  const rect = button.getBoundingClientRect();
+    const popoverHeight = 150;
+    const margin = 4;
 
-  const popoverHeight = 150;
-  const margin = 4;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const opensUpward = spaceBelow < popoverHeight + margin;
 
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const opensUpward =
-    spaceBelow < popoverHeight + margin;
+    setDuePopoverPos({
+      top: opensUpward
+        ? Math.max(rect.top - popoverHeight - margin, margin)
+        : rect.bottom + margin,
 
-  setDuePopoverPos({
-    top: opensUpward
-      ? Math.max(
-          rect.top - popoverHeight - margin,
-          margin,
-        )
-      : rect.bottom + margin,
-
-    left: rect.left,
-  });
-}, [openDuePopover]);
+      left: rect.left,
+    });
+  }, [openDuePopover]);
 
   /*
    * ------------------------------------------------------------
@@ -520,14 +481,23 @@ useLayoutEffect(() => {
     }));
   };
 
-  const removeEditPlot = (index) => {
+    const removeEditPlot = (index) => {
     if (editForm.plots.length <= 1) return;
 
     setEditForm((previous) => ({
       ...previous,
       plots: previous.plots.filter((_, plotIndex) => plotIndex !== index),
     }));
+
+    // Error keys are index-based, so after a removal they would point at the wrong row.
+    setEditErrors((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([key]) => !key.startsWith("plot.")),
+      ),
+    );
   };
+
+
 
   const updateNomineeField = (field, value) => {
     setEditForm((previous) => ({
@@ -833,7 +803,7 @@ useLayoutEffect(() => {
    * ------------------------------------------------------------
    */
 
-    const handleRejectAdmin = async (member) => {
+  const handleRejectAdmin = async (member) => {
     if (rejecting) return;
 
     setRejecting(true);
@@ -1088,28 +1058,16 @@ useLayoutEffect(() => {
             </select>
 
             <div className="flex flex-col gap-2 sm:flex-row">
-              <select
-                value={sortField}
-                onChange={(event) => setSortField(event.target.value)}
-                aria-label="Sort members by"
-                className="h-11 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
-              >
-                <option value="membershipNo">Membership No.</option>
-                <option value="smallestPlotSize">Smallest Plot Size</option>
-              </select>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() =>
-                  setSortDirection((previous) =>
-                    previous === "asc" ? "desc" : "asc",
-                  )
-                }
-                className="h-11 whitespace-nowrap"
-              >
-                {sortDirection === "asc" ? "Ascending ↑" : "Descending ↓"}
-              </Button>
+                          <select
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value)}
+              aria-label="Sort members"
+              className="h-11 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+            >
+              <option value="membership">Membership no.</option>
+              <option value="plotAsc">Plot size - Low to High</option>
+              <option value="plotDesc">Plot size - High to Low</option>
+            </select>
             </div>
           </div>
 
@@ -1142,7 +1100,7 @@ useLayoutEffect(() => {
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className="border-b border-slate-200 bg-slate-50">
                 <tr>
                   <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1158,7 +1116,7 @@ useLayoutEffect(() => {
                   </th>
 
                   <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Payment
+                    Dues
                   </th>
 
                   <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1245,149 +1203,147 @@ useLayoutEffect(() => {
                         </td>
                         {/* Plot */}
                         <td className="px-5 py-4">
-                          <div className="space-y-1.5">
-                            {Array.isArray(member.plots) &&
-                            member.plots.length > 0 ? (
-                              <>
-                                <div className="flex items-center gap-1.5">
-                                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
-
-                                  <span className="font-medium text-slate-700">
-                                    {member.plots.length}{" "}
-                                    {member.plots.length === 1
-                                      ? "Plot"
-                                      : "Plots"}
-                                  </span>
-
-                                  <span className="text-slate-400">•</span>
-
-                                  <span className="font-medium text-slate-600">
-                                    {getTotalPlotSize(member)}
-                                  </span>
-                                </div>
-
-                                <p className="text-xs text-slate-400">
-                                  {member.plots
-                                    .map(
-                                      (plot) =>
-                                        `${plot.plotNo} (${plot.plotSize})`,
-                                    )
-                                    .join(", ")}
-                                </p>
-                              </>
-                            ) : (
-                              <span className="text-slate-400">—</span>
-                            )}
-                          </div>
+                          {Array.isArray(member.plots) &&
+                          member.plots.length > 0 ? (
+                            <div>
+                              <div className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                                {member.plots.length}{" "}
+                                {member.plots.length === 1 ? "Plot" : "Plots"}
+                              </div>
+                              <ul className="mt-1 space-y-0.5 text-xs text-slate-500">
+                                {member.plots.map((plot, index) => (
+                                  <li key={`${plot.plotNo}-${index}`}>
+                                    {plot.plotNo} ({plot.plotSize})
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
                         </td>
+
                         {/* Payment */}
-                       {/* Payment */}
-<td className="px-5 py-4">
-  {due ? (
-    <>
-      <button
-        type="button"
-        ref={(element) => {
-          if (element) {
-            dueBtnRefs.current[member._id] = element;
-          }
-        }}
-        onClick={() =>
-          setOpenDuePopover((current) =>
-            current === member._id ? null : member._id,
-          )
-        }
-        className="inline-flex items-center gap-1.5"
-      >
-        <span
-          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-            due.totalDue > 0
-              ? "border-red-200 bg-red-50 text-red-700"
-              : "border-emerald-200 bg-emerald-50 text-emerald-700"
-          }`}
-        >
-          {due.totalDue > 0
-            ? `${formatCurrency(due.totalDue)} due`
-            : "Paid"}
-        </span>
+                        
+                        <td className="px-5 py-4">
+                          {due ? (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Show due breakdown"
+                                ref={(element) => {
+                                  if (element) {
+                                    dueBtnRefs.current[member._id] = element;
+                                  }
+                                }}
+                                onClick={() =>
+                                  setOpenDuePopover((current) =>
+                                    current === member._id ? null : member._id,
+                                  )
+                                }
+                                className="inline-flex items-center gap-1.5"
+                              >
+                                <span
+                                  className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                    due.totalDue > 0
+                                      ? "border-red-200 bg-red-50 text-red-700"
+                                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  }`}
+                                >
+                                  {due.totalDue > 0
+                                    ? formatCurrency(due.totalDue)
+                                    : "No dues"}
+                                </span>
 
-        {due.totalDue > 0 && (
-          <Info className="h-3.5 w-3.5 text-slate-400" />
-        )}
-      </button>
+                                {due.totalDue > 0 && (
+                                  <Info className="h-3.5 w-3.5 text-slate-400" />
+                                )}
+                              </button>
 
-      <AnimatePresence>
-        {openDuePopover === member._id &&
-          due.totalDue > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{
-                opacity: duePopoverPos ? 1 : 0,
-                y: 0,
-              }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.12 }}
-              style={{
-                position: "fixed",
-                top: duePopoverPos?.top ?? -9999,
-                left: duePopoverPos?.left ?? 0,
-                zIndex: 9999,
-              }}
-              className="w-52 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
-            >
-              <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                Due Breakdown
-              </p>
+                              <AnimatePresence>
+                                {openDuePopover === member._id &&
+                                  due.totalDue > 0 && (
+                                    <motion.div
+                                      initial={{ opacity: 0, y: 4 }}
+                                      animate={{
+                                        opacity: duePopoverPos ? 1 : 0,
+                                        y: 0,
+                                      }}
+                                      exit={{ opacity: 0, y: 4 }}
+                                      transition={{ duration: 0.12 }}
+                                      style={{
+                                        position: "fixed",
+                                        top: duePopoverPos?.top ?? -9999,
+                                        left: duePopoverPos?.left ?? 0,
+                                        zIndex: 9999,
+                                      }}
+                                      className="w-52 rounded-xl border border-slate-200 bg-white p-4 shadow-xl"
+                                    >
+                                      <p className="mb-3 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                        Due Breakdown
+                                      </p>
 
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-500">
-                    Monthly Dues
-                  </span>
+                                      <div className="space-y-2 text-xs">
+                                        <div className="flex justify-between gap-4">
+                                          <span className="text-slate-500">
+                                            Monthly Dues
+                                          </span>
 
-                  <span className="font-semibold text-slate-800">
-                    ৳{due.monthlyDue.toLocaleString()}
-                  </span>
-                </div>
+                                          <span className="font-semibold text-slate-800">
+                                            ৳{due.monthlyDue.toLocaleString()}
+                                          </span>
+                                        </div>
 
-                <div className="flex justify-between gap-4">
-                  <span className="text-slate-500">
-                    Extra Charges
-                  </span>
+                                        <div className="flex justify-between gap-4">
+                                          <span className="text-slate-500">
+                                            Extra Charges
+                                          </span>
 
-                  <span className="font-semibold text-slate-800">
-                    ৳{due.extraDue.toLocaleString()}
-                  </span>
-                </div>
+                                          <span className="font-semibold text-slate-800">
+                                            ৳{due.extraDue.toLocaleString()}
+                                          </span>
+                                        </div>
 
-                <div className="flex justify-between gap-4 border-t border-slate-100 pt-2">
-                  <span className="font-medium text-slate-700">
-                    Total
-                  </span>
+                                        <div className="flex justify-between gap-4 border-t border-slate-100 pt-2">
+                                          <span className="font-medium text-slate-700">
+                                            Total
+                                          </span>
 
-                  <span className="font-bold text-red-600">
-                    ৳{due.totalDue.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </motion.div>
-          )}
-      </AnimatePresence>
-    </>
-  ) : (
-    <span className="text-xs text-slate-400">—</span>
-  )}
-</td>
+                                          <span className="font-bold text-red-600">
+                                            ৳{due.totalDue.toLocaleString()}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </motion.div>
+                                  )}
+                              </AnimatePresence>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
                         {/* Access */}
                         <td className="px-5 py-4">
                           <div className="space-y-2">
-                            <span
+                                                        <span
                               className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${getRoleClasses(
                                 member.role,
                               )}`}
                             >
                               {member.role}
                             </span>
+
+                            {member.role === "admin" &&
+                              member.status === "active" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDemotionTarget(member)}
+                                  className="block text-xs font-semibold text-amber-700 hover:text-amber-800"
+                                >
+                                  Demote
+                                </button>
+                              )}
 
                             {member.pendingAdmin && member.role !== "admin" && (
                               <div className="flex items-center gap-2">
@@ -1440,19 +1396,7 @@ useLayoutEffect(() => {
                                   Edit
                                 </Button>
 
-                                {/* ADMIN DEMOTION — add this */}
-                                {member.role === "admin" && (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setDemotionTarget(member)}
-                                    className="gap-1.5 border-amber-200 text-amber-700 hover:bg-amber-50"
-                                  >
-                                    <Shield className="h-3.5 w-3.5" />
-                                    Demote
-                                  </Button>
-                                )}
+                                
 
                                 <Button
                                   type="button"
@@ -1788,19 +1732,14 @@ useLayoutEffect(() => {
                     <div className="border-t border-slate-100" />
 
                     {/* Plots */}
-                    <section>
-                      <div className="mb-4 flex items-start justify-between gap-3">
+                                       <section>
+                      <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
-                          <h3 className="text-sm font-semibold text-slate-800">
-                            Plot information
-                          </h3>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            Plot number remains free-form; plot size is selected
-                            from the approved sizes.
+                          <h3 className="text-sm font-semibold text-slate-800">Plot information</h3>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            Plot number is free-form; choose the size from the approved list.
                           </p>
                         </div>
-
                         <button
                           type="button"
                           onClick={addEditPlot}
@@ -1812,104 +1751,67 @@ useLayoutEffect(() => {
                       </div>
 
                       {editErrors.plots && (
-                        <p className="mb-3 text-xs font-medium text-red-600">
-                          {editErrors.plots}
-                        </p>
+                        <p className="mb-2 text-xs font-medium text-red-600">{editErrors.plots}</p>
                       )}
 
-                      <div className="space-y-3">
+                      <div className="hidden gap-2 pb-1 text-xs font-semibold text-slate-600 sm:flex">
+                        <div className="grid flex-1 grid-cols-2 gap-2">
+                          <span>Plot number</span>
+                          <span>Plot size</span>
+                        </div>
+                        <span className="w-10 shrink-0" aria-hidden="true" />
+                      </div>
+
+                      <div className="space-y-2">
                         {editForm.plots.map((plot, index) => (
-                          <div
-                            key={index}
-                            className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-                          >
-                            <div className="mb-3 flex items-center justify-between">
-                              <span className="text-xs font-semibold text-slate-700">
-                                Plot {index + 1}
-                              </span>
-
-                              {editForm.plots.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => removeEditPlot(index)}
-                                  className="text-xs font-medium text-red-600 hover:text-red-700"
-                                >
-                                  Remove
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="grid gap-4 md:grid-cols-2">
+                          <div key={index} className="flex items-start gap-2">
+                            <div className="grid flex-1 gap-2 sm:grid-cols-2">
                               <div>
-                                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                                  Plot number
-                                </label>
-
                                 <Input
+                                  aria-label={`Plot ${index + 1} number`}
                                   value={plot.plotNo}
-                                  placeholder="e.g. AD-10"
-                                  onChange={(event) =>
-                                    updateEditPlot(
-                                      index,
-                                      "plotNo",
-                                      event.target.value,
-                                    )
-                                  }
-                                  className={
-                                    editErrors[`plot.${index}.plotNo`]
-                                      ? "border-red-400"
-                                      : ""
-                                  }
+                                  placeholder="Plot number, e.g. AD-10"
+                                  onChange={(event) => updateEditPlot(index, "plotNo", event.target.value)}
+                                  className={editErrors[`plot.${index}.plotNo`] ? "border-red-400" : ""}
                                 />
-
                                 {editErrors[`plot.${index}.plotNo`] && (
-                                  <p className="mt-1 text-xs text-red-600">
-                                    {editErrors[`plot.${index}.plotNo`]}
-                                  </p>
+                                  <p className="mt-1 text-xs text-red-600">{editErrors[`plot.${index}.plotNo`]}</p>
                                 )}
                               </div>
-
                               <div>
-                                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
-                                  Plot size
-                                </label>
-
                                 <select
+                                  aria-label={`Plot ${index + 1} size`}
                                   value={plot.plotSize}
-                                  onChange={(event) =>
-                                    updateEditPlot(
-                                      index,
-                                      "plotSize",
-                                      event.target.value,
-                                    )
-                                  }
+                                  onChange={(event) => updateEditPlot(index, "plotSize", event.target.value)}
                                   className={`h-10 w-full rounded-md border bg-white px-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 ${
-                                    editErrors[`plot.${index}.plotSize`]
-                                      ? "border-red-400"
-                                      : "border-slate-200"
+                                    editErrors[`plot.${index}.plotSize`] ? "border-red-400" : "border-slate-200"
                                   }`}
                                 >
                                   <option value="">Select plot size</option>
-
                                   {PLOT_SIZES.map((size) => (
-                                    <option key={size} value={size}>
-                                      {size}
-                                    </option>
+                                    <option key={size} value={size}>{size} </option>
                                   ))}
                                 </select>
-
                                 {editErrors[`plot.${index}.plotSize`] && (
-                                  <p className="mt-1 text-xs text-red-600">
-                                    {editErrors[`plot.${index}.plotSize`]}
-                                  </p>
+                                  <p className="mt-1 text-xs text-red-600">{editErrors[`plot.${index}.plotSize`]}</p>
                                 )}
                               </div>
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={() => removeEditPlot(index)}
+                              disabled={editForm.plots.length <= 1}
+                              aria-label={`Remove plot ${index + 1}`}
+                              title="Remove plot"
+                              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           </div>
                         ))}
                       </div>
                     </section>
-
                     <div className="border-t border-slate-100" />
 
                     {/* Nominee */}
@@ -2114,105 +2016,92 @@ useLayoutEffect(() => {
         )}
       </AnimatePresence>
 
-
-
-
-
-
-
       {/* ============================================================
     ADMIN DEMOTION CONFIRMATION
 ============================================================ */}
 
-<AnimatePresence>
-  {demotionTarget && (
-    <div className="fixed inset-0 z-[65] flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
-        onClick={() => !demoting && setDemotionTarget(null)}
-      />
+      <AnimatePresence>
+        {demotionTarget && (
+          <div className="fixed inset-0 z-[65] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+              onClick={() => !demoting && setDemotionTarget(null)}
+            />
 
-      <motion.div
-        initial={{
-          opacity: 0,
-          y: 15,
-          scale: 0.98,
-        }}
-        animate={{
-          opacity: 1,
-          y: 0,
-          scale: 1,
-        }}
-        exit={{
-          opacity: 0,
-          y: 15,
-          scale: 0.98,
-        }}
-        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
-      >
-        <div className="flex items-start gap-3">
-          <div className="rounded-xl bg-amber-50 p-2.5 text-amber-600">
-            <Shield className="h-5 w-5" />
+            <motion.div
+              initial={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+              }}
+              exit={{
+                opacity: 0,
+                y: 15,
+                scale: 0.98,
+              }}
+              className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+            >
+              <div className="flex items-start gap-3">
+                <div className="rounded-xl bg-amber-50 p-2.5 text-amber-600">
+                  <Shield className="h-5 w-5" />
+                </div>
+
+                <div>
+                  <h2 className="font-semibold text-slate-900">
+                    Demote administrator?
+                  </h2>
+
+                  <p className="mt-1 text-sm text-slate-500">
+                    You are removing administrator access from{" "}
+                    <strong className="text-slate-700">
+                      {demotionTarget.name}
+                    </strong>
+                    .
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm leading-6 text-amber-800">
+                  This will change the member's role from <strong>admin</strong>{" "}
+                  to <strong>member</strong>. Their profile and financial
+                  records will not be deleted.
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={demoting}
+                  onClick={() => setDemotionTarget(null)}
+                >
+                  Cancel
+                </Button>
+
+                <Button
+                  type="button"
+                  disabled={demoting}
+                  onClick={handleDemoteMember}
+                  className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
+                >
+                  {demoting && <Loader2 className="h-4 w-4 animate-spin" />}
+
+                  {demoting ? "Demoting..." : "Demote administrator"}
+                </Button>
+              </div>
+            </motion.div>
           </div>
-
-          <div>
-            <h2 className="font-semibold text-slate-900">
-              Demote administrator?
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              You are removing administrator access from{" "}
-              <strong className="text-slate-700">
-                {demotionTarget.name}
-              </strong>
-              .
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm leading-6 text-amber-800">
-            This will change the member's role from{" "}
-            <strong>admin</strong> to <strong>member</strong>.
-            Their profile and financial records will not be deleted.
-          </p>
-        </div>
-
-        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={demoting}
-            onClick={() => setDemotionTarget(null)}
-          >
-            Cancel
-          </Button>
-
-          <Button
-            type="button"
-            disabled={demoting}
-            onClick={handleDemoteMember}
-            className="gap-2 bg-amber-600 text-white hover:bg-amber-700"
-          >
-            {demoting && (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            )}
-
-            {demoting
-              ? "Demoting..."
-              : "Demote administrator"}
-          </Button>
-        </div>
-      </motion.div>
-    </div>
-  )}
-</AnimatePresence>
-
-
-
+        )}
+      </AnimatePresence>
 
       {/* ============================================================
           ADMIN REQUEST REJECTION

@@ -54,7 +54,6 @@ import GuestHouse from "./pages/services/GuestHouse";
 import UtilityServices from "./pages/services/UtilityServices";
 import UtilityRequest from "./pages/services/UtilityRequest";
 
-
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 
@@ -86,6 +85,8 @@ import LoadingScreen from "./components/LoadingScreen";
 import { ScrollRestorer, ScrollToTopButton } from "./components/ScrollToTop";
 import Reports from "./pages/admin/Reports";
 import ReportPage from "./pages/admin/ReportPage";
+
+import NotFound from "./pages/NotFound";
 
 // near the other small components / just above ProtectedRoute
 const MembershipRemovedScreen = () => (
@@ -220,7 +221,7 @@ const App = () => {
             <Route path="profile" element={<DashboardProfile />} />
             <Route path="notices" element={<DashboardNotices />} />
             <Route path="faqs" element={<DashboardFAQs />} />
-            <Route path="*" element={<Navigate to="overview" replace />} />
+            <Route path="*" element={<NotFound />} />
           </Route>
 
           <Route
@@ -334,16 +335,15 @@ const App = () => {
               path="service-requests"
               element={
                 <ProtectedRoute allowedRoles={["admin"]}>
-                  <ManageServiceRequests  />
+                  <ManageServiceRequests />
                 </ProtectedRoute>
               }
             />
 
+            <Route path="*" element={<NotFound />} />
 
-
+            
           </Route>
-
-          
 
           {/* Super Admin — single-purpose: manage staff accounts only. */}
           <Route
@@ -355,10 +355,10 @@ const App = () => {
             }
           >
             <Route index element={<ManageStaff />} />
-            <Route path="*" element={<Navigate to="/super-admin" replace />} />
+            <Route path="*" element={<NotFound />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       ) : (
         <div className={`${needsTopMargin ? "mt-[50px]" : ""} min-h-[70vh]`}>
@@ -394,11 +394,11 @@ const App = () => {
                   element={<Achievements />}
                 />
                 <Route
-                  path="/about-us/advisers"
+                  path="/about-us/advisory-committee"
                   element={<CommitteeSection category="adviser" />}
                 />
                 <Route
-                  path="/about-us/chairman"
+                  path="/about-us/president"
                   element={<CommitteeSection category="chairman" />}
                 />
                 <Route
@@ -406,11 +406,11 @@ const App = () => {
                   element={<CommitteeSection category="generalSecretary" />}
                 />
                 <Route
-                  path="/about-us/former-chairman"
+                  path="/about-us/former-president"
                   element={<CommitteeSection category="formerChairman" />}
                 />
                 <Route
-                  path="/about-us/former-general-secretary"
+                  path="/about-us/former-secretary"
                   element={
                     <CommitteeSection category="formerGeneralSecretary" />
                   }
@@ -441,7 +441,7 @@ const App = () => {
                 <Route path="/privacy-policy" element={<PrivacyPolicy />} />
                 <Route path="/terms-of-service" element={<TermsOfService />} />
 
-                <Route path="*" element={<Navigate to="/" replace />} />
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </motion.div>
           </AnimatePresence>

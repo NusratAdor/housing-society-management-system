@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
@@ -169,20 +168,20 @@ const TextAreaField = ({
   );
 };
 
+const plotControlClass = (hasError) =>
+  [
+    "w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-800 outline-none transition",
+    "placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10",
+    hasError ? "border-red-400" : "border-slate-200",
+  ].join(" ");
+
 export default function ProfileSection({ onActionComplete }) {
   const { t } = useTranslation("profile");
 
-  const {
-    user,
-    memberProfile,
-    setMemberProfile,
-    axios,
-    getToken,
-  } = useAppContext();
+  const { user, memberProfile, setMemberProfile, axios, getToken } =
+    useAppContext();
 
-  const [form, setForm] = useState(() =>
-    buildInitialForm(memberProfile)
-  );
+  const [form, setForm] = useState(() => buildInitialForm(memberProfile));
 
   const [errors, setErrors] = useState({});
 
@@ -253,7 +252,7 @@ export default function ProfileSection({ onActionComplete }) {
               ...plot,
               [field]: value,
             }
-          : plot
+          : plot,
       ),
     }));
 
@@ -317,15 +316,11 @@ export default function ProfileSection({ onActionComplete }) {
     }
 
     if (!form.permanentAddress.trim()) {
-      nextErrors.permanentAddress = t(
-        "errors.permanentAddressRequired"
-      );
+      nextErrors.permanentAddress = t("errors.permanentAddressRequired");
     }
 
     if (!form.presentAddress.trim()) {
-      nextErrors.presentAddress = t(
-        "errors.presentAddressRequired"
-      );
+      nextErrors.presentAddress = t("errors.presentAddressRequired");
     }
 
     if (!Array.isArray(form.plots) || form.plots.length === 0) {
@@ -333,9 +328,7 @@ export default function ProfileSection({ onActionComplete }) {
     } else {
       form.plots.forEach((plot) => {
         if (!plot.plotNo.trim()) {
-          nextErrors[`plot.${plot.id}.plotNo`] = t(
-            "errors.plotNumberRequired"
-          );
+          nextErrors[`plot.${plot.id}.plotNo`] = t("errors.plotNumberRequired");
         }
 
         if (
@@ -343,41 +336,27 @@ export default function ProfileSection({ onActionComplete }) {
           plot.plotSize === null ||
           plot.plotSize === undefined
         ) {
-          nextErrors[`plot.${plot.id}.plotSize`] = t(
-            "errors.plotSizeRequired"
-          );
+          nextErrors[`plot.${plot.id}.plotSize`] = t("errors.plotSizeRequired");
         } else if (!PLOT_SIZES.includes(Number(plot.plotSize))) {
-          nextErrors[`plot.${plot.id}.plotSize`] = t(
-            "errors.plotSizeInvalid"
-          );
+          nextErrors[`plot.${plot.id}.plotSize`] = t("errors.plotSizeInvalid");
         }
       });
     }
 
     if (!form.nominee.name.trim()) {
-      nextErrors["nominee.name"] = t(
-        "errors.nomineeNameRequired"
-      );
+      nextErrors["nominee.name"] = t("errors.nomineeNameRequired");
     }
 
     if (!form.nominee.phone.trim()) {
-      nextErrors["nominee.phone"] = t(
-        "errors.nomineePhoneRequired"
-      );
+      nextErrors["nominee.phone"] = t("errors.nomineePhoneRequired");
     } else if (!normalizePhone(form.nominee.phone)) {
-      nextErrors["nominee.phone"] = t(
-        "errors.nomineePhoneInvalid"
-      );
+      nextErrors["nominee.phone"] = t("errors.nomineePhoneInvalid");
     }
 
     if (!form.nominee.email.trim()) {
-      nextErrors["nominee.email"] = t(
-        "errors.nomineeEmailRequired"
-      );
+      nextErrors["nominee.email"] = t("errors.nomineeEmailRequired");
     } else if (!EMAIL_REGEX.test(form.nominee.email.trim())) {
-      nextErrors["nominee.email"] = t(
-        "errors.nomineeEmailInvalid"
-      );
+      nextErrors["nominee.email"] = t("errors.nomineeEmailInvalid");
     }
 
     setErrors(nextErrors);
@@ -437,15 +416,11 @@ export default function ProfileSection({ onActionComplete }) {
         },
       };
 
-      const { data } = await axios.patch(
-        "/api/members/me",
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const { data } = await axios.patch("/api/members/me", payload, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
       /*
        * DO NOT call fetchMemberProfile() here.
@@ -459,9 +434,7 @@ export default function ProfileSection({ onActionComplete }) {
 
       setSaveSuccess(true);
 
-      toast.success(
-        data?.message || t("toast.saved")
-      );
+      toast.success(data?.message || t("toast.saved"));
 
       onActionComplete?.();
     } catch (error) {
@@ -498,7 +471,7 @@ export default function ProfileSection({ onActionComplete }) {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        }
+        },
       );
 
       /*
@@ -513,13 +486,11 @@ export default function ProfileSection({ onActionComplete }) {
                 ...previous,
                 pendingAdmin: true,
               }
-            : previous
+            : previous,
         );
       }
 
-      toast.success(
-        data?.message || t("toast.adminRequested")
-      );
+      toast.success(data?.message || t("toast.adminRequested"));
 
       onActionComplete?.();
     } catch (error) {
@@ -544,11 +515,9 @@ export default function ProfileSection({ onActionComplete }) {
   const isActiveMember = memberProfile?.status === "active";
 
   const isAdmin =
-    memberProfile?.role === "admin" &&
-    memberProfile?.status === "active";
+    memberProfile?.role === "admin" && memberProfile?.status === "active";
 
-  const adminRequestPending =
-    memberProfile?.pendingAdmin === true;
+  const adminRequestPending = memberProfile?.pendingAdmin === true;
 
   return (
     <motion.section
@@ -565,9 +534,7 @@ export default function ProfileSection({ onActionComplete }) {
               {t("title")}
             </h2>
 
-            <p className="mt-1 text-sm text-slate-500">
-              {t("subtitle")}
-            </p>
+            <p className="mt-1 text-sm text-slate-500">{t("subtitle")}</p>
           </div>
 
           <button
@@ -611,9 +578,7 @@ export default function ProfileSection({ onActionComplete }) {
               id="member-name"
               label={t("fields.name")}
               value={form.name}
-              onChange={(event) =>
-                updateField("name", event.target.value)
-              }
+              onChange={(event) => updateField("name", event.target.value)}
               icon={User}
               error={errors.name}
               required
@@ -683,10 +648,7 @@ export default function ProfileSection({ onActionComplete }) {
               label={t("fields.permanentAddress")}
               value={form.permanentAddress}
               onChange={(event) =>
-                updateField(
-                  "permanentAddress",
-                  event.target.value
-                )
+                updateField("permanentAddress", event.target.value)
               }
               icon={Home}
               error={errors.permanentAddress}
@@ -699,10 +661,7 @@ export default function ProfileSection({ onActionComplete }) {
               label={t("fields.presentAddress")}
               value={form.presentAddress}
               onChange={(event) =>
-                updateField(
-                  "presentAddress",
-                  event.target.value
-                )
+                updateField("presentAddress", event.target.value)
               }
               icon={MapPin}
               error={errors.presentAddress}
@@ -742,110 +701,81 @@ export default function ProfileSection({ onActionComplete }) {
           )}
 
           <div className="space-y-4">
-            {form.plots.map((plot, index) => (
-              <div
-                key={plot.id}
-                className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
-              >
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {t("plot.label", {
-                        number: index + 1,
-                      })}
-                    </p>
-
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {t("plot.description")}
-                    </p>
-                  </div>
-
-                  {form.plots.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removePlot(plot.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      {t("plot.remove")}
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field
-                    id={`plot-${plot.id}-number`}
-                    label={t("fields.plotNumber")}
-                    value={plot.plotNo}
-                    onChange={(event) =>
-                      updatePlot(
-                        plot.id,
-                        "plotNo",
-                        event.target.value
-                      )
-                    }
-                    icon={MapPin}
-                    error={
-                      errors[`plot.${plot.id}.plotNo`]
-                    }
-                    required
-                    placeholder={t(
-                      "placeholders.plotNumber"
-                    )}
-                    hint={t("hints.plotNumber")}
-                  />
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor={`plot-${plot.id}-size`}
-                      className="flex items-center gap-2 text-sm font-medium text-slate-700"
-                    >
-                      <CreditCard className="h-4 w-4 text-slate-500" />
-                      <span>{t("fields.plotSize")}</span>
-                      <span className="text-red-500">*</span>
-                    </label>
-
-                    <select
-                      id={`plot-${plot.id}-size`}
-                      value={plot.plotSize}
-                      onChange={(event) =>
-                        updatePlot(
-                          plot.id,
-                          "plotSize",
-                          event.target.value
-                        )
-                      }
-                      aria-invalid={Boolean(
-                        errors[`plot.${plot.id}.plotSize`]
-                      )}
-                      className={[
-                        "w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 outline-none transition",
-                        "focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10",
-                        errors[`plot.${plot.id}.plotSize`]
-                          ? "border-red-400"
-                          : "border-slate-200",
-                      ].join(" ")}
-                    >
-                      <option value="">
-                        {t("plot.selectSize")}
-                      </option>
-
-                      {PLOT_SIZES.map((size) => (
-                        <option key={size} value={size}>
-                          {size}
-                        </option>
-                      ))}
-                    </select>
-
-                    {errors[`plot.${plot.id}.plotSize`] && (
-                      <p className="text-xs font-medium text-red-600">
-                        {errors[`plot.${plot.id}.plotSize`]}
-                      </p>
-                    )}
-                  </div>
-                </div>
+            <div className="hidden gap-2 pb-1 text-xs font-medium text-slate-600 sm:flex">
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <span>{t("fields.plotNumber")}</span>
+                <span>{t("fields.plotSize")}</span>
               </div>
-            ))}
+              <span className="w-[42px] shrink-0" aria-hidden="true" />
+            </div>
+
+            <div className="space-y-2">
+              {form.plots.map((plot, index) => (
+                <div key={plot.id} className="flex items-start gap-2">
+                  <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                    <div>
+                      <input
+                        type="text"
+                        aria-label={`${t("fields.plotNumber")} ${index + 1}`}
+                        value={plot.plotNo}
+                        onChange={(event) =>
+                          updatePlot(plot.id, "plotNo", event.target.value)
+                        }
+                        placeholder={t("placeholders.plotNumber")}
+                        aria-invalid={Boolean(errors[`plot.${plot.id}.plotNo`])}
+                        className={plotControlClass(
+                          errors[`plot.${plot.id}.plotNo`],
+                        )}
+                      />
+                      {errors[`plot.${plot.id}.plotNo`] && (
+                        <p className="mt-1 text-xs font-medium text-red-600">
+                          {errors[`plot.${plot.id}.plotNo`]}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <select
+                        aria-label={`${t("fields.plotSize")} ${index + 1}`}
+                        value={plot.plotSize}
+                        onChange={(event) =>
+                          updatePlot(plot.id, "plotSize", event.target.value)
+                        }
+                        aria-invalid={Boolean(
+                          errors[`plot.${plot.id}.plotSize`],
+                        )}
+                        className={plotControlClass(
+                          errors[`plot.${plot.id}.plotSize`],
+                        )}
+                      >
+                        <option value="">{t("plot.selectSize")}</option>
+                        {PLOT_SIZES.map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
+                      {errors[`plot.${plot.id}.plotSize`] && (
+                        <p className="mt-1 text-xs font-medium text-red-600">
+                          {errors[`plot.${plot.id}.plotSize`]}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removePlot(plot.id)}
+                    disabled={form.plots.length <= 1}
+                    aria-label={`${t("plot.remove")} ${index + 1}`}
+                    title={t("plot.remove")}
+                    className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
@@ -867,10 +797,7 @@ export default function ProfileSection({ onActionComplete }) {
               label={t("fields.nomineeName")}
               value={form.nominee.name}
               onChange={(event) =>
-                updateNomineeField(
-                  "name",
-                  event.target.value
-                )
+                updateNomineeField("name", event.target.value)
               }
               icon={UserRound}
               error={errors["nominee.name"]}
@@ -883,10 +810,7 @@ export default function ProfileSection({ onActionComplete }) {
               label={t("fields.nomineePhone")}
               value={form.nominee.phone}
               onChange={(event) =>
-                updateNomineeField(
-                  "phone",
-                  event.target.value
-                )
+                updateNomineeField("phone", event.target.value)
               }
               icon={Phone}
               error={errors["nominee.phone"]}
@@ -900,10 +824,7 @@ export default function ProfileSection({ onActionComplete }) {
               label={t("fields.nomineeEmail")}
               value={form.nominee.email}
               onChange={(event) =>
-                updateNomineeField(
-                  "email",
-                  event.target.value
-                )
+                updateNomineeField("email", event.target.value)
               }
               icon={Mail}
               error={errors["nominee.email"]}
@@ -932,16 +853,16 @@ export default function ProfileSection({ onActionComplete }) {
                     {isAdmin
                       ? t("actions.adminActive")
                       : adminRequestPending
-                      ? t("actions.adminPending")
-                      : t("actions.requestAdmin")}
+                        ? t("actions.adminPending")
+                        : t("actions.requestAdmin")}
                   </h3>
 
                   <p className="mt-1 text-sm text-slate-500">
                     {isAdmin
                       ? t("admin.activeDescription")
                       : adminRequestPending
-                      ? t("admin.pendingDescription")
-                      : t("admin.requestDescription")}
+                        ? t("admin.pendingDescription")
+                        : t("admin.requestDescription")}
                   </p>
                 </div>
               </div>
@@ -990,4 +911,3 @@ export default function ProfileSection({ onActionComplete }) {
     </motion.section>
   );
 }
-

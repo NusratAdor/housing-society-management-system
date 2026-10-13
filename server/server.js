@@ -118,6 +118,15 @@ app.use("/payment", paymentRedirects);
 app.use("/test", testRoutes);
 
 
+
+app.use("/api", (req, res) => {
+  return res.status(404).json({
+    success: false,
+    message: "Not found",
+  });
+});
+
+
 // Last: turns upload/validation errors into JSON instead of Express's default page.
 app.use((err, req, res, next) => {
   if (err?.name === "MulterError" || err?.message === "Only CSV files are allowed") {
