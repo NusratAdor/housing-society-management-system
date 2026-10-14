@@ -171,7 +171,10 @@ const Navbar = () => {
   const isHome = location.pathname === "/";
 
   const fetchNotifications = useCallback(async () => {
-    if (!user) return;
+    if (!user || memberProfile?.status !== "active") {
+      setNotifications([]);
+      return;
+    }
     try {
       const token = await getToken();
       const { data } = await axios.get("/api/notifications/me", {
@@ -183,19 +186,24 @@ const Navbar = () => {
     } catch {
       /* silent */
     }
-  }, [user, axios, getToken]);
+  }, [user, memberProfile?.status, axios, getToken]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || memberProfile?.status !== "active") {
       setNotifications([]);
       return;
     }
+
     fetchNotifications();
+
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") fetchNotifications();
+      if (document.visibilityState === "visible") {
+        fetchNotifications();
+      }
     }, 60_000);
+
     return () => clearInterval(interval);
-  }, [user, fetchNotifications]);
+  }, [user, memberProfile?.status, fetchNotifications]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -370,7 +378,7 @@ const Navbar = () => {
               <LanguageToggle />
             </div>
 
-            {user && (
+            {memberProfile?.status === "active" && (
               <NotificationBell
                 notifications={notifications}
                 onMarkedRead={fetchNotifications}
@@ -394,7 +402,7 @@ const Navbar = () => {
           </div>
 
           <div className="flex items-center gap-3 md:hidden">
-            {user && !isMenuOpen && (
+            {memberProfile?.status === "active" && !isMenuOpen && (
               <NotificationBell
                 notifications={notifications}
                 onMarkedRead={fetchNotifications}

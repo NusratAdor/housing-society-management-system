@@ -7,22 +7,24 @@
 // the main site, not just refresh the current dashboard view.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { Link }           from "react-router-dom";
-import { UserButton }     from "@clerk/clerk-react";
-import { assets }         from "../../assets/assets";
-import { useAppContext }  from "../../context/AppContext";
-import LanguageToggle     from "../LanguageToggle";
-import NotificationBell   from "./NotificationBell";
+import { Link } from "react-router-dom";
+import { UserButton } from "@clerk/clerk-react";
+import { assets } from "../../assets/assets";
+import { useAppContext } from "../../context/AppContext";
+import LanguageToggle from "../LanguageToggle";
+import NotificationBell from "./NotificationBell";
 
-import WorkspaceSwitcher  from "../WorkspaceSwitcher";
-
+import WorkspaceSwitcher from "../WorkspaceSwitcher";
 
 export default function DashboardTopBar() {
-  const { user, axios, getToken, navigate } = useAppContext();
-  const [notifications, setNotifications]   = useState([]);
+  const { user, memberProfile, axios, getToken, navigate } = useAppContext();
+  const [notifications, setNotifications] = useState([]);
 
   const fetchNotifications = useCallback(async () => {
-    if (!user) return;
+    if (!user || memberProfile?.status !== "active") {
+      setNotifications([]);
+      return;
+    }
     try {
       const token = await getToken();
       const { data } = await axios.get("/api/notifications/me", {
@@ -31,35 +33,47 @@ export default function DashboardTopBar() {
       if (data.success) {
         setNotifications(data.notifications ?? data.payments ?? []);
       }
-    } catch { /* silent */ }
-  }, [user, axios, getToken]);
+    } catch {
+      /* silent */
+    }
+  }, [user, memberProfile?.status, axios, getToken]);
 
   useEffect(() => {
+    if (!user || memberProfile?.status !== "active") {
+      setNotifications([]);
+      return;
+    }
+
     fetchNotifications();
+
     const id = setInterval(fetchNotifications, 60_000);
+
     return () => clearInterval(id);
-  }, [fetchNotifications]);
+  }, [user, memberProfile?.status, fetchNotifications]);
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 h-14
+    <header
+      className="fixed top-0 left-0 right-0 z-40 h-14
       bg-white border-b border-gray-200 shadow-sm
-      flex items-center justify-between px-4 md:px-6">
-
+      flex items-center justify-between px-4 md:px-6"
+    >
       {/* Logo only — no redundant text labels. Links to the public
           home page, not back into the dashboard. */}
       <Link to="/" className="flex items-center gap-2.5 flex-shrink-0">
         <img src={assets.logoScrolled} alt="GOMCS" className="h-8 w-auto" />
       </Link>
 
-           {/* Controls */}
+      {/* Controls */}
       <div className="flex items-center gap-2">
         <WorkspaceSwitcher variant="dark" />
         <LanguageToggle />
-        <NotificationBell
-          notifications={notifications}
-          iconClassName="text-gray-600"
-          useFixedPanel
-        />
+        {memberProfile?.status === "active" && (
+          <NotificationBell
+            notifications={notifications}
+            iconClassName="text-gray-600"
+            useFixedPanel
+          />
+        )}
         <UserButton afterSignOut={() => navigate("/")} />
       </div>
     </header>
