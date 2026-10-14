@@ -40,31 +40,34 @@ const lockStaffRoster = (session) =>
 
 export const getStaffProfile = async (req, res) => {
   try {
+    // A. Already active staff
     if (req.staff) {
-      return res.status(200).json({ success: true, staff: req.staff });
+      return res.status(200).json({
+        success: true,
+        staff: req.staff,
+      });
     }
 
-    // Almost every signed-in user is not staff. Skip the Clerk call unless at
-    // least one unclaimed invitation exists. (The match itself still needs the
-    // user's verified email, which only Clerk can tell us.)
-    const hasPendingInvite = await StaffAccount.exists({ active: true, clerkUserId: null });
-
-    if (!hasPendingInvite) {
-      return res.status(404).json({ success: false, message: "Staff profile not found" });
-    }
-
+    // B. Get verified Clerk email
     const clerkUser = await clerkClient.users.getUser(req.clerkUserId);
+
     const primaryEmail = clerkUser.emailAddresses.find(
       (e) => e.id === clerkUser.primaryEmailAddressId,
     );
 
     if (!primaryEmail || primaryEmail.verification?.status !== "verified") {
-      return res.status(404).json({ success: false, message: "Staff profile not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Staff profile not found",
+      });
     }
 
+    const normalizedEmail = primaryEmail.emailAddress.toLowerCase();
+
+    // C. Pending invitation matching this verified email
     const activated = await runInTransactionWithRetry(async (session) => {
       const pending = await StaffAccount.findOne({
-        email: primaryEmail.emailAddress.toLowerCase(),
+        email: normalizedEmail,
         clerkUserId: null,
         active: true,
       }).session(session);
@@ -72,9 +75,12 @@ export const getStaffProfile = async (req, res) => {
       if (!pending) return null;
 
       pending.clerkUserId = req.clerkUserId;
+
       if (!pending.name && (clerkUser.firstName || clerkUser.lastName)) {
-        pending.name = `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
+        pending.name =
+          `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
       }
+
       await pending.save({ session });
 
       await writeAuditLog({
@@ -82,7 +88,10 @@ export const getStaffProfile = async (req, res) => {
         performedBy: req.clerkUserId,
         targetId: pending._id,
         description: `Staff account activated for ${pending.email} (${pending.role})`,
-        after: { clerkUserId: req.clerkUserId, role: pending.role },
+        after: {
+          clerkUserId: req.clerkUserId,
+          role: pending.role,
+        },
         session,
         required: true,
       });
@@ -90,17 +99,34 @@ export const getStaffProfile = async (req, res) => {
       return pending;
     });
 
-    // Two requests (two tabs) can race to activate the same invite. The loser
-    // finds it already linked to THIS user: that is a success, not a 404.
-    const staff =
-      activated ??
-      (await StaffAccount.findOne({ clerkUserId: req.clerkUserId, active: true }).select("-__v"));
-
-    if (!staff) {
-      return res.status(404).json({ success: false, message: "Staff profile not found" });
+    if (activated) {
+      return res.status(200).json({
+        success: true,
+        staff: activated,
+      });
     }
 
-    return res.status(200).json({ success: true, staff });
+    // D. No active invitation. Check whether this Clerk account
+    //    was previously revoked.
+    const revokedStaff = await StaffAccount.findOne({
+      clerkUserId: req.clerkUserId,
+      active: false,
+    }).select("-__v");
+
+    if (revokedStaff) {
+      return res.status(403).json({
+        success: false,
+        accessRevoked: true,
+        message:
+          "Your staff access has been revoked. Please contact the Society office.",
+      });
+    }
+
+    // E. Ordinary Clerk user
+    return res.status(404).json({
+      success: false,
+      message: "Staff profile not found",
+    });
   } catch (error) {
     return sendError(res, "getStaffProfile", error);
   }

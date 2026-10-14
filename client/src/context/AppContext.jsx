@@ -221,6 +221,20 @@ export const AppProvider = ({ children }) => {
       const isNetworkError = !error.response;
       const isNoToken = error.message === "NO_TOKEN";
 
+
+      if (status === 403 && error.response?.data?.accessRevoked === true) {
+  staffRetryCountRef.current = 0;
+  clearStaffRetryTimer();
+
+  setStaffProfile(null);
+  setIsSuperAdmin(false);
+  setIsContentManager(false);
+  setStaffAccessRevoked(true);
+  setLoadingStaffProfile(false);
+
+  return;
+}
+
       if (status === 404) {
         staffRetryCountRef.current = 0;
         clearStaffRetryTimer();
