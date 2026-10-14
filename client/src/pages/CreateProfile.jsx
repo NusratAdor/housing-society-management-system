@@ -8,6 +8,7 @@ import { normalizePhone, isValidPhone } from "../utils/phoneUtils";
 import { useAppContext } from "../context/AppContext";
 import usePageTitle from "../hooks/usePageTitle";
 import { Trash2 } from "lucide-react";
+import StaffAccessRevokedScreen from "../components/StaffAccessRevokedScreen";
 
 const PLOT_SIZES = [13, 10, 9, 7, 6.5];
 
@@ -55,6 +56,7 @@ const CreateProfile = () => {
     loadingProfile,
     staffProfile,
     loadingStaffProfile,
+    staffAccessRevoked,
   } = useAppContext();
 
   usePageTitle("Create Profile");
@@ -367,6 +369,8 @@ const CreateProfile = () => {
     return <Navigate to={destination} replace />;
   }
 
+    if (staffAccessRevoked) return <StaffAccessRevokedScreen />;
+    
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-10">
       <form

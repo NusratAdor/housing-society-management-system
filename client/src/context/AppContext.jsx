@@ -14,8 +14,13 @@
 
 import axiosInstance from "../utils/axiosInstance.js";
 import {
-  createContext, useContext, useState,
-  useEffect, useCallback, useRef, useMemo,
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
 } from "react";
 import { useUser, useAuth } from "@clerk/clerk-react";
 import { useNavigate } from "react-router-dom";
@@ -23,23 +28,24 @@ import { toast } from "react-hot-toast";
 
 const AppContext = createContext();
 
-const MAX_RETRIES   = 4;
+const MAX_RETRIES = 4;
 const RETRY_BASE_MS = 2000;
 
 export const AppProvider = ({ children }) => {
   const navigate = useNavigate();
-  const { user }  = useUser();
+  const { user } = useUser();
   const { getToken, isLoaded } = useAuth();
-  const userId = user?.id; 
+  const userId = user?.id;
 
-  const [memberProfile,  setMemberProfile]  = useState(null);
+  const [memberProfile, setMemberProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [isAdmin,        setIsAdmin]        = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const [staffProfile,        setStaffProfile]        = useState(null);
-  const [loadingStaffProfile, setLoadingStaffProfile]  = useState(true);
-  const [isSuperAdmin,        setIsSuperAdmin]         = useState(false);
-  const [isContentManager,    setIsContentManager]     = useState(false);
+  const [staffProfile, setStaffProfile] = useState(null);
+  const [loadingStaffProfile, setLoadingStaffProfile] = useState(true);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [isContentManager, setIsContentManager] = useState(false);
+  const [staffAccessRevoked, setStaffAccessRevoked] = useState(false);
 
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef(null);
@@ -49,13 +55,12 @@ export const AppProvider = ({ children }) => {
 
   const navigateRef = useRef(navigate);
   const getTokenRef = useRef(getToken);
-  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
-  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
-
-
-
-
-
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
@@ -105,7 +110,9 @@ export const AppProvider = ({ children }) => {
         setMemberProfile(data.member);
         // FIX: a removed member's role should never count as active
         // admin power — status must be active too.
-        setIsAdmin(data.member.role === "admin" && data.member.status === "active");
+        setIsAdmin(
+          data.member.role === "admin" && data.member.status === "active",
+        );
       } else {
         setMemberProfile(null);
         setIsAdmin(false);
@@ -114,11 +121,10 @@ export const AppProvider = ({ children }) => {
         }
       }
       setLoadingProfile(false);
-
     } catch (error) {
-      const status         = error.response?.status;
+      const status = error.response?.status;
       const isNetworkError = !error.response;
-      const isNoToken      = error.message === "NO_TOKEN";
+      const isNoToken = error.message === "NO_TOKEN";
 
       if (status === 404) {
         retryCountRef.current = 0;
@@ -140,7 +146,10 @@ export const AppProvider = ({ children }) => {
         return;
       }
 
-      if ((isNetworkError || isNoToken) && retryCountRef.current < MAX_RETRIES) {
+      if (
+        (isNetworkError || isNoToken) &&
+        retryCountRef.current < MAX_RETRIES
+      ) {
         retryCountRef.current += 1;
         const delay = RETRY_BASE_MS * Math.pow(2, retryCountRef.current - 1);
 
@@ -175,6 +184,7 @@ export const AppProvider = ({ children }) => {
       setStaffProfile(null);
       setIsSuperAdmin(false);
       setIsContentManager(false);
+      setStaffAccessRevoked(false);
       setLoadingStaffProfile(false);
       return;
     }
@@ -196,19 +206,20 @@ export const AppProvider = ({ children }) => {
 
       if (data.success) {
         setStaffProfile(data.staff);
+        setStaffAccessRevoked(false);
         setIsSuperAdmin(data.staff.role === "super_admin");
         setIsContentManager(data.staff.role === "content_manager");
       } else {
         setStaffProfile(null);
+        setStaffAccessRevoked(data.accessRevoked === true);
         setIsSuperAdmin(false);
         setIsContentManager(false);
       }
       setLoadingStaffProfile(false);
-
     } catch (error) {
-      const status         = error.response?.status;
+      const status = error.response?.status;
       const isNetworkError = !error.response;
-      const isNoToken      = error.message === "NO_TOKEN";
+      const isNoToken = error.message === "NO_TOKEN";
 
       if (status === 404) {
         staffRetryCountRef.current = 0;
@@ -216,13 +227,18 @@ export const AppProvider = ({ children }) => {
         setStaffProfile(null);
         setIsSuperAdmin(false);
         setIsContentManager(false);
+        setStaffAccessRevoked(false);
         setLoadingStaffProfile(false);
         return;
       }
 
-      if ((isNetworkError || isNoToken) && staffRetryCountRef.current < MAX_RETRIES) {
+      if (
+        (isNetworkError || isNoToken) &&
+        staffRetryCountRef.current < MAX_RETRIES
+      ) {
         staffRetryCountRef.current += 1;
-        const delay = RETRY_BASE_MS * Math.pow(2, staffRetryCountRef.current - 1);
+        const delay =
+          RETRY_BASE_MS * Math.pow(2, staffRetryCountRef.current - 1);
 
         staffRetryTimerRef.current = setTimeout(() => {
           fetchStaffProfile();
@@ -235,6 +251,7 @@ export const AppProvider = ({ children }) => {
       setStaffProfile(null);
       setIsSuperAdmin(false);
       setIsContentManager(false);
+      setStaffAccessRevoked(false);
       setLoadingStaffProfile(false);
     }
   }, [isLoaded, userId, clearStaffRetryTimer]);
@@ -261,13 +278,28 @@ export const AppProvider = ({ children }) => {
   const availableWorkspaces = useMemo(() => {
     const workspaces = [];
     if (isSuperAdmin) {
-      workspaces.push({ key: "super-admin", path: "/super-admin", soloLabel: "Super Admin", switchLabel: "Super Admin" });
+      workspaces.push({
+        key: "super-admin",
+        path: "/super-admin",
+        soloLabel: "Super Admin",
+        switchLabel: "Super Admin",
+      });
     }
     if (isAdmin || isContentManager) {
-      workspaces.push({ key: "admin", path: "/admin", soloLabel: "Admin Panel", switchLabel: "Admin Panel" });
+      workspaces.push({
+        key: "admin",
+        path: "/admin",
+        soloLabel: "Admin Panel",
+        switchLabel: "Admin Panel",
+      });
     }
     if (memberProfile && memberProfile.status === "active") {
-      workspaces.push({ key: "member", path: "/dashboard", soloLabel: "Dashboard", switchLabel: "My Membership" });
+      workspaces.push({
+        key: "member",
+        path: "/dashboard",
+        soloLabel: "Dashboard",
+        switchLabel: "My Membership",
+      });
     }
     return workspaces;
   }, [isSuperAdmin, isAdmin, isContentManager, memberProfile]);
@@ -278,31 +310,45 @@ export const AppProvider = ({ children }) => {
   // would be misleading for someone who already had a membership.
   const isRemovedMember = memberProfile?.status === "removed";
 
-  const value = useMemo(() => ({
-    navigate,
-    user,
-    getToken,
-    axios: axiosInstance,
-    memberProfile,
-    setMemberProfile,
-    fetchMemberProfile,
-    loadingProfile,
-    isAdmin,
-    staffProfile,
-    fetchStaffProfile,
-    loadingStaffProfile,
-    isSuperAdmin,
-    isContentManager,
-    availableWorkspaces,
-    // NEW
-    isRemovedMember,
-  
-  }), [
-    navigate, user, getToken,
-    memberProfile, fetchMemberProfile, loadingProfile, isAdmin,
-    staffProfile, fetchStaffProfile, loadingStaffProfile, isSuperAdmin, isContentManager,
-    availableWorkspaces, isRemovedMember,
-  ]);
+  const value = useMemo(
+    () => ({
+      navigate,
+      user,
+      getToken,
+      axios: axiosInstance,
+      memberProfile,
+      setMemberProfile,
+      fetchMemberProfile,
+      loadingProfile,
+      isAdmin,
+      staffProfile,
+      fetchStaffProfile,
+      loadingStaffProfile,
+      isSuperAdmin,
+      isContentManager,
+      staffAccessRevoked,
+      availableWorkspaces,
+      // NEW
+      isRemovedMember,
+    }),
+    [
+      navigate,
+      user,
+      getToken,
+      memberProfile,
+      fetchMemberProfile,
+      loadingProfile,
+      isAdmin,
+      staffProfile,
+      fetchStaffProfile,
+      loadingStaffProfile,
+      isSuperAdmin,
+      isContentManager,
+      availableWorkspaces,
+      isRemovedMember,
+      staffAccessRevoked,
+    ],
+  );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
