@@ -65,6 +65,8 @@ export const getStaffProfile = async (req, res) => {
     const normalizedEmail = primaryEmail.emailAddress.toLowerCase();
 
     // C. Pending invitation matching this verified email
+    //    This must be checked BEFORE revoked access so a revoked
+    //    staff member can be legitimately re-invited.
     const activated = await runInTransactionWithRetry(async (session) => {
       const pending = await StaffAccount.findOne({
         email: normalizedEmail,
@@ -106,8 +108,8 @@ export const getStaffProfile = async (req, res) => {
       });
     }
 
-    // D. No active invitation. Check whether this Clerk account
-    //    was previously revoked.
+    // D. No pending invitation.
+    //    Check whether this Clerk account was previously revoked.
     const revokedStaff = await StaffAccount.findOne({
       clerkUserId: req.clerkUserId,
       active: false,
@@ -116,6 +118,7 @@ export const getStaffProfile = async (req, res) => {
     if (revokedStaff) {
       return res.status(403).json({
         success: false,
+        staff: null,
         accessRevoked: true,
         message:
           "Your staff access has been revoked. Please contact the Society office.",
