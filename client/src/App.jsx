@@ -85,6 +85,7 @@ import LoadingScreen from "./components/LoadingScreen";
 import { ScrollRestorer, ScrollToTopButton } from "./components/ScrollToTop";
 import Reports from "./pages/admin/Reports";
 import ReportPage from "./pages/admin/ReportPage";
+import StaffAccessRevokedScreen from "./components/StaffAccessRevokedScreen";
 
 import NotFound from "./pages/NotFound";
 
@@ -107,7 +108,7 @@ const MembershipRemovedScreen = () => (
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isLoaded, isSignedIn } = useAuth();
-  const { memberProfile, loadingProfile, staffProfile, loadingStaffProfile } =
+  const { memberProfile, loadingProfile, staffProfile, loadingStaffProfile, staffAccessRevoked } =
     useAppContext();
 
   if (!isLoaded) return <LoadingScreen />;
@@ -127,6 +128,8 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
       staffProfile.role === "super_admin" ? "/super-admin" : "/admin";
     return <Navigate to={fallback} replace />;
   }
+
+   if (staffAccessRevoked) return <StaffAccessRevokedScreen />;
 
   if (!memberProfile) return <Navigate to="/create-profile" replace />;
 

@@ -1,10 +1,31 @@
 {
   "home": "হোম",
+  "about": "আমাদের সম্পর্কে",
+  "services": "সেবাসমূহ",
   "notices": "নোটিস",
   "gallery": "গ্যালারি",
   "contact": "যোগাযোগ",
   "adminPanel": "অ্যাডমিন প্যানেল",
   "dashboard": "ড্যাশবোর্ড",
   "createProfile": "প্রোফাইল তৈরি",
-  "signIn": "সাইন ইন"
+  "signIn": "সাইন ইন",
+  "membershipRemoved": "সদস্যপদ বাতিল",
+  "membershipRemovedHint": "আপনার সদস্যপদ বাতিল করা হয়েছে — সমিতির অফিসে যোগাযোগ করুন",
+  "logoAlt": "জিওএইচএস-এর লোগো",
+  "openMenu": "মেনু খুলুন",
+  "closeMenu": "মেনু বন্ধ করুন",
+  "aboutMenu": {
+    "society": "সমিতি পরিচিতি",
+    "visionMission": "রূপকল্প ও অভিলক্ষ্য",
+    "advisoryCommittee": "উপদেষ্টা কমিটি",
+    "president": "সভাপতি",
+    "generalSecretary": "সাধারণ সম্পাদক",
+    "formerPresident": "সাবেক সভাপতি",
+    "formerSecretary": "সাবেক সাধারণ সম্পাদক",
+    "executiveCommittee": "কার্যনির্বাহী কমিটি"
+  },
+  "servicesMenu": {
+    "guestHouse": "গেস্ট হাউস",
+    "utilityServices": "ইউটিলিটি সেবা"
+  }
 }

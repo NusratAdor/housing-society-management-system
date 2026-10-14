@@ -1,10 +1,31 @@
 {
   "home": "Home",
+  "about": "About",
+  "services": "Services",
   "notices": "Notices",
   "gallery": "Gallery",
   "contact": "Contact",
   "adminPanel": "Admin Panel",
   "dashboard": "Dashboard",
   "createProfile": "Create Profile",
-  "signIn": "Sign In"
+  "signIn": "Sign In",
+  "membershipRemoved": "Membership Removed",
+  "membershipRemovedHint": "Your membership has been removed — contact the Society office",
+  "logoAlt": "GOHS logo",
+  "openMenu": "Open menu",
+  "closeMenu": "Close menu",
+  "aboutMenu": {
+    "society": "About Society",
+    "visionMission": "Vision & Mission",
+    "advisoryCommittee": "Advisory Committee",
+    "president": "President",
+    "generalSecretary": "General Secretary",
+    "formerPresident": "Former President",
+    "formerSecretary": "Former Secretary",
+    "executiveCommittee": "Executive Committee"
+  },
+  "servicesMenu": {
+    "guestHouse": "Guest House",
+    "utilityServices": "Utility Services"
+  }
 }

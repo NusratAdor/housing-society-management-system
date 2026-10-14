@@ -7,7 +7,7 @@
 // this year through July next year."
 //
 // Real unpaid months keep working exactly as before — selecting them
-// populates selectedMonthlyIds and is allocated immediately at
+// populates selectedMonthlyIds and is allocated immediatelay at
 // confirmation. Projected future months have no real charge ID yet, so
 // selecting them instead adds to advanceAmount (banked credit), reusing
 // the existing, already-deployed credit system: as each projected month

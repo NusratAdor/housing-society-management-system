@@ -33,6 +33,8 @@ import superAdminRoutes from "./routes/superAdminRoutes.js";
 
 import serviceRequestRoutes from "./routes/serviceRequestRoutes.js";
 
+import contactRoutes from "./routes/contactRoutes.js";
+
 import testRoutes from "./routes/testRoutes.js";
 
 await connectDB();
@@ -105,6 +107,7 @@ app.use("/api/notices", noticeRouter);
 app.use("/api/gallery", galleryRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/faqs", faqRoutes);
+app.use("/api/contact", contactRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/committee", committeeRoutes);
 app.use("/api/announcements", announcementRoutes);

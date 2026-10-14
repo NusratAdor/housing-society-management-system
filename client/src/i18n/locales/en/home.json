@@ -1,0 +1,64 @@
+{
+  "hero": {
+    "title": "Government Officers' Housing Society",
+    "subtitle": "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members.",
+    "cta": {
+      "joinOrLogin": "Join or Log In to Get Started",
+      "createProfile": "Create Profile",
+      "membershipRemoved": "Membership Removed"
+    }
+  },
+  "intro": {
+    "badge": "Est. 2005",
+    "title": "Where <highlight>Community</highlight> Begins",
+    "paragraph1": "Government Officers' Housing Society was founded to give government officers and their families a safe, well-managed place to call home. What began as a small residential initiative has grown into a thriving community defined by cooperation, transparency, and shared purpose.",
+    "paragraph2": "Today, GOHS supports over 500 member families through transparent financial management, responsive community services, and a genuine commitment to keeping neighbors connected.",
+    "readMore": "Read More About Us",
+    "imageAlt": "GOHS community",
+    "statValue": "500+",
+    "statLabel": "Registered Members"
+  },
+  "notices": {
+    "badge": "Notice Board",
+    "title": "Community <highlight>Notices</highlight>",
+    "subtitle": "Everything happening around your community, in one place.",
+    "readMore": "Read more",
+    "viewAll": "View All Notices",
+    "empty": "No notices available.",
+    "loadFailed": "Failed to load notices",
+    "loadError": "Error loading notices. Please try again."
+  },
+  "events": {
+    "badge": "Community Events",
+    "title": "Community <highlight>Events</highlight>",
+    "subtitle": "Celebrating the moments that bring our neighbors together.",
+    "tabUpcoming": "Upcoming",
+    "tabPast": "Past",
+    "emptyUpcoming": "No upcoming events scheduled yet.",
+    "emptyPast": "No past events yet.",
+    "viewAll": "View All Events",
+    "loadFailed": "Failed to load events"
+  },
+  "gallery": {
+    "badge": "Photo Album",
+    "title": "Community <highlight>Gallery</highlight>",
+    "subtitle": "Moments from our community events and activities.",
+    "viewAll": "View all",
+    "loadFailed": "Failed to load gallery"
+  },
+  "faq": {
+    "badge": "Help Center",
+    "title": "Frequently Asked <highlight>Questions</highlight>",
+    "subtitle": "Common questions from our community, answered by our admins.",
+    "empty": "No FAQs published yet."
+  },
+  "cta": {
+    "title": "Guided by Purpose, Built on Trust",
+    "description": "Every decision we make is rooted in a clear mission and a shared vision for what our community can become. See what drives us forward.",
+    "adminPanel": "Admin Panel",
+    "goToDashboard": "Go to Dashboard",
+    "join": "Join Our Community",
+    "createProfile": "Create Profile",
+    "visionMission": "Our Vision & Mission"
+  }
+}

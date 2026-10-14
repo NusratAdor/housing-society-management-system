@@ -1,26 +1,31 @@
 // client/src/components/EventsPreview.jsx
 //
-// CHANGE (this pass): dummy data replaced with a real fetch from
-// GET /api/events/public — the full Event system now exists (see
-// models/Event.js, controllers/eventController.js,
-// pages/admin/ManageEvents.jsx). Upcoming vs Past split is computed
-// client-side by comparing eventDate to now, same convention used in
-// Events.jsx (the full listing page) — the backend never stores a
-// status field for this.
+// i18n PASS — all copy (badge, heading, subtitle, tabs, empty states,
+// toast, button) now comes from the "home" namespace (events.*). The
+// heading uses <Trans> with a named <highlight> tag.
 //
-// UI (toggle, ticket-stub date badge, card layout) — completely
-// unchanged from the previous pass. Empty-state message added since a
-// fresh install has zero events until the admin creates some.
+// The ticket-stub date badge is now locale-aware: day and short month
+// are formatted with Intl for the active language (en-US / bn-BD), so
+// Bengali users see Bengali digits and month names instead of "15 OCT".
+// Locale is derived through utils/locale.js.
+//
+// Data fetching, upcoming/past split (computed client-side from
+// eventDate), card layout, animations — UNCHANGED.
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
 import { CalendarClock, MapPin, ArrowRight } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
+import { getLocale } from "../utils/locale";
 
 const EventCard = ({ event, i }) => {
+  const { i18n } = useTranslation("home");
+  const locale = getLocale(i18n.resolvedLanguage || i18n.language);
   const d = new Date(event.eventDate);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -45,9 +50,11 @@ const EventCard = ({ event, i }) => {
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
 
         <div className="absolute top-3 left-3 bg-white rounded-lg shadow-md px-3 py-1.5 text-center leading-none">
-          <p className="text-emerald-600 font-bold text-lg">{d.getDate()}</p>
+          <p className="text-emerald-600 font-bold text-lg">
+            {d.toLocaleString(locale, { day: "numeric" })}
+          </p>
           <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide">
-            {d.toLocaleString("en-US", { month: "short" })}
+            {d.toLocaleString(locale, { month: "short" })}
           </p>
         </div>
       </div>
@@ -73,6 +80,7 @@ const EventCard = ({ event, i }) => {
 
 const EventsPreview = () => {
   const { axios } = useAppContext();
+  const { t } = useTranslation("home");
   const [tab, setTab] = useState("upcoming");
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,7 +91,7 @@ const EventsPreview = () => {
         const { data } = await axios.get("/api/events/public");
         if (data.success) setEvents(data.events);
       } catch {
-        toast.error("Failed to load events");
+        toast.error(t("events.loadFailed"));
       } finally {
         setLoading(false);
       }
@@ -100,6 +108,11 @@ const EventsPreview = () => {
     .sort((a, b) => new Date(b.eventDate) - new Date(a.eventDate));
   const visible = (tab === "upcoming" ? upcoming : past).slice(0, 3);
 
+  const tabs = [
+    { key: "upcoming", label: t("events.tabUpcoming") },
+    { key: "past", label: t("events.tabPast") },
+  ];
+
   return (
     <div className="w-full bg-white py-20">
       <div className="max-w-7xl mx-auto px-4 md:px-8 flex flex-col items-center text-center">
@@ -114,7 +127,7 @@ const EventsPreview = () => {
                      border border-emerald-200 mb-5"
         >
           <CalendarClock size={13} strokeWidth={2} />
-          Community Events
+          {t("events.badge")}
         </motion.span>
 
         <motion.h2
@@ -124,7 +137,11 @@ const EventsPreview = () => {
           transition={{ delay: 0.05 }}
           className="text-3xl md:text-4xl font-bold text-gray-900 mb-3"
         >
-          Community <span className="text-emerald-600">Events</span>
+          <Trans
+            t={t}
+            i18nKey="events.title"
+            components={{ highlight: <span className="text-emerald-600" /> }}
+          />
         </motion.h2>
 
         <motion.p
@@ -134,14 +151,11 @@ const EventsPreview = () => {
           transition={{ delay: 0.1 }}
           className="text-gray-500 text-sm md:text-base max-w-xl mb-8"
         >
-          Celebrating the moments that bring our neighbors together.
+          {t("events.subtitle")}
         </motion.p>
 
         <div className="inline-flex items-center gap-0.5 rounded-full border border-gray-200 p-1 mb-12 bg-gray-50">
-          {[
-            { key: "upcoming", label: "Upcoming" },
-            { key: "past", label: "Past" },
-          ].map((opt) => (
+          {tabs.map((opt) => (
             <button
               key={opt.key}
               onClick={() => setTab(opt.key)}
@@ -162,7 +176,7 @@ const EventsPreview = () => {
           </div>
         ) : visible.length === 0 ? (
           <p className="text-gray-400 font-outfit py-8">
-            {tab === "upcoming" ? "No upcoming events scheduled yet." : "No past events yet."}
+            {tab === "upcoming" ? t("events.emptyUpcoming") : t("events.emptyPast")}
           </p>
         ) : (
           <AnimatePresence mode="wait">
@@ -199,7 +213,7 @@ const EventsPreview = () => {
                        transition-all duration-300 ease-out
                        group"
           >
-            View All Events
+            {t("events.viewAll")}
             <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-0.5" />
           </Link>
         </motion.div>

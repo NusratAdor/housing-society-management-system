@@ -1,34 +1,25 @@
 // client/src/components/CommunityGallery.jsx
 //
-// CHANGE (this pass):
-//   - Old shared Title.jsx component replaced with the SAME inline
-//     heading markup pattern used in NoticesPreview.jsx: bold Outfit
-//     h2 with an emerald-highlighted word, plus a subtitle paragraph
-//     with matching size/color/max-width.
-//   - Heading text changed from "Gallery" to "Community Gallery"
-//     (highlighting "Gallery" in emerald), paralleling "Community
-//     Notices" — consistent naming convention across both homepage
-//     sections now.
-//   - THE ACTUAL SPACING FIX: the subtitle now carries mb-12, exactly
-//     matching NoticesPreview's subtitle spacing before its content
-//     grid. The old Title component was producing a visibly tighter
-//     gap here than NoticesPreview's heading block — that mismatch is
-//     what was circled in the screenshot. This wasn't a proportions/
-//     padding tweak on the grid itself; it was this one margin value.
-//   - ViewAllButton, its corner positioning, ArrowRight behavior, grid,
-//     data fetching: UNCHANGED — the button was already reverted to
-//     its correct simple form in the previous pass and isn't touched
-//     again here.
+// i18n PASS — all copy (badge, heading, subtitle, "View all", toast)
+// now comes from the "home" namespace (gallery.*). The heading uses
+// <Trans> with a named <highlight> tag so each language places the
+// coloured word correctly.
+//
+// Heading pattern (pill badge + bold Outfit h2 + gray subtitle with
+// mb-12), ViewAllButton and its corner positioning, grid, data
+// fetching — UNCHANGED.
 
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Images, ArrowRight } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 import GalleryCard        from "./GalleryCard";
 import { useAppContext }  from "../context/AppContext";
 import { toast }          from "react-hot-toast";
 
 const CommunityGallery = () => {
   const { axios, navigate } = useAppContext();
+  const { t } = useTranslation("home");
   const [items,   setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,7 +29,7 @@ const CommunityGallery = () => {
         const { data } = await axios.get("/api/gallery");
         if (data.success) setItems(data.gallery);
       } catch {
-        toast.error("Failed to load gallery");
+        toast.error(t("gallery.loadFailed"));
       } finally {
         setLoading(false);
       }
@@ -65,7 +56,7 @@ const CommunityGallery = () => {
                   transition-all duration-300 ease-out
                   group ${className}`}
     >
-      View all
+      {t("gallery.viewAll")}
       <ArrowRight
         className="w-3.5 h-3.5 transition-transform duration-300
                    group-hover:translate-x-0.5"
@@ -77,14 +68,6 @@ const CommunityGallery = () => {
     <div className="w-full py-20" style={{ backgroundColor: "#F3FBF8" }}>
       <div className="max-w-7xl mx-auto px-4 md:px-8">
 
-        {/* Heading — matches NoticesPreview.jsx's pattern exactly:
-            pill badge + bold Outfit + emerald-highlighted second word,
-            subtitle with mb-12 for the same breathing room before the
-            grid. Pill text: "Photo Album" — "Photo Wall" was rejected;
-            this parallels "Notice Board" as a simple, short label,
-            using the Images (photo-stack) icon rather than Camera,
-            since it also matches the icon already used on the
-            multi-photo badge on each card, for consistency.            */}
         <div className="relative flex flex-col items-center text-center">
           <motion.span
             initial={{ opacity: 0, y: 10 }}
@@ -96,7 +79,7 @@ const CommunityGallery = () => {
                        border border-emerald-200 mb-5"
           >
             <Images size={13} strokeWidth={2} />
-            Photo Album
+            {t("gallery.badge")}
           </motion.span>
 
           <motion.h2
@@ -105,7 +88,11 @@ const CommunityGallery = () => {
             viewport={{ once: true }}
             className="text-3xl md:text-4xl font-bold text-gray-900 mb-3"
           >
-            Community <span className="text-emerald-600">Gallery</span>
+            <Trans
+              t={t}
+              i18nKey="gallery.title"
+              components={{ highlight: <span className="text-emerald-600" /> }}
+            />
           </motion.h2>
 
           <motion.p
@@ -115,7 +102,7 @@ const CommunityGallery = () => {
             transition={{ delay: 0.05 }}
             className="text-gray-500 text-sm md:text-base max-w-xl mb-12"
           >
-            Moments from our community events and activities.
+            {t("gallery.subtitle")}
           </motion.p>
 
           <ViewAllButton className="hidden md:flex absolute right-0 top-12" />

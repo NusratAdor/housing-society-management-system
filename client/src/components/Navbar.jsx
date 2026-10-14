@@ -1,21 +1,18 @@
 // client/src/components/Navbar.jsx
 //
-// REDESIGN PASS 10 — Services submenu replaced with the 2 requested
-//   items: Swimming Pool, Member Support (replacing the previous 4
-//   placeholder items — Membership, Dues & Payments, Facilities &
-//   Amenities, Member Support — which were always marked as
-//   placeholders pending real pages). Same treatment as the About
-//   submenu replacement in pass 8: hardcoded labels + icon per item,
-//   matching the new real routes built for these pages.
+// i18n PASS — every user-facing string now comes from the "navbar"
+// namespace (en/bn): top-level links, both submenus, the "Membership
+// Removed" button + tooltip, logo alt text, and the menu-toggle
+// aria-labels. Previously t("about") / t("services") had no matching
+// keys and rendered as raw "about" / "services".
 //
-// PASS 9 (kept) — mobile menu overlay opacity raised to 96/93/96,
-//   blur removed. See prior comments for the reasoning; unchanged here.
+// REDESIGN PASS 10 (kept) — Services submenu: Guest House, Utility Services.
+// PASS 9 (kept) — mobile menu overlay opacity 96/93/96, blur removed.
+// PASS 8 (kept) — About submenu with the 8 "About Us" items.
 //
-// PASS 8 (kept) — About submenu replaced with the 7 "About Us" items.
-//
-// Everything else — glass dropdown treatment, hover-only nav color,
-// MenuToggle bar-morph, CTA gradient/radius, NotificationBell hover
-// fix — UNCHANGED from the previous pass.
+// Everything else — routing, auth/workspace CTA logic, glass dropdown
+// treatment, hover-only nav color, MenuToggle bar-morph, notification
+// polling — UNCHANGED.
 
 import React, { useEffect, useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -54,29 +51,32 @@ const dropdownVariants = {
 };
 
 const BAR_TRANSITION = { duration: 0.32, ease: [0.65, 0, 0.35, 1] };
-const MenuToggle = ({ open, onClick, light }) => (
-  <button
-    onClick={onClick}
-    aria-label={open ? "Close menu" : "Open menu"}
-    className="relative flex h-9 w-9 shrink-0 items-center justify-center md:hidden"
-  >
-    <motion.span
-      animate={open ? { rotate: 45, y: 0 } : { rotate: 0, y: -5 }}
-      transition={BAR_TRANSITION}
-      className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
-    />
-    <motion.span
-      animate={open ? { opacity: 0 } : { opacity: 1 }}
-      transition={BAR_TRANSITION}
-      className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
-    />
-    <motion.span
-      animate={open ? { rotate: -45, y: 0 } : { rotate: 0, y: 5 }}
-      transition={BAR_TRANSITION}
-      className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
-    />
-  </button>
-);
+const MenuToggle = ({ open, onClick, light }) => {
+  const { t } = useTranslation("navbar");
+  return (
+    <button
+      onClick={onClick}
+      aria-label={open ? t("closeMenu") : t("openMenu")}
+      className="relative flex h-9 w-9 shrink-0 items-center justify-center md:hidden"
+    >
+      <motion.span
+        animate={open ? { rotate: 45, y: 0 } : { rotate: 0, y: -5 }}
+        transition={BAR_TRANSITION}
+        className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
+      />
+      <motion.span
+        animate={open ? { opacity: 0 } : { opacity: 1 }}
+        transition={BAR_TRANSITION}
+        className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
+      />
+      <motion.span
+        animate={open ? { rotate: -45, y: 0 } : { rotate: 0, y: 5 }}
+        transition={BAR_TRANSITION}
+        className={`absolute h-[1.5px] w-4 rounded-full ${light ? "bg-white" : "bg-gray-800"}`}
+      />
+    </button>
+  );
+};
 
 const Navbar = () => {
   const { t } = useTranslation("navbar");
@@ -87,35 +87,39 @@ const Navbar = () => {
       name: t("about"),
       path: "/about-us",
       submenu: [
-        { name: "About Society", path: "/about-us", icon: BookOpen },
+        { name: t("aboutMenu.society"), path: "/about-us", icon: BookOpen },
         {
-          name: "Vision & Mission",
+          name: t("aboutMenu.visionMission"),
           path: "/about-us/vision-mission",
           icon: Target,
         },
         {
-          name: "Advisory Committee",
+          name: t("aboutMenu.advisoryCommittee"),
           path: "/about-us/advisory-committee",
           icon: Lightbulb,
         },
-        { name: "President", path: "/about-us/president", icon: Crown },
         {
-          name: "General Secretary",
+          name: t("aboutMenu.president"),
+          path: "/about-us/president",
+          icon: Crown,
+        },
+        {
+          name: t("aboutMenu.generalSecretary"),
           path: "/about-us/general-secretary",
           icon: UserCog,
         },
         {
-          name: "Former President",
+          name: t("aboutMenu.formerPresident"),
           path: "/about-us/former-president",
           icon: History,
         },
         {
-          name: "Former Secretary",
+          name: t("aboutMenu.formerSecretary"),
           path: "/about-us/former-secretary",
           icon: Archive,
         },
         {
-          name: "Executive Committee",
+          name: t("aboutMenu.executiveCommittee"),
           path: "/about-us/executive-committee",
           icon: Users,
         },
@@ -126,12 +130,12 @@ const Navbar = () => {
       path: "/our-services",
       submenu: [
         {
-          name: "Guest House",
+          name: t("servicesMenu.guestHouse"),
           path: "/our-services/guest-house",
           icon: BedDouble,
         },
         {
-          name: "Utility Services",
+          name: t("servicesMenu.utilityServices"),
           path: "/our-services/utility-services",
           icon: Wrench,
         },
@@ -161,7 +165,7 @@ const Navbar = () => {
     isSuperAdmin,
     isContentManager,
     availableWorkspaces,
-    isRemovedMember, // NEW
+    isRemovedMember,
   } = useAppContext();
   const location = useLocation();
   const isHome = location.pathname === "/";
@@ -255,7 +259,7 @@ const Navbar = () => {
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <img
               src={isScrolled ? assets.logoScrolled : assets.logo}
-              alt="Logo"
+              alt={t("logoAlt")}
               className="transform scale-90 h-9"
             />
           </Link>
@@ -336,9 +340,9 @@ const Navbar = () => {
                   onClick={() => navigate("/contact")}
                   className="ml-2 text-sm rounded-md px-5 py-1.5 bg-gray-200 text-gray-600
         font-outfit font-medium hover:bg-gray-300 transition-all duration-300"
-                  title="Your membership has been removed — contact the Society office"
+                  title={t("membershipRemovedHint")}
                 >
-                  Membership Removed
+                  {t("membershipRemoved")}
                 </button>
               ) : availableWorkspaces.length === 0 ? (
                 <button
@@ -437,7 +441,7 @@ const Navbar = () => {
                     }}
                     className="flex-1 rounded-md py-2.5 text-sm bg-gray-200 text-gray-600 font-outfit font-medium"
                   >
-                    Membership Removed
+                    {t("membershipRemoved")}
                   </button>
                 ) : availableWorkspaces.length === 0 ? (
                   <button
@@ -558,11 +562,3 @@ const Navbar = () => {
 };
 
 export default Navbar;
-
-/*
-NEW i18n KEYS NEEDED (namespace: "navbar"):
-  (Both About and Services submenus are now hardcoded strings, not
-  t() calls — only "home", "about", "services", "notices", "gallery",
-  "contact", "adminPanel", "dashboard", "createProfile", "signIn"
-  keys are still needed at the top level.)
-*/

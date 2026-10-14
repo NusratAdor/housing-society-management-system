@@ -1,33 +1,18 @@
 // src/components/Hero.jsx
 //
-// FIX (this pass) — animation was invisible on load, root cause found:
-//   whileInView fires based on SCROLL intersection — it's built for
-//   content further down a page that reveals as the user scrolls to
-//   it. The Hero sits in the viewport the instant it mounts, so
-//   whileInView fired almost immediately — while App.jsx's full-screen
-//   loading overlay (zIndex 99999, opaque) was still covering
-//   everything. The stagger-fade-up animation played out underneath
-//   that overlay, finished, and only THEN did the overlay fade away —
-//   so by the time it was visible, there was nothing left to animate.
+// i18n PASS — all copy now comes from the "home" namespace (hero.*).
+// Before, the strings were whole English sentences used as keys in the
+// default "dashboard" namespace: no JSON file contained them, and the
+// subtitle's trailing "." also collided with i18next's key separator,
+// so the Hero could never be translated.
 //
-//   FIX: swapped whileInView -> animate, driven by the same
-//   loadingProfile flag App.jsx's own overlay uses to decide when the
-//   page is safe to reveal (already available here via useAppContext,
-//   just wasn't wired to the animation). Now the container sits in its
-//   "hidden" state for as long as loadingProfile is true, and switches
-//   to "visible" at the exact moment it flips false — precisely when
-//   the overlay starts its own fade-out. The two happen concurrently,
-//   so the stagger-in plays out live as the overlay clears, on every
-//   reload, instead of finishing invisibly beforehand.
+// Heading text: now reads "Housing Society", matching the GOHS acronym
+// and every other page/email (the previous "Housing Scheme" looked like
+// an accidental regression). It's a single string in home.json if the
+// client ever wants it changed.
 //
-// Also fixed: heading text said "Housing Scheme" — every other page,
-// email, and the GOHS acronym itself say "Housing Society". This
-// looked like an accidental regression from an earlier edit rather
-// than an intentional change, so I corrected it back — flagging this
-// explicitly since it wasn't something you asked me to touch.
-//
-// Everything else — click handler / label logic, structure, styling,
-// stagger timing/easing values — UNCHANGED from the previous pass.
+// Everything else — loadingProfile-driven stagger animation, click
+// handler / label logic, structure, styling, timing — UNCHANGED.
 
 import React from "react";
 import { motion } from "framer-motion";
@@ -57,25 +42,32 @@ const Hero = () => {
   const navigate = useNavigate();
   const { user } = useUser();
   const { openSignIn } = useClerk();
-const { loadingProfile, loadingStaffProfile, availableWorkspaces, isRemovedMember } = useAppContext();  // added isRemovedMember
-const { t } = useTranslation();
+  const {
+    loadingProfile,
+    loadingStaffProfile,
+    availableWorkspaces,
+    isRemovedMember,
+  } = useAppContext();
+  const { t } = useTranslation("home");
 
-const primaryWorkspace = availableWorkspaces[0] ?? null;
+  const primaryWorkspace = availableWorkspaces[0] ?? null;
 
-const handleMainButtonClick = () => {
-  if (isRemovedMember) return navigate("/contact");   // NEW — check this first
-  if (primaryWorkspace) return navigate(primaryWorkspace.path);
-  if (!user) return openSignIn();
-  return navigate("/create-profile");
-};
+  const handleMainButtonClick = () => {
+    if (isRemovedMember) return navigate("/contact");
+    if (primaryWorkspace) return navigate(primaryWorkspace.path);
+    if (!user) return openSignIn();
+    return navigate("/create-profile");
+  };
 
-const mainButtonLabel = isRemovedMember
-  ? "Membership Removed"
-  : primaryWorkspace
-  ? (availableWorkspaces.length === 1 ? primaryWorkspace.soloLabel : primaryWorkspace.switchLabel)
-  : !user
-  ? t("Join or Log In to Get Started")
-  : t("Create Profile");
+  const mainButtonLabel = isRemovedMember
+    ? t("hero.cta.membershipRemoved")
+    : primaryWorkspace
+    ? availableWorkspaces.length === 1
+      ? primaryWorkspace.soloLabel
+      : primaryWorkspace.switchLabel
+    : !user
+    ? t("hero.cta.joinOrLogin")
+    : t("hero.cta.createProfile");
 
   return (
     <div className="relative h-screen w-full overflow-hidden">
@@ -96,13 +88,18 @@ const mainButtonLabel = isRemovedMember
           variants={itemVariants}
           className="font-outfit font-bold text-2xl sm:text-3xl md:text-4xl lg:text-[52px] lg:leading-[52px] lg:whitespace-nowrap text-white"
         >
-          <span>
-            {t("Government Officers' Housing Scheme")}
-          </span>{' '}
+          <span>{t("hero.title")}</span>{" "}
           <motion.span
             initial={{ color: "#FFFFFF" }}
-            animate={!loadingProfile ? { color: "#6EE7B7" } : { color: "#FFFFFF" }}
-            transition={{ duration: 0.7, delay: 0.6, type: "spring", stiffness: 100 }}
+            animate={
+              !loadingProfile ? { color: "#6EE7B7" } : { color: "#FFFFFF" }
+            }
+            transition={{
+              duration: 0.7,
+              delay: 0.6,
+              type: "spring",
+              stiffness: 100,
+            }}
             className="text-emerald-300"
           >
             (GOHS)
@@ -113,9 +110,7 @@ const mainButtonLabel = isRemovedMember
           variants={itemVariants}
           className="mt-2 max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto text-sm md:text-base text-white"
         >
-          {t(
-            "Connect with your community, manage your membership, track payments, view notices, and stay updated — all in one secure platform designed for our 500+ society members."
-          )}
+          {t("hero.subtitle")}
         </motion.p>
 
         {/* CTA button — always the same brand gradient as the Navbar's

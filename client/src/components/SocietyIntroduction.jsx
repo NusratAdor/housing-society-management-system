@@ -1,26 +1,24 @@
 // client/src/components/SocietyIntroduction.jsx
 //
-// FIX (this pass): the image was referenced as a literal string path,
-// src="/src/assets/heroImage6.png". That works in Vite's dev server
-// (which serves the whole project folder) but breaks in a production
-// build — Vite only bundles assets it can statically see via an
-// `import` statement; a raw string path isn't one, so the src/ folder
-// (and this file) simply doesn't exist in what gets deployed to
-// Vercel, and the <img> 404s silently.
+// i18n PASS — all copy now comes from the "home" namespace (intro.*).
+// The heading uses <Trans> with a named <highlight> tag instead of
+// splitting the sentence around a <span>: Bengali word order differs
+// from English, so the highlighted word has to live INSIDE the
+// translated string for each language to place it correctly.
 //
-// Fixed by importing the asset properly so Vite tracks, hashes, and
-// includes it in the production bundle correctly, in both dev and prod.
-//
-// Everything else — layout, copy, floating stat card, animations —
-// UNCHANGED.
+// Image import (Vite-tracked asset), layout, animations, floating stat
+// card — UNCHANGED.
 
 import React from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import { ArrowRight, Users, CalendarCheck } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 import heroImg from "../assets/heroImage6.png";
 
 const SocietyIntroduction = () => {
+  const { t } = useTranslation("home");
+
   return (
     <div className="w-full bg-white py-20">
       <div className="max-w-7xl mx-auto px-4 md:px-8 grid md:grid-cols-2 gap-12 items-center">
@@ -37,25 +35,23 @@ const SocietyIntroduction = () => {
                            bg-emerald-50 text-emerald-700
                            border border-emerald-200 mb-5">
             <CalendarCheck size={13} strokeWidth={2} />
-            Est. 2005
+            {t("intro.badge")}
           </span>
 
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 leading-tight">
-            Where <span className="text-emerald-600">Community</span> Begins
+            <Trans
+              t={t}
+              i18nKey="intro.title"
+              components={{ highlight: <span className="text-emerald-600" /> }}
+            />
           </h2>
 
           <p className="text-gray-600 font-outfit leading-relaxed mb-4">
-            Government Officer's Housing Society was founded to give government
-            officers and their families a safe, well-managed place to call home.
-            What began as a small residential initiative has grown into a
-            thriving community defined by cooperation, transparency, and
-            shared purpose.
+            {t("intro.paragraph1")}
           </p>
 
           <p className="text-gray-600 font-outfit leading-relaxed mb-8">
-            Today, GOHS supports over 500 member families through transparent
-            financial management, responsive community services, and a
-            genuine commitment to keeping neighbors connected.
+            {t("intro.paragraph2")}
           </p>
 
           <Link
@@ -66,7 +62,7 @@ const SocietyIntroduction = () => {
                        hover:from-emerald-600 hover:to-teal-700
                        shadow-sm hover:shadow-md transition-all duration-300 group"
           >
-            Read More About Us
+            {t("intro.readMore")}
             <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-0.5" />
           </Link>
         </motion.div>
@@ -82,7 +78,7 @@ const SocietyIntroduction = () => {
           <div className="rounded-2xl overflow-hidden shadow-xl">
             <img
               src={heroImg}
-              alt="GOHS community"
+              alt={t("intro.imageAlt")}
               className="w-full h-[380px] md:h-[440px] object-cover"
             />
           </div>
@@ -94,8 +90,10 @@ const SocietyIntroduction = () => {
               <Users className="h-5 w-5 text-emerald-600" />
             </div>
             <div>
-              <p className="font-bold text-gray-900 text-lg leading-none">500+</p>
-              <p className="text-gray-500 text-xs mt-1">Registered Members</p>
+              <p className="font-bold text-gray-900 text-lg leading-none">
+                {t("intro.statValue")}
+              </p>
+              <p className="text-gray-500 text-xs mt-1">{t("intro.statLabel")}</p>
             </div>
           </div>
         </motion.div>

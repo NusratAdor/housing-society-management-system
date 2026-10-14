@@ -1,21 +1,20 @@
 // client/src/components/NoticesPreview.jsx
 //
-// CHANGE (this pass): background tint moved here from SocietyIntroduction
-// (that section is back to plain white — see that file). Used a flat
-// custom hex (#F3FBF8) rather than Tailwind's bg-emerald-50/40 —
-// opacity-based fills are a blend of the color and whatever's behind
-// them, so matching it exactly from SocietyIntroduction's wave divider
-// would mean computing that blend by hand and hoping it's pixel-exact.
-// A flat hex means the wave's fill and this section's background can
-// just share the same literal value, with zero seam by construction.
+// i18n PASS — all copy (badge, heading, subtitle, buttons, empty state,
+// toasts) now comes from the "home" namespace (notices.*). The heading
+// uses <Trans> with a named <highlight> tag so each language controls
+// where the coloured word sits.
 //
-// Heading text/subtitle change from the previous pass — unchanged here.
-// Everything else — border-draw hover effect, accent bar, inline
-// "Read more" link, ViewAllButton, data fetching — untouched.
+// Server-provided strings (notice title/summary, API error messages)
+// are data, not UI copy, and are shown as returned.
+//
+// Background tint, border-draw hover effect, accent bar, "Read more"
+// link, ViewAllButton, data fetching — UNCHANGED.
 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Megaphone, ArrowRight, Calendar } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 import { useAppContext } from "../context/AppContext";
 import { toast } from "react-hot-toast";
 import { formatDate } from "../utils/formatDate";
@@ -29,7 +28,7 @@ const fadeUpVariant = {
   }),
 };
 
-const ViewAllButton = ({ onClick }) => (
+const ViewAllButton = ({ onClick, label }) => (
   <button
     onClick={onClick}
     className="flex items-center gap-2 font-outfit font-medium text-sm
@@ -41,7 +40,7 @@ const ViewAllButton = ({ onClick }) => (
                transition-all duration-300 ease-out
                group"
   >
-    View All Notices
+    {label}
     <ArrowRight
       className="w-3.5 h-3.5 transition-transform duration-300
                  group-hover:translate-x-0.5"
@@ -51,6 +50,7 @@ const ViewAllButton = ({ onClick }) => (
 
 const NoticesPreview = () => {
   const { axios, navigate } = useAppContext();
+  const { t } = useTranslation("home");
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -62,10 +62,10 @@ const NoticesPreview = () => {
         if (response.data.success) {
           setNotices(response.data.notices);
         } else {
-          toast.error(response.data.message || "Failed to load notices");
+          toast.error(response.data.message || t("notices.loadFailed"));
         }
       } catch {
-        toast.error("Error loading notices. Please try again.");
+        toast.error(t("notices.loadError"));
       } finally {
         setLoading(false);
       }
@@ -109,7 +109,7 @@ const NoticesPreview = () => {
                      border border-emerald-200 mb-5"
         >
           <Megaphone size={13} strokeWidth={2} />
-          Notice Board
+          {t("notices.badge")}
         </motion.span>
 
         <motion.h2
@@ -120,7 +120,11 @@ const NoticesPreview = () => {
           className="text-3xl md:text-4xl font-bold
                      text-gray-900 mb-3"
         >
-          Community <span className="text-emerald-600">Notices</span>
+          <Trans
+            t={t}
+            i18nKey="notices.title"
+            components={{ highlight: <span className="text-emerald-600" /> }}
+          />
         </motion.h2>
 
         <motion.p
@@ -130,7 +134,7 @@ const NoticesPreview = () => {
           transition={{ delay: 0.1 }}
           className="text-gray-500 text-sm md:text-base max-w-xl mb-12"
         >
-          Everything happening around your community, in one place.
+          {t("notices.subtitle")}
         </motion.p>
 
         {loading ? (
@@ -184,7 +188,7 @@ const NoticesPreview = () => {
                   <span className="inline-flex items-center gap-1.5 text-sm
                                    font-semibold text-emerald-600
                                    group/link w-fit">
-                    Read more
+                    {t("notices.readMore")}
                     <ArrowRight
                       size={14}
                       className="transition-transform duration-300
@@ -197,7 +201,7 @@ const NoticesPreview = () => {
 
             {notices.length === 0 && (
               <p className="text-gray-400 font-outfit col-span-full">
-                No notices available.
+                {t("notices.empty")}
               </p>
             )}
           </div>
@@ -211,6 +215,7 @@ const NoticesPreview = () => {
           className="mt-12"
         >
           <ViewAllButton
+            label={t("notices.viewAll")}
             onClick={() => { navigate("/notices"); window.scrollTo(0, 0); }}
           />
         </motion.div>

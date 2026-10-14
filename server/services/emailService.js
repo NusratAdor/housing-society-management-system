@@ -80,17 +80,20 @@ const fmtDate = (d) =>
  * than letting a failed email block a payment confirmation that has
  * already succeeded).
  */
-const sendEmail = async ({ to, subject, html }) => {
+const sendEmail = async ({ to, subject, html, replyTo }) => {
   if (!process.env.RESEND_API_KEY) {
     console.info(`[Email] RESEND_API_KEY not set — skipped email to ${to}`);
     return { skipped: true };
   }
+
+  
 
   const result = await resend.emails.send({
     from: FROM,
     to: Array.isArray(to) ? to : [to],
     subject,
     html,
+    ...(replyTo ? { replyTo } : {}),
   });
 
   if (result.error) {
@@ -754,6 +757,52 @@ export const sendNoticeEmail = async (to, notice) => {
     html: emailLayout({
       title: `New Notice: ${title}`,
       preheader: summary || `New notice published: ${title}`,
+      bodyContent,
+    }),
+  });
+};
+
+
+
+/**
+ * sendContactMessageEmail
+ * Forwards a public Contact-page message to the society office.
+ * The visitor's address is set as Reply-To, so "Reply" answers them directly.
+ * No confirmation is sent to the visitor, so the form cannot be used to
+ * email arbitrary third parties.
+ */
+export const sendContactMessageEmail = async ({ name, email, subject, message }) => {
+  const recipient = process.env.CONTACT_RECIPIENT_EMAIL;
+  if (!recipient) {
+    throw new Error("CONTACT_RECIPIENT_EMAIL is not configured");
+  }
+
+  const bodyContent = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="border-collapse:collapse;">
+      <tr>
+        <td style="padding:4px 0;width:70px;font-size:13px;color:#6b7280;">From</td>
+        <td style="padding:4px 0;font-size:14px;color:#111827;">${esc(name)}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;font-size:13px;color:#6b7280;">Email</td>
+        <td style="padding:4px 0;font-size:14px;color:#111827;">${esc(email)}</td>
+      </tr>
+    </table>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid #e5e7eb;
+                font-size:15px;line-height:1.7;color:#374151;">
+      ${esc(message).replace(/\r?\n/g, "<br/>")}
+    </div>
+    ${noteParagraph("Reply to this email to respond directly to the sender.")}
+  `;
+
+  return sendEmail({
+    to: recipient,
+    replyTo: email,
+    subject: `Website contact: ${subject}`,
+    html: emailLayout({
+      title: subject,
+      preheader: message.slice(0, 100),
       bodyContent,
     }),
   });

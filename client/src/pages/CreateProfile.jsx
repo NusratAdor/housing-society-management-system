@@ -630,7 +630,7 @@ const CreateProfile = () => {
                         <option value="">Select plot size</option>
                         {PLOT_SIZES.map((size) => (
                           <option key={size} value={size}>
-                            {size} Katha
+                            {size} 
                           </option>
                         ))}
                       </select>

@@ -1,30 +1,19 @@
 // client/src/components/FAQ.jsx
 //
-// CHANGE (this pass): heading rebuilt to match the pattern already
-// established by SocietyIntroduction / NoticesPreview / CommunityGallery
-// — pill badge (icon + label) + bold Outfit heading with one emerald-
-// highlighted word + gray-500 subtitle. Previously used the shared
-// <Title/> component, which didn't carry that pattern and stood out as
-// visually inconsistent from the rest of the home page.
+// i18n PASS — heading badge, title, subtitle and empty state now come
+// from the "home" namespace (faq.*). The heading uses <Trans> with a
+// named <highlight> tag.
 //
-// Also aligned two smaller things with the rest of the site:
-//   - Question text: font-playfair -> font-outfit (font-playfair
-//     currently resolves to Outfit anyway per index.css, so this is
-//     the same fix already applied to Hero.jsx — using the real
-//     Tailwind classes directly instead of the legacy serif class name).
-//   - Chevron color: var(--color-primary) (blue) -> emerald-600, to
-//     match the accent color used everywhere else on the home page.
+// FAQ question/answer text is admin-authored data from the API and is
+// displayed as returned (it is not UI copy).
 //
-// Added the same border-t border-gray-100 section-divider used across
-// every other homepage section (see Home.jsx section boundaries).
-//
-// The accordion open/close animation itself — the max-h/opacity/
-// translate-y transition — is completely UNTOUCHED. Only typography
-// and the heading block changed.
+// Accordion animation (max-h/opacity/translate-y), styling, section
+// divider, data fetching — UNCHANGED.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
+import { Trans, useTranslation } from "react-i18next";
 import { useAppContext } from "../context/AppContext";
 
 const FAQSkeleton = () => (
@@ -39,6 +28,7 @@ const FAQSkeleton = () => (
 
 const FAQSection = () => {
   const { axios } = useAppContext();
+  const { t } = useTranslation("home");
   const [faqs,      setFaqs]      = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [openIndex, setOpenIndex] = useState(null);
@@ -71,7 +61,7 @@ const FAQSection = () => {
                      border border-emerald-200 mb-5"
         >
           <HelpCircle size={13} strokeWidth={2} />
-          Help Center
+          {t("faq.badge")}
         </motion.span>
 
         <motion.h2
@@ -81,7 +71,11 @@ const FAQSection = () => {
           transition={{ delay: 0.05 }}
           className="text-3xl md:text-4xl font-bold text-gray-900 mb-3"
         >
-          Frequently Asked <span className="text-emerald-600">Questions</span>
+          <Trans
+            t={t}
+            i18nKey="faq.title"
+            components={{ highlight: <span className="text-emerald-600" /> }}
+          />
         </motion.h2>
 
         <motion.p
@@ -91,14 +85,14 @@ const FAQSection = () => {
           transition={{ delay: 0.1 }}
           className="text-gray-500 text-sm md:text-base max-w-xl mb-12"
         >
-          Common questions from our community, answered by our admins.
+          {t("faq.subtitle")}
         </motion.p>
 
         {loading ? (
           <FAQSkeleton />
         ) : faqs.length === 0 ? (
           <p className="text-sm text-gray-400 font-outfit">
-            No FAQs published yet.
+            {t("faq.empty")}
           </p>
         ) : (
           <div className="w-full max-w-3xl">
@@ -126,11 +120,6 @@ const FAQSection = () => {
                   )}
                 </div>
 
-                {/*
-                  Animation UNCHANGED — see original file header for the
-                  full explanation of why max-h/opacity/translate-y are
-                  used together. Not touched in this pass.
-                */}
                 <div
                   className={`
                     text-sm text-gray-600 mt-2 text-left overflow-hidden
