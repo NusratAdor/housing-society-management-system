@@ -18,8 +18,10 @@ const Home = () => {
       <NoticesPreview />
       <EventsPreview />
       <CommunityGallery />
-       <FAQ />
-      <VisionMissionPreview />
+      <FAQ />
+       <VisionMissionPreview />
+       
+     
      
     </>
   )

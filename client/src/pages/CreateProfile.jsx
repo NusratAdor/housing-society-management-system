@@ -7,6 +7,7 @@ import { Navigate } from "react-router-dom";
 import { normalizePhone, isValidPhone } from "../utils/phoneUtils";
 import { useAppContext } from "../context/AppContext";
 import usePageTitle from "../hooks/usePageTitle";
+import { Trash2 } from "lucide-react";
 
 const PLOT_SIZES = [13, 10, 9, 7, 6.5];
 
@@ -577,84 +578,83 @@ const CreateProfile = () => {
           </div>
 
           <div className="space-y-4">
-            {form.plots.map((plot, index) => (
-              <div
-                key={index}
-                className="rounded-lg border border-gray-200 p-4"
-              >
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-sm text-gray-700">
-                      Plot No
-                    </label>
+            <div className="hidden gap-2 pb-1 text-sm text-gray-700 sm:flex">
+              <div className="grid flex-1 grid-cols-2 gap-2">
+                <span>Plot No</span>
+                <span>Plot Size</span>
+              </div>
+              <span className="w-10 shrink-0" aria-hidden="true" />
+            </div>
 
-                    <input
-                      type="text"
-                      value={plot.plotNo}
-                      onChange={(e) =>
-                        updatePlot(index, "plotNo", e.target.value)
-                      }
-                      placeholder="AD-10 / AD/10 / AD 10"
-                      required
-                      className={`w-full rounded-lg border px-3 py-2 uppercase outline-none ${
-                        errors[`plot.${index}.plotNo`]
-                          ? "border-red-500"
-                          : "border-gray-300 focus:border-indigo-500"
-                      }`}
-                    />
+            <div className="space-y-2">
+              {form.plots.map((plot, index) => (
+                <div key={index} className="flex items-start gap-2">
+                  <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                    <div>
+                      <input
+                        type="text"
+                        aria-label={"Plot " + (index + 1) + " number"}
+                        value={plot.plotNo}
+                        onChange={(e) =>
+                          updatePlot(index, "plotNo", e.target.value)
+                        }
+                        placeholder="AD-10 / AD/10 / AD 10"
+                        required
+                        className={`w-full rounded-lg border px-3 py-2 uppercase outline-none ${
+                          errors[`plot.${index}.plotNo`]
+                            ? "border-red-500"
+                            : "border-gray-300 focus:border-indigo-500"
+                        }`}
+                      />
+                      {errors[`plot.${index}.plotNo`] && (
+                        <p className="mt-1 text-sm text-red-500">
+                          {errors[`plot.${index}.plotNo`]}
+                        </p>
+                      )}
+                    </div>
 
-                    {errors[`plot.${index}.plotNo`] && (
-                      <p className="mt-1 text-sm text-red-500">
-                        {errors[`plot.${index}.plotNo`]}
-                      </p>
-                    )}
+                    <div>
+                      <select
+                        aria-label={"Plot " + (index + 1) + " size"}
+                        value={plot.plotSize}
+                        onChange={(e) =>
+                          updatePlot(index, "plotSize", e.target.value)
+                        }
+                        required
+                        className={`w-full rounded-lg border bg-white px-3 py-2 outline-none ${
+                          errors[`plot.${index}.plotSize`]
+                            ? "border-red-500"
+                            : "border-gray-300 focus:border-indigo-500"
+                        }`}
+                      >
+                        <option value="">Select plot size</option>
+                        {PLOT_SIZES.map((size) => (
+                          <option key={size} value={size}>
+                            {size} Katha
+                          </option>
+                        ))}
+                      </select>
+                      {errors[`plot.${index}.plotSize`] && (
+                        <p className="mt-1 text-sm text-red-500">
+                          {errors[`plot.${index}.plotSize`]}
+                        </p>
+                      )}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="mb-1 block text-sm text-gray-700">
-                      Plot Size
-                    </label>
-
-                    <select
-                      value={plot.plotSize}
-                      onChange={(e) =>
-                        updatePlot(index, "plotSize", e.target.value)
-                      }
-                      required
-                      className={`w-full rounded-lg border bg-white px-3 py-2 outline-none ${
-                        errors[`plot.${index}.plotSize`]
-                          ? "border-red-500"
-                          : "border-gray-300 focus:border-indigo-500"
-                      }`}
-                    >
-                      <option value="">Select plot size</option>
-
-                      {PLOT_SIZES.map((size) => (
-                        <option key={size} value={size}>
-                          {size} 
-                        </option>
-                      ))}
-                    </select>
-
-                    {errors[`plot.${index}.plotSize`] && (
-                      <p className="mt-1 text-sm text-red-500">
-                        {errors[`plot.${index}.plotSize`]}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {form.plots.length > 1 && (
                   <button
                     type="button"
                     onClick={() => removePlot(index)}
-                    className="mt-3 text-sm font-medium text-red-600 hover:text-red-700"
+                    disabled={form.plots.length === 1}
+                    aria-label={"Remove plot " + (index + 1)}
+                    title="Remove plot"
+                    className="flex h-[42px] w-10 shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
                   >
-                    Remove Plot
+                    <Trash2 className="h-4 w-4" />
                   </button>
-                )}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
 
           {errors.plots && (
