@@ -37,7 +37,7 @@ const SocietyIntroduction = () => {
                            bg-emerald-50 text-emerald-700
                            border border-emerald-200 mb-5">
             <CalendarCheck size={13} strokeWidth={2} />
-            Est. 1998
+            Est. 2005
           </span>
 
           <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 leading-tight">

@@ -121,7 +121,7 @@ const AboutSociety = () => {
             animate={{ opacity: 1, y: 0 }}
             className="text-3xl md:text-4xl font-bold text-white leading-tight"
           >
-            The Journey of GOHS: <span className="text-emerald-400">From Vision to Reality</span>
+            The <span className="text-emerald-400">Journey of</span> GOHS
           </motion.h1>
 
           <p className="mt-3 text-white/70 font-outfit text-sm italic">

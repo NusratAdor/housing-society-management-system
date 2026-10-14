@@ -18,7 +18,7 @@ const ROLE_LABELS = {
 };
 
 const ManageStaff = () => {
-  const { axios, getToken } = useAppContext();
+  const { axios, getToken, staffProfile } = useAppContext();
   usePageTitle("Manage Staff");
 
   const [staff, setStaff]     = useState([]);
@@ -165,7 +165,8 @@ const ManageStaff = () => {
         ) : staff.length === 0 ? (
           <p className="text-sm text-gray-400 px-6 pb-6">No staff accounts yet.</p>
         ) : (
-          <table className="w-full text-sm text-left">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm text-left">
             <thead className="text-xs uppercase text-gray-400 bg-gray-50">
               <tr>
                 <th className="px-6 py-2 font-semibold">Email</th>
@@ -190,18 +191,24 @@ const ManageStaff = () => {
                       <span className="text-amber-600 text-xs font-medium">Invited (pending sign-in)</span>
                     )}
                   </td>
-                  <td className="px-6 py-3 text-right">
-                    <button
-                      onClick={() => handleRevoke(s._id, s.email)}
-                      className="inline-flex items-center gap-1 text-red-500 hover:text-red-700 text-xs font-medium"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Revoke
-                    </button>
+                                    <td className="px-6 py-3 text-right">
+                    {s.clerkUserId &&
+                    s.clerkUserId === staffProfile?.clerkUserId ? (
+                      <span className="text-xs text-gray-400">You</span>
+                    ) : (
+                      <button
+                        onClick={() => handleRevoke(s._id, s.email)}
+                        className="inline-flex items-center gap-1 text-red-500 hover:text-red-700 text-xs font-medium"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Revoke
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

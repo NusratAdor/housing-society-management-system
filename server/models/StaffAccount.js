@@ -1,12 +1,10 @@
 // server/models/StaffAccount.js
 //
-// Independent of Member by design — Super Admin is explicitly not a
-// member, and Content Manager is staff, not a resident. This collection
-// never touches MemberSeat, dues, or payments, and nothing in that
-// pipeline needs to know it exists.
+// Independent of Member by design: Super Admin is not a member, and Content
+// Manager is staff, not a resident. This collection never touches MemberSeat,
+// dues or payments.
 //
-// clerkUserId is nullable: a Super Admin invite is created by email
-// first (clerkUserId: null) and gets linked automatically the first
+// An invite is created by email first (no clerkUserId) and is linked the first
 // time that person signs in with a matching VERIFIED Clerk email
 // (see staffController.getStaffProfile).
 
@@ -17,7 +15,6 @@ const staffAccountSchema = new mongoose.Schema(
     clerkUserId: {
       type: String,
       trim: true,
-     
     },
     email: {
       type: String,
@@ -35,31 +32,38 @@ const staffAccountSchema = new mongoose.Schema(
       required: true,
       enum: ["super_admin", "content_manager"],
     },
-    // Clerk userId of the Super Admin who granted this role — audit trail.
+    // Clerk userId of the Super Admin who granted this role (audit trail).
     assignedBy: {
       type: String,
       required: true,
     },
-    // Soft-revoke flag. Never hard-deleted — history stays intact for audit.
+    // Soft-revoke flag. Never hard-deleted: history stays for audit.
     active: {
       type: Boolean,
       default: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
-// Only one ACTIVE staff record per email at a time — prevents duplicate
-// live invites. A revoked (active:false) record doesn't block a fresh
-// re-invite to the same email later.
+// One ACTIVE record per email. A revoked record doesn't block a re-invite.
 staffAccountSchema.index(
   { email: 1 },
-  { unique: true, partialFilterExpression: { active: true } }
+  { unique: true, partialFilterExpression: { active: true } },
 );
 
-// clerkUserId must be unique once linked, but many pending (null)
-// invites can coexist — sparse index skips null values entirely.
-staffAccountSchema.index({ clerkUserId: 1 }, { unique: true, sparse: true });
+// One ACTIVE record per Clerk user. A revoked record keeps its clerkUserId as
+// history, so it must NOT count: otherwise re-inviting the same person fails.
+// This replaces the old index "clerkUserId_1". Drop that one once:
+//   db.staffaccounts.dropIndex("clerkUserId_1")
+staffAccountSchema.index(
+  { clerkUserId: 1 },
+  {
+    name: "unique_active_clerk_user",
+    unique: true,
+    partialFilterExpression: { active: true, clerkUserId: { $type: "string" } },
+  },
+);
 
 staffAccountSchema.index({ role: 1, active: 1 });
 

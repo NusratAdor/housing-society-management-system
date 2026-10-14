@@ -1253,7 +1253,7 @@ const ManageMembers = () => {
                                 >
                                   {due.totalDue > 0
                                     ? formatCurrency(due.totalDue)
-                                    : "No dues"}
+                                    : "Paid"}
                                 </span>
 
                                 {due.totalDue > 0 && (

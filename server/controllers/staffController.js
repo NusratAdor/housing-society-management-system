@@ -16,6 +16,7 @@ import Counter from "../models/Counter.js";
 import { writeAuditLog } from "../services/auditService.js";
 import { runInTransactionWithRetry } from "../utils/transactionRetry.js";
 import { httpError } from "../utils/httpError.js";
+import Member from "../models/Member.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OBJECT_ID = /^[a-f\d]{24}$/i;
@@ -43,13 +44,10 @@ export const getStaffProfile = async (req, res) => {
       return res.status(200).json({ success: true, staff: req.staff });
     }
 
-        // Almost every signed-in user is not staff. Skip the Clerk call unless at
-    // least one unclaimed staff invitation exists. (The match itself still needs
-    // the user's verified email, which only Clerk can tell us.)
-    const hasPendingInvite = await StaffAccount.exists({
-      active: true,
-      clerkUserId: { $exists: false },
-    });
+    // Almost every signed-in user is not staff. Skip the Clerk call unless at
+    // least one unclaimed invitation exists. (The match itself still needs the
+    // user's verified email, which only Clerk can tell us.)
+    const hasPendingInvite = await StaffAccount.exists({ active: true, clerkUserId: null });
 
     if (!hasPendingInvite) {
       return res.status(404).json({ success: false, message: "Staff profile not found" });
@@ -64,10 +62,10 @@ export const getStaffProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: "Staff profile not found" });
     }
 
-    const staff = await runInTransactionWithRetry(async (session) => {
+    const activated = await runInTransactionWithRetry(async (session) => {
       const pending = await StaffAccount.findOne({
         email: primaryEmail.emailAddress.toLowerCase(),
-        clerkUserId: { $exists: false },
+        clerkUserId: null,
         active: true,
       }).session(session);
 
@@ -91,6 +89,12 @@ export const getStaffProfile = async (req, res) => {
 
       return pending;
     });
+
+    // Two requests (two tabs) can race to activate the same invite. The loser
+    // finds it already linked to THIS user: that is a success, not a 404.
+    const staff =
+      activated ??
+      (await StaffAccount.findOne({ clerkUserId: req.clerkUserId, active: true }).select("-__v"));
 
     if (!staff) {
       return res.status(404).json({ success: false, message: "Staff profile not found" });
@@ -129,6 +133,13 @@ export const inviteStaff = async (req, res) => {
       const existing = await StaffAccount.findOne({ email: normalizedEmail, active: true }).session(session);
       if (existing) {
         throw httpError(400, "An active staff account already exists for this email");
+      }
+
+
+            // Staff and members are separate by design (a staff login never gets a
+      // member dashboard). Refuse an email that already belongs to a member.
+      if (await Member.exists({ email: normalizedEmail }).session(session)) {
+        throw httpError(409, "This email belongs to a society member. Staff accounts need a separate email.");
       }
 
       const [created] = await StaffAccount.create(
