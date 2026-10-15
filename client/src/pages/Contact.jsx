@@ -133,7 +133,7 @@ const Contact = () => {
                 {t("phone.label")}
               </h3>
               <a
-                href={`tel:${t("phone.value").replace(/\s/g, "")}`}
+                href={`tel:${t("phone.dial")}`}
                 className="hover:text-[var(--color-primary)] transition-colors"
               >
                 {t("phone.value")}
